@@ -101,7 +101,7 @@ install:
             echo "VERSION = $VERSION"
             echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
             MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_multibuild.sh
-            BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
+            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
             echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
             $PYTHON_BIN -m pip install $BDIST_WHEEL_PATH
             set +x
