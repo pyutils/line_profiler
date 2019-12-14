@@ -22,70 +22,71 @@ matrix:
   allow_failures:
     - python: "nightly"
   include:
-  - os: linux
-    name: Linux
-    python:
-    - "2.7"
-    - "3.5"
-    - "3.6"
-    - "3.7"
-    - "3.8"
-    - "nightly"
-    before_install:
-      python3 --version;
-      pip3 --version;
-    env:
-    - BUILD_TARGET=linux
-    - PYTHON_BIN=python3
-    addons:
-      apt:
-        packages:
-        - patchelf
-  # --- OSX --- #
-  - os: osx
-    name: macOS
-    osx_image: xcode11.2
-    language: shell 
-    before_install:
-      python3 --version;
-      pip3 --version;
-    env:
-    - BUILD_TARGET=macos
-    - PYTHON_BIN=python3
-  # --- WIN32-x64 --- #
-  - os: windows
-    language: shell 
-    name: windows64
-    before_install:
-      choco install python3 --version=3.7.5;
-      python -m pip install --upgrade pip;
-      python --version;
-      pip3 --version;
-    env:
-    - BUILD_TARGET=windows64
-    - PATH=/c/Python37:/c/Python37/Scripts:$PATH
-    - PYTHON_BIN=python
-  # --- WIN32-x86 --- #
-  - os: windows
-    language: shell
-    name: windows32
-    before_install:
-      choco install python3 --forcex86 --version=3.7.5;
-      python -m pip install --upgrade pip;
-      python --version;
-      pip3 --version;
-    env:
-    - BUILD_TARGET=windows32
-    - PATH=/c/Python37:/c/Python37/Scripts:$PATH
-    - PYTHON_BIN=python
+      - os: linux
+        name: Linux
+        python:
+            - "2.7"
+            - "3.5"
+            - "3.6"
+            - "3.7"
+            - "3.8"
+            - "nightly"
+        before_install:
+            - python3 --version
+            - pip3 --version
+        env:
+            - BUILD_TARGET=linux
+            - PYTHON_BIN=python3
+        addons:
+          apt:
+            packages:
+            - patchelf
+      # --- OSX --- #
+      - os: osx
+        name: macOS
+        osx_image: xcode11.2
+        language: shell 
+        before_install:
+            - python3 --version;
+            - pip3 --version;
+        env:
+            - BUILD_TARGET=macos
+            - PYTHON_BIN=python3
+      # --- WIN32-x64 --- #
+      - os: windows
+        language: shell 
+        name: windows64
+        before_install:
+            - choco install python3 --version=3.7.5;
+            - python -m pip install --upgrade pip;
+            - python --version;
+            - pip3 --version;
+        env:
+            - BUILD_TARGET=windows64
+            - PATH=/c/Python37:/c/Python37/Scripts:$PATH
+            - PYTHON_BIN=python
+      # --- WIN32-x86 --- #
+      - os: windows
+        language: shell
+        name: windows32
+        before_install:
+            - choco install python3 --forcex86 --version=3.7.5;
+            - python -m pip install --upgrade pip;
+            - python --version;
+            - pip3 --version;
+        env:
+            - BUILD_TARGET=windows32
+            - PATH=/c/Python37:/c/Python37/Scripts:$PATH
+            - PYTHON_BIN=python
       
 before_install:
   - pip install pip -U
   - pip install -r requirements.txt 
   - docker pull quay.io/pypa/manylinux2010_x86_64:latest
-  - if [[ "${BUILD_TARGET}" = "macos" ]]; then
-       pip3 install delocate;
-    fi
+  - |
+      if [[ "${BUILD_TARGET}" = "macos" ]]; then
+          pip3 install delocate;
+      fi
 
 install:
   - | 
@@ -104,24 +105,28 @@ script:
   - cd tests && travis_wait pytest && cd ..
 
 after_success: 
-    - if [[ "${BUILD_TARGET}" = "macos" ]]; then
+    - |
+      if [[ "${BUILD_TARGET}" = "macos" ]]; then
         $PYTHON_BIN setup.py bdist_wheel
         delocate-wheel -w wheelhouse -v dist/*.whl;
         ls wheelhouse/*any.whl | sed -e 'p;s/any/macosx_10_9_x86_64/' | xargs -n2 mv;
       fi
-    - if [[ "${BUILD_TARGET}" = "windows64" ]]; then
+    - |
+      if [[ "${BUILD_TARGET}" = "windows64" ]]; then
         $PYTHON_BIN setup.py bdist_wheel
         mkdir wheelhouse;
         ls dist/*any.whl | sed -e 'p;s/any/win_amd64/' | xargs -n2 cp;
         mv dist/*win_amd64.whl wheelhouse/;
       fi
-    - if [[ "${BUILD_TARGET}" = "windows32" ]]; then
+    - |
+      if [[ "${BUILD_TARGET}" = "windows32" ]]; then
         $PYTHON_BIN setup.py bdist_wheel
         mkdir wheelhouse;
         ls dist/*any.whl | sed -e 'p;s/any/win32/' | xargs -n2 cp;
         mv dist/*win32.whl wheelhouse/;
       fi
-    - if [[ "${BUILD_TARGET}" = "linux" ]]; then
+    - | 
+      if [[ "${BUILD_TARGET}" = "linux" ]]; then
         codecov 
         openssl version
         # Install a more recent version of GPG
