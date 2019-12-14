@@ -1,5 +1,4 @@
 language: python
-sudo: false
 
 env:
     global:
@@ -17,7 +16,7 @@ cache:
   - $HOME/.pip-cache
   - $HOME/gpg_install_prefix
 
-matrix:
+jobs:
   fast_finish: true
   allow_failures:
     - python: "nightly"
@@ -25,12 +24,12 @@ matrix:
       - os: linux
         name: Linux
         python:
-            - "2.7"
-            - "3.5"
-            - "3.6"
-            - "3.7"
-            - "3.8"
-            - "nightly"
+            - 2.7
+            - 3.5
+            - 3.6
+            - 3.7
+            - 3.8
+            - nightly
         before_install:
             - python --version
             - pip --version
