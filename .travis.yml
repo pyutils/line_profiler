@@ -23,16 +23,20 @@ jobs:
   include:
       - os: linux
         name: Linux
+        language: python 
         python:
-            - 2.7
-            - 3.5
-            - 3.6
-            - 3.7
             - 3.8
+            - 3.7
+            - 3.6
+            - 3.5
+            - 2.7
             - nightly
         before_install:
             - python --version
             - pip --version
+            - $PYTHON_BIN -m pip install pip -U
+            - $PYTHON_BIN -m pip install -r requirements.txt 
+            - docker pull quay.io/pypa/manylinux2010_x86_64:latest
         env:
             - BUILD_TARGET=linux
             - PYTHON_BIN=python
@@ -48,6 +52,9 @@ jobs:
         before_install:
             - python3 --version;
             - pip3 --version;
+            - $PYTHON_BIN -m pip install pip -U
+            - $PYTHON_BIN -m pip install -r requirements.txt 
+            - $PYTHON_BIN -m pip install delocate;
         env:
             - BUILD_TARGET=macos
             - PYTHON_BIN=python3
@@ -57,7 +64,8 @@ jobs:
         name: windows64
         before_install:
             - choco install python3 --version=3.7.5;
-            - python -m pip install --upgrade pip;
+            - $PYTHON_BIN -m pip install pip -U
+            - $PYTHON_BIN -m pip install -r requirements.txt 
             - python --version;
             - pip3 --version;
         env:
@@ -71,6 +79,8 @@ jobs:
         before_install:
             - choco install python3 --forcex86 --version=3.7.5;
             - python -m pip install --upgrade pip;
+            - $PYTHON_BIN -m pip install pip -U
+            - $PYTHON_BIN -m pip install -r requirements.txt 
             - python --version;
             - pip3 --version;
         env:
@@ -78,18 +88,6 @@ jobs:
             - PATH=/c/Python37:/c/Python37/Scripts:$PATH
             - PYTHON_BIN=python
       
-before_install:
-  - $PYTHON_BIN -m pip install pip -U
-  - $PYTHON_BIN -m pip install -r requirements.txt 
-  - |
-      if [[ "${BUILD_TARGET}" = "macos" ]]; then
-          $PYTHON_BIN -m pip install delocate;
-      fi
-  - |
-      if [[ "${BUILD_TARGET}" = "linux" ]]; then
-          docker pull quay.io/pypa/manylinux2010_x86_64:latest
-      fi
-
 install:
     - $PYTHON_BIN -m pip install -r requirements/build.txt 
     - $PYTHON_BIN -m pip install -r requirements/tests.txt
