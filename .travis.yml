@@ -95,6 +95,7 @@ install:
     - $PYTHON_BIN -m pip install -r requirements/build.txt 
     - |
         if [[ "${BUILD_TARGET}" = "linux" ]]; then
+            set +x
             MB_PYTHON_TAG=$($PYTHON_BIN -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$($PYTHON_BIN -c "import setup; print(setup.VERSION)") 
             echo "VERSION = $VERSION"
@@ -103,34 +104,41 @@ install:
             BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
             echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
             $PYTHON_BIN -m pip install $BDIST_WHEEL_PATH
+            set -x
         fi
     - |
         if [[ "${BUILD_TARGET}" = "macos" ]]; then
+            set +x
             $PYTHON_BIN setup.py bdist_wheel
-            $PYTHON_BIN setup.py install
             delocate-wheel -w wheelhouse -v dist/*.whl;
             ls wheelhouse/*any.whl | sed -e 'p;s/any/macosx_10_9_x86_64/' | xargs -n2 mv;
+            $PYTHON_BIN setup.py install
+            set -x
         fi
     - |
         if [[ "${BUILD_TARGET}" = "windows64" ]]; then
+            set +x
             $PYTHON_BIN setup.py bdist_wheel
-            $PYTHON_BIN setup.py install
             mkdir wheelhouse;
             ls dist/*any.whl | sed -e 'p;s/any/win_amd64/' | xargs -n2 cp;
             mv dist/*win_amd64.whl wheelhouse/;
+            $PYTHON_BIN setup.py install
+            set -x
         fi
     - |
         if [[ "${BUILD_TARGET}" = "windows32" ]]; then
+            set +x
             $PYTHON_BIN setup.py bdist_wheel
-            $PYTHON_BIN setup.py install
             mkdir wheelhouse;
             ls dist/*any.whl | sed -e 'p;s/any/win32/' | xargs -n2 cp;
             mv dist/*win32.whl wheelhouse/;
+            $PYTHON_BIN setup.py install
+            set -x
         fi
     
 script: 
-  # Test the installed multibuild wheel
-  - cd tests && travis_wait pytest && cd ..
+  # Test the installed wheel
+  - cd tests && travis_wait $PYTHON_BIN -m pytest && cd ..
 
 after_success: 
     - |
