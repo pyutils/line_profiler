@@ -32,11 +32,11 @@ matrix:
             - "3.8"
             - "nightly"
         before_install:
-            - python3 --version
-            - pip3 --version
+            - python --version
+            - pip --version
         env:
             - BUILD_TARGET=linux
-            - PYTHON_BIN=python3
+            - PYTHON_BIN=python
         addons:
           apt:
             packages:
@@ -80,25 +80,29 @@ matrix:
             - PYTHON_BIN=python
       
 before_install:
-  - pip install pip -U
-  - pip install -r requirements.txt 
-  - docker pull quay.io/pypa/manylinux2010_x86_64:latest
+  - $PYTHON_BIN -m pip install pip -U
+  - $PYTHON_BIN -m pip install -r requirements.txt 
   - |
       if [[ "${BUILD_TARGET}" = "macos" ]]; then
-          pip3 install delocate;
+          $PYTHON_BIN -m pip install delocate;
+      fi
+  - |
+      if [[ "${BUILD_TARGET}" = "linux" ]]; then
+          docker pull quay.io/pypa/manylinux2010_x86_64:latest
       fi
 
 install:
   - | 
-      MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
-      VERSION=$(python -c "import setup; print(setup.VERSION)") 
+      $PYTHON_BIN -m pip install -r requirements/build.txt 
+      MB_PYTHON_TAG=$($PYTHON_BIN -c "import setup; print(setup.MB_PYTHON_TAG)") 
+      VERSION=$($PYTHON_BIN -c "import setup; print(setup.VERSION)") 
       echo "VERSION = $VERSION"
       echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
   - MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_multibuild.sh
   - |
       BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
       echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
-  - pip install $BDIST_WHEEL_PATH
+  - $PYTHON_BIN -m pip install $BDIST_WHEEL_PATH
     
 script: 
   # Test the installed multibuild wheel
