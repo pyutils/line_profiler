@@ -93,6 +93,8 @@ before_install:
 
 install:
     - $PYTHON_BIN -m pip install -r requirements/build.txt 
+    - $PYTHON_BIN -m pip install -r requirements/tests.txt
+    - $PYTHON_BIN -m pip install -r requirements/runtime.txt
     - |
         if [[ "${BUILD_TARGET}" = "linux" ]]; then
             set -x
