@@ -1,3 +1,5 @@
+language: python
+sudo: false
 
 env:
     global:
@@ -7,11 +9,6 @@ env:
 
         - secure: "MBOZZi3jsAFg7obXVbkZrpffuBJxOnr/djLmGP1nMk06ugwy6Hhm11ek6zfEp8Ddm3uPCICOBpJO7SwuyLhBEbMak0RxVDsVVd08AWEI1Q8g6qNkWo/ko8zqRtmun/Anax7Iy+9ALlwl9plJCA8c6JlAKhgx+XenE8tFLxu6zubgFe/AyQB1Vrdk2AmHWp1kM2L1F1gMP+YEwHSC1+lc55uMSQ1fqToN1Pz7QLL4yvwcet93yEiiWC6ZWvjuAW+x0ETvbf2mhDDSIu03FD2t17mmr2zcP+gIBuxu5pDOcPjf9FVfB/Vg0W3DbnUXcKOP5cSQLy3453eHm+ms+kkb+iwsOoYlM2lkXJfD4A1TZ1oDBhq4ioGaaZh6qYU5mchkf7OlJutkMUgge9UnDvr0cphO6TEZeq3VOUz4NSyWvIo+gZAj6xq4yegZiIUsoRVfQpZqz2pC+wfrerIoCYOwQ/IrJ0EFOyUA+GnQjrEr2Y/4bcXB/ofW9NJYM7q+/Hq6ya3SvNvV6I9oTVBZiqVS2UqXDbxS85YyHiDpDADYlm7xxI/kLOwC0KsxVSWafpFONy3pioc/v6A1reJLHJXMiLDEurmHVHsRt6KWfYlR1KFtAog13OfqvS8hquuW9On9OC1nObwBDG6d61IiPP6lIZhQ4FXWc08XYdU0r8tKhv4="
 
-
-
-language: python
-sudo: false
-
 cache:
   apt: true
   directories:
@@ -20,23 +17,75 @@ cache:
   - $HOME/.pip-cache
   - $HOME/gpg_install_prefix
 
-python:
-  - "2.7"
-  - "3.5"
-  - "3.6"
-  - "3.7"
-  - "3.8"
-  - "nightly"
-
 matrix:
   fast_finish: true
   allow_failures:
     - python: "nightly"
-
+  include:
+  - os: linux
+    name: Linux
+    python:
+    - "2.7"
+    - "3.5"
+    - "3.6"
+    - "3.7"
+    - "3.8"
+    - "nightly"
+    before_install:
+      python3 --version;
+      pip3 --version;
+    env:
+    - BUILD_TARGET=linux
+    - PYTHON_BIN=python3
+    addons:
+      apt:
+        packages:
+        - patchelf
+  # --- OSX --- #
+  - os: osx
+    name: macOS
+    osx_image: xcode11.2
+    language: shell 
+    before_install:
+      python3 --version;
+      pip3 --version;
+    env:
+    - BUILD_TARGET=macos
+    - PYTHON_BIN=python3
+  # --- WIN32-x64 --- #
+  - os: windows
+    language: shell 
+    name: windows64
+    before_install:
+      choco install python3 --version=3.7.5;
+      python -m pip install --upgrade pip;
+      python --version;
+      pip3 --version;
+    env:
+    - BUILD_TARGET=windows64
+    - PATH=/c/Python37:/c/Python37/Scripts:$PATH
+    - PYTHON_BIN=python
+  # --- WIN32-x86 --- #
+  - os: windows
+    language: shell
+    name: windows32
+    before_install:
+      choco install python3 --forcex86 --version=3.7.5;
+      python -m pip install --upgrade pip;
+      python --version;
+      pip3 --version;
+    env:
+    - BUILD_TARGET=windows32
+    - PATH=/c/Python37:/c/Python37/Scripts:$PATH
+    - PYTHON_BIN=python
+      
 before_install:
   - pip install pip -U
   - pip install -r requirements.txt 
   - docker pull quay.io/pypa/manylinux2010_x86_64:latest
+  - if [[ "${BUILD_TARGET}" = "macos" ]]; then
+       pip3 install delocate;
+    fi
 
 install:
   - | 
@@ -55,51 +104,26 @@ script:
   - cd tests && travis_wait pytest && cd ..
 
 after_success: 
-    - codecov 
-    - gpg --version
-    - gpg2 --version
-    - export GPG_EXECUTABLE=gpg2
-    - openssl version
-    - | 
-        __heredoc__='''
-        # Load or generate secrets
-        source $(secret_loader.sh)
-        echo $PYUTILS_TWINE_USERNAME
-        echo $PYUTILS_TWINE_PASSWORD
-        echo $PYUTILS_CI_GITHUB_SECRET
-
-        # encrypt relevant travis variables
-        travis encrypt PYUTILS_TWINE_USERNAME=$PYUTILS_TWINE_USERNAME 
-        travis encrypt PYUTILS_TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD  
-        travis encrypt PYUTILS_CI_GITHUB_SECRET=$PYUTILS_CI_GITHUB_SECRET
-
-        # HOW TO ENCRYPT YOUR SECRET GPG KEY
-        IDENTIFIER=PyUtils
-        KEYID=$(gpg --list-keys --keyid-format LONG "$IDENTIFIER" | head -n 2 | tail -n 1 | awk '{print $1}' | tail -c 9)
-        echo "KEYID = $KEYID"
-
-        # Export plaintext gpg public keys, private keys, and trust info
-        mkdir -p dev
-        gpg --armor --export-secret-keys $KEYID > dev/travis_secret_gpg_key.pgp
-        gpg --armor --export $KEYID > dev/travis_public_gpg_key.pgp
-        gpg --export-ownertrust > dev/gpg_owner_trust
-
-        # Encrypt gpg keys and trust with travis secret
-        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/travis_public_gpg_key.pgp > dev/travis_public_gpg_key.pgp.enc
-        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/travis_secret_gpg_key.pgp > dev/travis_secret_gpg_key.pgp.enc
-        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/gpg_owner_trust > dev/gpg_owner_trust.enc
-        echo $KEYID > dev/public_gpg_key
-
-        source $(secret_unloader.sh)
-
-        # Look at what we did, clean up, and add it to git
-        ls dev/*.enc
-        rm dev/gpg_owner_trust dev/*.pgp
-        git status
-        git add dev/*.enc
-        git add dev/public_gpg_key
-        '''  # <hack vim "regex" parser> '
-    - |
+    - if [[ "${BUILD_TARGET}" = "macos" ]]; then
+        $PYTHON_BIN setup.py bdist_wheel
+        delocate-wheel -w wheelhouse -v dist/*.whl;
+        ls wheelhouse/*any.whl | sed -e 'p;s/any/macosx_10_9_x86_64/' | xargs -n2 mv;
+      fi
+    - if [[ "${BUILD_TARGET}" = "windows64" ]]; then
+        $PYTHON_BIN setup.py bdist_wheel
+        mkdir wheelhouse;
+        ls dist/*any.whl | sed -e 'p;s/any/win_amd64/' | xargs -n2 cp;
+        mv dist/*win_amd64.whl wheelhouse/;
+      fi
+    - if [[ "${BUILD_TARGET}" = "windows32" ]]; then
+        $PYTHON_BIN setup.py bdist_wheel
+        mkdir wheelhouse;
+        ls dist/*any.whl | sed -e 'p;s/any/win32/' | xargs -n2 cp;
+        mv dist/*win32.whl wheelhouse/;
+      fi
+    - if [[ "${BUILD_TARGET}" = "linux" ]]; then
+        codecov 
+        openssl version
         # Install a more recent version of GPG
         # https://gnupg.org/download/
         export GPG_INSTALL_PREFIX=$HOME/gpg_install_prefix
@@ -116,7 +140,6 @@ after_success:
             OLD=$(pwd)
             cd $GPG_INSTALL_PREFIX
             pip install ubelt
-
             ERROR_FPATH=$(python -c "import ubelt as ub; print(ub.grabdata(
                 'https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.36.tar.bz2',
                 hash_prefix='6e5f853f77dc04f0091d94b224cab8e669042450f271b78d0ea0219',
@@ -145,7 +168,6 @@ after_success:
                 'https://gnupg.org/ftp/gcrypt/gnupg/gnupg-2.2.17.tar.bz2',
                 hash_prefix='a3cd094addac62b4b4ec1683005a2bec761ea2aacf6daf904316b',
                 dpath=ub.ensuredir('$HOME/.pip-cache'), verbose=0))")
-
             tar xjf $ERROR_FPATH
             tar xjf $GCRYPT_FPATH
             tar xjf $KSBA_CRYPT_FPATH
@@ -163,17 +185,16 @@ after_success:
             echo "GPG_EXECUTABLE = '$GPG_EXECUTABLE'"
             cd $OLD
         fi
-    # Decrypt and import GPG Keys / trust
-    - $GPG_EXECUTABLE --version
-    - openssl version
-    - $GPG_EXECUTABLE --list-keys
-    - TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/travis_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-    - TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-    - TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/travis_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-    - $GPG_EXECUTABLE --list-keys
-    - MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
-    - VERSION=$(python -c "import setup; print(setup.VERSION)") 
-    - |
+        # Decrypt and import GPG Keys / trust
+        $GPG_EXECUTABLE --version
+        openssl version
+        $GPG_EXECUTABLE --list-keys
+        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/travis_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
+        TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -d -a -in dev/travis_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+        $GPG_EXECUTABLE --list-keys
+        MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
+        VERSION=$(python -c "import setup; print(setup.VERSION)") 
         pip install twine
         if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
           pip install six pyopenssl ndg-httpsclient pyasn1 -U --user
@@ -183,8 +204,7 @@ after_success:
           pip install six twine
           pip install --upgrade pyOpenSSL
         fi
-    # Package and publish to pypi (if on release)
-    - |
+        # Package and publish to pypi (if on release)
         echo "TRAVIS_BRANCH = $TRAVIS_BRANCH"
 
         KEYID=$(cat dev/public_gpg_key)
@@ -192,12 +212,6 @@ after_success:
         if [[ "$TRAVIS_BRANCH" == "release" ]]; then
             # use set +x to log all intermediate commands 
             export CURRENT_BRANCH=$TRAVIS_BRANCH
-            # TODO: reliable and secure gpg keys
-            # Relies on a specific environmenmt being available 
-            # git config --global user.signingkey D297D757
-            # git config --local user.signingkey D297D757
-            # git config --global gpg.program
-            #
             TAG_AND_UPLOAD=yes
         else
             TAG_AND_UPLOAD=no
@@ -212,3 +226,43 @@ after_success:
             DEPLOY_BRANCH=release \
             TAG_AND_UPLOAD=$TAG_AND_UPLOAD \
             ./publish.sh
+      fi
+    #- | 
+    #    __heredoc__='''
+    #    # Load or generate secrets
+    #    source $(secret_loader.sh)
+    #    echo $PYUTILS_TWINE_USERNAME
+    #    echo $PYUTILS_TWINE_PASSWORD
+    #    echo $PYUTILS_CI_GITHUB_SECRET
+
+    #    # encrypt relevant travis variables
+    #    travis encrypt PYUTILS_TWINE_USERNAME=$PYUTILS_TWINE_USERNAME 
+    #    travis encrypt PYUTILS_TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD  
+    #    travis encrypt PYUTILS_CI_GITHUB_SECRET=$PYUTILS_CI_GITHUB_SECRET
+
+    #    # HOW TO ENCRYPT YOUR SECRET GPG KEY
+    #    IDENTIFIER=PyUtils
+    #    KEYID=$(gpg --list-keys --keyid-format LONG "$IDENTIFIER" | head -n 2 | tail -n 1 | awk '{print $1}' | tail -c 9)
+    #    echo "KEYID = $KEYID"
+
+    #    # Export plaintext gpg public keys, private keys, and trust info
+    #    mkdir -p dev
+    #    gpg --armor --export-secret-keys $KEYID > dev/travis_secret_gpg_key.pgp
+    #    gpg --armor --export $KEYID > dev/travis_public_gpg_key.pgp
+    #    gpg --export-ownertrust > dev/gpg_owner_trust
+
+    #    # Encrypt gpg keys and trust with travis secret
+    #    TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/travis_public_gpg_key.pgp > dev/travis_public_gpg_key.pgp.enc
+    #    TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/travis_secret_gpg_key.pgp > dev/travis_secret_gpg_key.pgp.enc
+    #    TSP=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -md MD5 -pass env:TSP -e -a -in dev/gpg_owner_trust > dev/gpg_owner_trust.enc
+    #    echo $KEYID > dev/public_gpg_key
+
+    #    source $(secret_unloader.sh)
+
+    #    # Look at what we did, clean up, and add it to git
+    #    ls dev/*.enc
+    #    rm dev/gpg_owner_trust dev/*.pgp
+    #    git status
+    #    git add dev/*.enc
+    #    git add dev/public_gpg_key
+    #    '''  # <hack vim "regex" parser> '
