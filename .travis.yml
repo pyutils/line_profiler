@@ -105,6 +105,9 @@ install:
             MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_multibuild.sh
             BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
             echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
             $PYTHON_BIN -m pip install $BDIST_WHEEL_PATH
             set +x
         fi
@@ -114,6 +117,9 @@ install:
             $PYTHON_BIN setup.py bdist_wheel
             delocate-wheel -w wheelhouse -v dist/*.whl;
             ls wheelhouse/*any.whl | sed -e 'p;s/any/macosx_10_9_x86_64/' | xargs -n2 mv;
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
             $PYTHON_BIN setup.py install
             set +x
         fi
@@ -124,6 +130,9 @@ install:
             mkdir wheelhouse;
             ls dist/*any.whl | sed -e 'p;s/any/win_amd64/' | xargs -n2 cp;
             mv dist/*win_amd64.whl wheelhouse/;
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
             $PYTHON_BIN setup.py install
             set +x
         fi
@@ -134,6 +143,9 @@ install:
             mkdir wheelhouse;
             ls dist/*any.whl | sed -e 'p;s/any/win32/' | xargs -n2 cp;
             mv dist/*win32.whl wheelhouse/;
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
+            $PYTHON_BIN -m pip uninstall line_profiler -y 
             $PYTHON_BIN setup.py install
             set +x
         fi
