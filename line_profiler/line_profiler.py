@@ -421,11 +421,25 @@ def main():
     parser = optparse.OptionParser(usage=usage,
                                    version=__version__)
 
+    parser.add_option('-u', '--unit', default=None,
+                      help="specify the unit of time")
+
     options, args = parser.parse_args()
     if len(args) != 1:
         parser.error("Must provide a filename.")
+        
+    output_unit = None
+    try:
+        if options.unit is not None:
+            time_unit = float(options.unit)
+            if time_unit != 0:
+                output_unit = time_unit
+    except:
+        pass
+    
     lstats = load_stats(args[0])
-    show_text(lstats.timings, lstats.unit)
+    show_text(lstats.timings, lstats.unit,
+              output_unit=output_unit)
 
 if __name__ == '__main__':
     main()
