@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function
 
-__version__ = '3.0.2'
+__version__ = '3.1.2'
 
 try:
     import cPickle as pickle
@@ -421,11 +421,25 @@ def main():
     parser = optparse.OptionParser(usage=usage,
                                    version=__version__)
 
+    parser.add_option('-u', '--unit', default=None,
+                      help="specify the 'Timer unit' as a decimal. eg: 1 = seconds, 0.001 or 1e-3 = milliseconds")
+
     options, args = parser.parse_args()
     if len(args) != 1:
         parser.error("Must provide a filename.")
+
+    output_unit = None
+    try:
+        if options.unit is not None:
+            time_unit = float(options.unit)
+            if time_unit != 0:
+                output_unit = time_unit
+    except Exception:
+        pass
+
     lstats = load_stats(args[0])
-    show_text(lstats.timings, lstats.unit)
+    show_text(lstats.timings, lstats.unit,
+              output_unit=output_unit)
 
 if __name__ == '__main__':
     main()
