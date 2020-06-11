@@ -35,6 +35,57 @@ except NameError:
             exec_(compile(f.read(), filename, 'exec'), globals, locals)
 # =====================================
 
+import builtins
+exec_ = getattr(builtins, "exec")
+
+append_code = """
+    def decorate_with(decorator):
+        def wrapper(fn=None):
+            import inspect
+            fn_ = fn
+            # if fn_ is None: fn_ = dict(inspect.getmembers(inspect.stack()[1][0]))["f_globals"]
+            if fn_ is None: fn_ = globals()
+            if type(fn_) is dict:
+                for name in fn_:
+                    if name not in ['execfile_','decorate_all_in']:
+                        if inspect.isfunction(fn_[name]):
+                            fn_[name] = decorator(fn_[name])
+                        elif inspect.isclass(fn_[name]):
+                            for key, obj in inspect.getmembers(fn_[name]):
+                                if inspect.isfunction(obj) or inspect.ismethod(obj):
+                                    setattr(fn_[name], key, decorator(obj))
+            elif inspect.isclass(fn_):
+                for key, obj in inspect.getmembers(fn_):
+                    if inspect.isfunction(obj) or inspect.ismethod(obj):
+                        setattr(fn_, key, decorator(obj))
+                return fn_
+            elif inspect.ismodule(fn_):
+                for name in dir(fn_):
+                    obj = getattr(fn_, name)
+                    if inspect.isfunction(obj):
+                        setattr(fn_, name, decorator(obj))
+            elif inspect.isfunction(fn_):
+                # dict(inspect.getmembers(inspect.stack()[1][0]))["f_globals"][fn_.__name__] = decorator(fn_)
+                globals()[fn_.__name__] = decorator(fn_)
+                fn_ = decorator(fn_)
+            def wrap(*args,**kwargs):
+                if callable(fn_):
+                    fn_(*args,**kwargs)
+            return wrap
+        return wrapper
+    decorate_with(profile)()
+"""
+def execfile2(filename, globals=None, locals=None):
+    with open(filename, 'r') as f:
+        code = f.read()
+        if code.find('decorate_with(profile)()') == -1:
+            needle = "if __name__ == '__main__':"
+            p1 = code.find(needle)
+            if p1 != -1:
+                p = p1 + len(needle)
+                code = '{}\n{}{}'.format(code[:p],append_code,code[p:])
+        exec_(compile(code, filename, 'exec'), globals, locals)
+
 
 
 CO_GENERATOR = 0x0020
@@ -170,12 +221,17 @@ def main(args=None):
         help="Code to execute before the code to profile")
     parser.add_option('-v', '--view', action='store_true',
         help="View the results of the profile in addition to saving it.")
+    parser.add_option('-a', '--auto', action='store_true',
+        help="profile all functions and classes inside script")
 
     if not sys.argv[1:]:
         parser.print_usage()
         sys.exit(2)
 
     options, args = parser.parse_args()
+
+    if options.auto:
+        options.line_by_line = True
 
     if not options.outfile:
         if options.line_by_line:
@@ -222,7 +278,9 @@ def main(args=None):
         try:
             execfile_ = execfile
             ns = locals()
-            if options.builtin:
+            if options.auto:
+                execfile2(script_file, ns, ns)
+            elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
