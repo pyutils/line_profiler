@@ -35,55 +35,98 @@ except NameError:
             exec_(compile(f.read(), filename, 'exec'), globals, locals)
 # =====================================
 
-import builtins
-exec_ = getattr(builtins, "exec")
+""" TODO: support python 2? altough it is depreciated """
+def execfile_inject(filename, globals=None, locals=None, include=None, exclude=None, 
+                        find="if __name__ == '__main__':", before=False, module=None):
+    """
+    Args:
+        include (str):   comma separated list of function/class names to include in profiling
+        exclude (str):   comma separated list of function/class names to exclude from profiling
+        find (str):      text to look for in code to add profiling code before or after
+                         default: "if __name__ == '__main__':"
+        before (bool):   if true, inser profiling code before find string, else after
+                         default: False
+        module (string): module/class/function name in script file to profile
+    """
+    import builtins
+    import re
+    exec_ = getattr(builtins, "exec")
 
-append_code = """
-    def decorate_with(decorator):
-        def wrapper(fn=None):
-            import inspect
-            fn_ = fn
-            # if fn_ is None: fn_ = dict(inspect.getmembers(inspect.stack()[1][0]))["f_globals"]
-            if fn_ is None: fn_ = globals()
-            if type(fn_) is dict:
-                for name in fn_:
-                    if name not in ['execfile_','decorate_all_in']:
-                        if inspect.isfunction(fn_[name]):
-                            fn_[name] = decorator(fn_[name])
-                        elif inspect.isclass(fn_[name]):
-                            for key, obj in inspect.getmembers(fn_[name]):
-                                if inspect.isfunction(obj) or inspect.ismethod(obj):
-                                    setattr(fn_[name], key, decorator(obj))
-            elif inspect.isclass(fn_):
-                for key, obj in inspect.getmembers(fn_):
-                    if inspect.isfunction(obj) or inspect.ismethod(obj):
-                        setattr(fn_, key, decorator(obj))
-                return fn_
-            elif inspect.ismodule(fn_):
-                for name in dir(fn_):
-                    obj = getattr(fn_, name)
-                    if inspect.isfunction(obj):
-                        setattr(fn_, name, decorator(obj))
-            elif inspect.isfunction(fn_):
-                # dict(inspect.getmembers(inspect.stack()[1][0]))["f_globals"][fn_.__name__] = decorator(fn_)
-                globals()[fn_.__name__] = decorator(fn_)
-                fn_ = decorator(fn_)
-            def wrap(*args,**kwargs):
-                if callable(fn_):
-                    fn_(*args,**kwargs)
-            return wrap
-        return wrapper
-    decorate_with(profile)()
-"""
-def execfile2(filename, globals=None, locals=None):
+    include_ = ',include="{}"'.format(include) if include else ''
+    exclude_ = ',exclude="{}"'.format(exclude) if exclude else ''
+    module_ = '{}'.format(module) if module else ''
+    
     with open(filename, 'r') as f:
         code = f.read()
-        if code.find('decorate_with(profile)()') == -1:
-            needle = "if __name__ == '__main__':"
-            p1 = code.find(needle)
-            if p1 != -1:
-                p = p1 + len(needle)
-                code = '{}\n{}{}'.format(code[:p],append_code,code[p:])
+        """ skip adding auto profiling code if already present and profiling all, or has include/exclude """
+        if code.find('decorate_with(profile)()') == -1 and code.find('decorate_with(profile,') == -1:
+            """ profiling code must be added after all declarations but before script is run
+            defaults to adding code after "if __name__ == '__main__':" as that is usually where
+            script execution is. 
+            """
+            needle = str(find) if find is not None else "if __name__ == '__main__':"
+            loc_1 = code.rfind(needle)
+            if loc_1 != -1:
+                loc_0 = code.rfind('\n',0,loc_1)+1
+                loc_2 = code.find('\n',loc_0)-1
+                if before:
+                    loc = loc_0
+                else:
+                    loc = loc_2+1
+                line = code[loc_0:loc_2+1]
+                """ match indentation of script when adding before or after """
+                indentation = re.match(r"\s*", line).group()
+                if not before and code[loc_2] == ':':
+                    indentation += '    '
+                """ profiling code that wraps modules/functions/classes to profile """
+                decorator_code = """
+{0}def decorate_with(decorator,include=None,exclude=None):
+{0}    def wrapper(fn=None):
+{0}        import inspect
+{0}        fn_ = fn
+{0}        if fn_ is None: fn_ = globals()
+{0}        include_ = str(include).split(',') if include is not None else []
+{0}        exclude_ = str(exclude).split(',') if exclude is not None else []
+{0}        include_ = [x.strip() for x in include_]
+{0}        exclude_ = [x.strip() for x in exclude_]
+{0}        if type(fn_) is dict:
+{0}            for name in fn_:
+{0}                if name not in ['execfile_','decorate_all_in']:
+{0}                    if not len(include_) or name in include_:
+{0}                        if not len(exclude_) or name not in exclude_:
+{0}                            if inspect.isfunction(fn_[name]):
+{0}                                fn_[name] = decorator(fn_[name])
+{0}                            elif inspect.isclass(fn_[name]):
+{0}                                for key, obj in inspect.getmembers(fn_[name]):
+{0}                                    if inspect.isfunction(obj) or inspect.ismethod(obj):
+{0}                                        setattr(fn_[name], key, decorator(obj))
+{0}        elif inspect.isclass(fn_):
+{0}            for key, obj in inspect.getmembers(fn_):
+{0}                if not len(include_) or key in include_:
+{0}                    if not len(exclude_) or key not in exclude_:
+{0}                        if inspect.isfunction(obj) or inspect.ismethod(obj):
+{0}                            setattr(fn_, key, decorator(obj))
+{0}            return fn_
+{0}        elif inspect.ismodule(fn_):
+{0}            for name in dir(fn_):
+{0}                if not len(include_) or name in include_:
+{0}                    if not len(exclude_) or name not in exclude_:
+{0}                        obj = getattr(fn_, name)
+{0}                        if inspect.isfunction(obj):
+{0}                            setattr(fn_, name, decorator(obj))
+{0}        elif inspect.isfunction(fn_):
+{0}            if not len(include_) or fn_.__name__ in include_:
+{0}                if not len(exclude_) or fn_.__name__ not in exclude_:
+{0}                    globals()[fn_.__name__] = decorator(fn_)
+{0}                    fn_ = decorator(fn_)
+{0}        def wrap(*args,**kwargs):
+{0}            if callable(fn_):
+{0}                fn_(*args,**kwargs)
+{0}        return wrap
+{0}    return wrapper
+{0}decorate_with(profile{1}{2})({3})
+""".format(indentation,include_,exclude_,module_)
+                code = '{}\n{}\n{}'.format(code[:loc],decorator_code,code[loc:])
         exec_(compile(code, filename, 'exec'), globals, locals)
 
 
@@ -222,16 +265,25 @@ def main(args=None):
     parser.add_option('-v', '--view', action='store_true',
         help="View the results of the profile in addition to saving it.")
     parser.add_option('-a', '--auto', action='store_true',
-        help="profile all functions and classes inside script")
+        help="profile functions and classes inside script, only works with line_profiler -l, --line-by-line")
+    parser.add_option('-i', '--include', default=None,
+        help="comma separated functions/classes to profile")
+    parser.add_option('-x', '--exclude', default=None,
+        help="comma separated functions/classes to skip profiling")
+    parser.add_option('-f', '--auto-find', default="if __name__ == '__main__':",
+        help="insert auto profiling code before/after found text. must be after "
+            "all function/class definitions, but before executions")
+    parser.add_option('-r', '--auto-before', action='store_true', default=False,
+        help="insert the auto profiling code before auto-find text, default is after")
+    parser.add_option('-m', '--module', default=None,
+        help="profile module/function/class in script with this name")
+
 
     if not sys.argv[1:]:
         parser.print_usage()
         sys.exit(2)
 
     options, args = parser.parse_args()
-
-    if options.auto:
-        options.line_by_line = True
 
     if not options.outfile:
         if options.line_by_line:
@@ -278,8 +330,17 @@ def main(args=None):
         try:
             execfile_ = execfile
             ns = locals()
-            if options.auto:
-                execfile2(script_file, ns, ns)
+            if options.auto and options.line_by_line:
+                """ if auto profile and line profiler selected, inject auto profiling code
+                into code read from script file """
+                try:
+                    execfile_inject(script_file, ns, ns, options.include, options.exclude, 
+                                    options.auto_find, options.auto_before, options.module)
+                except (KeyboardInterrupt, SystemExit):
+                    if options.builtin:
+                        execfile(script_file, ns, ns)
+                    else:
+                        prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
             elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
