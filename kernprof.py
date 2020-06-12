@@ -337,6 +337,8 @@ def main(args=None):
                     execfile_inject(script_file, ns, ns, options.include, options.exclude, 
                                     options.auto_find, options.auto_before, options.module)
                 except (KeyboardInterrupt, SystemExit):
+                    pass
+                except:
                     if options.builtin:
                         execfile(script_file, ns, ns)
                     else:
