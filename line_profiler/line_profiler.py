@@ -189,7 +189,7 @@ class LineProfiler(CLineProfiler):
 
 
 def show_func(filename, start_lineno, func_name, timings, unit,
-    output_unit=None, stream=None, stripzeros=False):
+    output_unit=None, stream=None, stripzeros=False, skip=False):
     """ Show results for a single function.
     """
     if stream is None:
@@ -202,6 +202,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     for lineno, nhits, time in timings:
         total_time += time
         linenos.append(lineno)
+    if skip and total_time == 0:
+        return
 
     if stripzeros and total_time == 0:
         return
@@ -250,7 +252,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         stream.write("\n")
     stream.write("\n")
 
-def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
+def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False, skip=False):
     """ Show text for the given timings.
     """
     if stream is None:
@@ -263,7 +265,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
 
     for (fn, lineno, name), timings in sorted(stats.items()):
         show_func(fn, lineno, name, stats[fn, lineno, name], unit,
-            output_unit=output_unit, stream=stream, stripzeros=stripzeros)
+            output_unit=output_unit, stream=stream, stripzeros=stripzeros, skip=skip)
 
 @magics_class
 class LineProfilerMagics(Magics):
@@ -420,12 +422,15 @@ def main():
 
     parser = optparse.OptionParser(usage=usage,
                                    version=__version__)
+    parser.add_option('-k', '--skip', action='store_true', dest='skip',
+        default=False, help="skip displaying functions that have no runtime")
 
     options, args = parser.parse_args()
     if len(args) != 1:
         parser.error("Must provide a filename.")
+    skip = True if options.skip else False
     lstats = load_stats(args[0])
-    show_text(lstats.timings, lstats.unit)
+    show_text(lstats.timings, lstats.unit, skip=skip)
 
 if __name__ == '__main__':
     main()
