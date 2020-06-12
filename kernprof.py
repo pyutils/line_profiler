@@ -91,7 +91,7 @@ def execfile_inject(filename, globals=None, locals=None, include=None, exclude=N
 {0}        exclude_ = [x.strip() for x in exclude_]
 {0}        if type(fn_) is dict:
 {0}            for name in fn_:
-{0}                if name not in ['execfile_','decorate_all_in']:
+{0}                if name not in ['execfile_','execfile_inject','decorate_with']:
 {0}                    if not len(include_) or name in include_:
 {0}                        if not len(exclude_) or name not in exclude_:
 {0}                            if inspect.isfunction(fn_[name]):
