@@ -1,6 +1,10 @@
 Changes
 =======
 
+3.1.2
+~~~~~
+* ENH: Add command line option to specify timer unit
+
 3.0.2
 ~~~~~
 * BUG: fix ``__version__`` attribute in Python 2 CLI.
