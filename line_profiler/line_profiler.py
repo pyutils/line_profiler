@@ -442,7 +442,7 @@ def main():
         pass
     
     lstats = load_stats(args[0])
-    skip = True if options.skip else False
+    skip = bool(options.skip)
     show_text(lstats.timings, lstats.unit,
               output_unit=output_unit, skip=skip)
 
