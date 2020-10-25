@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function
 
-__version__ = '3.0.2'
+__version__ = '3.1.2'
 
 try:
     import cPickle as pickle
@@ -422,7 +422,7 @@ def main():
                                    version=__version__)
 
     parser.add_option('-u', '--unit', default=None,
-                      help="specify the unit of time")
+                      help="specify the 'Timer unit' as a decimal. eg: 1 = seconds, 0.001 or 1e-3 = milliseconds")
 
     options, args = parser.parse_args()
     if len(args) != 1:
