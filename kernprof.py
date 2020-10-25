@@ -35,7 +35,6 @@ except NameError:
             exec_(compile(f.read(), filename, 'exec'), globals, locals)
 # =====================================
 
-""" TODO: support python 2? altough it is depreciated """
 def execfile_inject(filename, globals=None, locals=None, include=None, exclude=None, 
                         find="if __name__ == '__main__':", before=False, module=None):
     """
@@ -44,12 +43,13 @@ def execfile_inject(filename, globals=None, locals=None, include=None, exclude=N
         exclude (str):   comma separated list of function/class names to exclude from profiling
         find (str):      text to look for in code to add profiling code before or after
                          default: "if __name__ == '__main__':"
-        before (bool):   if true, inser profiling code before find string, else after
+        before (bool):   if true, insert profiling code before find string, else after
                          default: False
         module (string): module/class/function name in script file to profile
     """
     import builtins
     import re
+    import textwrap
     exec_ = getattr(builtins, "exec")
 
     include_ = ',include="{}"'.format(include) if include else ''
@@ -79,53 +79,54 @@ def execfile_inject(filename, globals=None, locals=None, include=None, exclude=N
                 if not before and code[loc_2] == ':':
                     indentation += '    '
                 """ profiling code that wraps modules/functions/classes to profile """
-                decorator_code = """
-{0}def decorate_with(decorator,include=None,exclude=None):
-{0}    def wrapper(fn=None):
-{0}        import inspect
-{0}        fn_ = fn
-{0}        if fn_ is None: fn_ = globals()
-{0}        include_ = str(include).split(',') if include is not None else []
-{0}        exclude_ = str(exclude).split(',') if exclude is not None else []
-{0}        include_ = [x.strip() for x in include_]
-{0}        exclude_ = [x.strip() for x in exclude_]
-{0}        if type(fn_) is dict:
-{0}            for name in fn_:
-{0}                if name not in ['execfile_','execfile_inject','decorate_with']:
-{0}                    if not len(include_) or name in include_:
-{0}                        if not len(exclude_) or name not in exclude_:
-{0}                            if inspect.isfunction(fn_[name]):
-{0}                                fn_[name] = decorator(fn_[name])
-{0}                            elif inspect.isclass(fn_[name]):
-{0}                                for key, obj in inspect.getmembers(fn_[name]):
-{0}                                    if inspect.isfunction(obj) or inspect.ismethod(obj):
-{0}                                        setattr(fn_[name], key, decorator(obj))
-{0}        elif inspect.isclass(fn_):
-{0}            for key, obj in inspect.getmembers(fn_):
-{0}                if not len(include_) or key in include_:
-{0}                    if not len(exclude_) or key not in exclude_:
-{0}                        if inspect.isfunction(obj) or inspect.ismethod(obj):
-{0}                            setattr(fn_, key, decorator(obj))
-{0}            return fn_
-{0}        elif inspect.ismodule(fn_):
-{0}            for name in dir(fn_):
-{0}                if not len(include_) or name in include_:
-{0}                    if not len(exclude_) or name not in exclude_:
-{0}                        obj = getattr(fn_, name)
-{0}                        if inspect.isfunction(obj):
-{0}                            setattr(fn_, name, decorator(obj))
-{0}        elif inspect.isfunction(fn_):
-{0}            if not len(include_) or fn_.__name__ in include_:
-{0}                if not len(exclude_) or fn_.__name__ not in exclude_:
-{0}                    globals()[fn_.__name__] = decorator(fn_)
-{0}                    fn_ = decorator(fn_)
-{0}        def wrap(*args,**kwargs):
-{0}            if callable(fn_):
-{0}                fn_(*args,**kwargs)
-{0}        return wrap
-{0}    return wrapper
-{0}decorate_with(profile{1}{2})({3})
-""".format(indentation,include_,exclude_,module_)
+                decorator_code = textwrap.dedent("""
+                                    def decorate_with(decorator,include=None,exclude=None):
+                                        def wrapper(fn=None):
+                                            import inspect
+                                            fn_ = fn
+                                            if fn_ is None: fn_ = globals()
+                                            include_ = str(include).split(',') if include is not None else []
+                                            exclude_ = str(exclude).split(',') if exclude is not None else []
+                                            include_ = [x.strip() for x in include_]
+                                            exclude_ = [x.strip() for x in exclude_]
+                                            if type(fn_) is dict:
+                                                for name in fn_:
+                                                    if name not in ['execfile_','execfile_inject','decorate_with']:
+                                                        if not len(include_) or name in include_:
+                                                            if not len(exclude_) or name not in exclude_:
+                                                                if inspect.isfunction(fn_[name]):
+                                                                    fn_[name] = decorator(fn_[name])
+                                                                elif inspect.isclass(fn_[name]):
+                                                                    for key, obj in inspect.getmembers(fn_[name]):
+                                                                        if inspect.isfunction(obj) or inspect.ismethod(obj):
+                                                                            setattr(fn_[name], key, decorator(obj))
+                                            elif inspect.isclass(fn_):
+                                                for key, obj in inspect.getmembers(fn_):
+                                                    if not len(include_) or key in include_:
+                                                        if not len(exclude_) or key not in exclude_:
+                                                            if inspect.isfunction(obj) or inspect.ismethod(obj):
+                                                                setattr(fn_, key, decorator(obj))
+                                                return fn_
+                                            elif inspect.ismodule(fn_):
+                                                for name in dir(fn_):
+                                                    if not len(include_) or name in include_:
+                                                        if not len(exclude_) or name not in exclude_:
+                                                            obj = getattr(fn_, name)
+                                                            if inspect.isfunction(obj):
+                                                                setattr(fn_, name, decorator(obj))
+                                            elif inspect.isfunction(fn_):
+                                                if not len(include_) or fn_.__name__ in include_:
+                                                    if not len(exclude_) or fn_.__name__ not in exclude_:
+                                                        globals()[fn_.__name__] = decorator(fn_)
+                                                        fn_ = decorator(fn_)
+                                            def wrap(*args,**kwargs):
+                                                if callable(fn_):
+                                                    fn_(*args,**kwargs)
+                                            return wrap
+                                        return wrapper
+                                    decorate_with(profile{}{})({})
+                                    """.format(include_,exclude_,module_))
+                decorator_code = textwrap.indent(decorator_code, prefix=indentation)
                 code = '{}\n{}\n{}'.format(code[:loc],decorator_code,code[loc:])
         exec_(compile(code, filename, 'exec'), globals, locals)
 
@@ -333,16 +334,8 @@ def main(args=None):
             if options.auto and options.line_by_line:
                 """ if auto profile and line profiler selected, inject auto profiling code
                 into code read from script file """
-                try:
-                    execfile_inject(script_file, ns, ns, options.include, options.exclude, 
-                                    options.auto_find, options.auto_before, options.module)
-                except (KeyboardInterrupt, SystemExit):
-                    pass
-                except:
-                    if options.builtin:
-                        execfile(script_file, ns, ns)
-                    else:
-                        prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
+                execfile_inject(script_file, ns, ns, options.include, options.exclude, 
+                                options.auto_find, options.auto_before, options.module)
             elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
