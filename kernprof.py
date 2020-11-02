@@ -154,7 +154,7 @@ def main(args=None):
     if args is None:
         args = sys.argv
     usage = "%prog [-s setupfile] [-o output_file_path] scriptfile [arg] ..."
-    parser = optparse.OptionParser(usage=usage, version="%prog 1.0b2")
+    parser = optparse.OptionParser(usage=usage, version="%prog 1.1")
     parser.allow_interspersed_args = False
     parser.add_option('-l', '--line-by-line', action='store_true',
         help="Use the line-by-line profiler from the line_profiler module "
@@ -170,6 +170,11 @@ def main(args=None):
         help="Code to execute before the code to profile")
     parser.add_option('-v', '--view', action='store_true',
         help="View the results of the profile in addition to saving it.")
+    parser.add_option('-u', '--unit', default='1e-6', type=float,
+        help="Output unit (in seconds) in which the timing info is to be"
+            "displayed (for --view). Defaults to 1e-6.")
+    parser.add_option('--skip-zero', action='store_true',
+        help="Hide functions which have not been called (for --view).")
 
     if not sys.argv[1:]:
         parser.print_usage()
@@ -232,7 +237,7 @@ def main(args=None):
         prof.dump_stats(options.outfile)
         print('Wrote profile results to %s' % options.outfile)
         if options.view:
-            prof.print_stats()
+            prof.print_stats(output_unit=options.unit, stripzeros=options.skip_zero)
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))

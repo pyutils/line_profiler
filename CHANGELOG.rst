@@ -1,6 +1,11 @@
 Changes
 =======
 
+3.2.0
+~~~~~
+* ENH: Add command line option to specify time unit and skip displaying
+  functions which have not been profiled.
+
 3.1.0
 ~~~~~
 * ENH: fix Python 3.9
