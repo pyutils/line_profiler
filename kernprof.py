@@ -151,6 +151,11 @@ def find_script(script_name):
 
 
 def main(args=None):
+    def strictly_positive(option, opt, value, parser):
+        if value <= 0:
+            raise optparse.OptionValueError("option %s: floating-point value must be > 0, got %s" % (opt, value))
+        setattr(parser.values, option.dest, value)
+
     if args is None:
         args = sys.argv
     usage = "%prog [-s setupfile] [-o output_file_path] scriptfile [arg] ..."
@@ -171,7 +176,8 @@ def main(args=None):
     parser.add_option('-v', '--view', action='store_true',
         help="View the results of the profile in addition to saving it.")
     parser.add_option('-u', '--unit', default='1e-6', type=float,
-        help="Output unit (in seconds) in which the timing info is to be"
+        action='callback', callback=strictly_positive,
+        help="Output unit (in seconds) in which the timing info is to be "
             "displayed (for --view). Defaults to 1e-6.")
     parser.add_option('--skip-zero', action='store_true',
         help="Hide functions which have not been called (for --view).")

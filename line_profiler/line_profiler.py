@@ -416,11 +416,18 @@ def load_stats(filename):
 
 
 def main():
+    def strictly_positive(option, opt, value, parser):
+        if value <= 0:
+            raise optparse.OptionValueError("option %s: floating-point value must be > 0, got %s" % (opt, value))
+        setattr(parser.values, option.dest, value)
+
     usage = "usage: python -m line_profiler profile.lprof"
 
     parser = optparse.OptionParser(usage=usage,
                                    version=__version__)
-    parser.add_option('-u', '--unit', default='1e-6', type=float, help="Output unit (in seconds) in which the timing info is to be displayed. Defaults to 1e-6.")
+    parser.add_option('-u', '--unit', default='1e-6', type=float,
+        action='callback', callback=strictly_positive,
+        help="Output unit (in seconds) in which the timing info is to be displayed. Defaults to 1e-6.")
     parser.add_option('-s', '--skip-zero', action='store_true', help="Hide functions which have not been called.")
 
     options, args = parser.parse_args()
