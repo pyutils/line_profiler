@@ -159,6 +159,10 @@ def main(args=None):
     if args is None:
         args = sys.argv
     usage = "%prog [-s setupfile] [-o output_file_path] scriptfile [arg] ..."
+    try:
+        from line_profiler import __version__ as kernprof_version
+    except Exception:
+        kernprof_version = '%prog v3.1+unknown'
     parser = optparse.OptionParser(usage=usage, version="%prog 1.1")
     parser.allow_interspersed_args = False
     parser.add_option('-l', '--line-by-line', action='store_true',
