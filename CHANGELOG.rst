@@ -5,6 +5,8 @@ Changes
 ~~~~~
 * ENH: Add command line option to specify time unit and skip displaying
   functions which have not been profiled.
+* ENH: Unified versions of line_profiler and kernprof: kernprof version is now
+  identical to line_profiler version.
 
 3.1.0
 ~~~~~

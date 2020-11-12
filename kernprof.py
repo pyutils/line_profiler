@@ -8,6 +8,8 @@ import optparse
 import os
 import sys
 
+from line_profiler import __version__
+
 PY3 = sys.version_info[0] == 3
 
 # Guard the import of cProfile such that 3.x people
@@ -159,11 +161,7 @@ def main(args=None):
     if args is None:
         args = sys.argv
     usage = "%prog [-s setupfile] [-o output_file_path] scriptfile [arg] ..."
-    try:
-        from line_profiler import __version__ as kernprof_version
-    except Exception:
-        kernprof_version = '%prog v3.1+unknown'
-    parser = optparse.OptionParser(usage=usage, version="%prog 1.1")
+    parser = optparse.OptionParser(usage=usage, version=__version__)
     parser.allow_interspersed_args = False
     parser.add_option('-l', '--line-by-line', action='store_true',
         help="Use the line-by-line profiler from the line_profiler module "
