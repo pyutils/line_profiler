@@ -8,7 +8,10 @@ import optparse
 import os
 import sys
 
-from line_profiler import __version__
+try:
+    from line_profiler import __version__
+except ImportError:
+    __version__ = 'UNKNOWN'
 
 PY3 = sys.version_info[0] == 3
 
