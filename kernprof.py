@@ -194,7 +194,7 @@ def main(args=None):
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
 
 
-    sys.argv = [options.script, *options.args]
+    sys.argv = [options.script] + options.args
     if options.setup is not None:
         # Run some setup code outside of the profiler. This is good for large
         # imports.
