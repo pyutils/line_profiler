@@ -155,7 +155,7 @@ def find_script(script_name):
     raise SystemExit(1)
 
 
-def main():
+def main(args=None):
     def positive_float(value):
         val = float(value)
         if val <= 0:
@@ -187,7 +187,7 @@ def main():
     parser.add_argument('script', help="The python script file to run")
     parser.add_argument('args', nargs='...', help="Optional script arguments")
 
-    options = parser.parse_args()
+    options = parser.parse_args(args)
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
@@ -245,4 +245,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])
