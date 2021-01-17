@@ -162,7 +162,7 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    parser = ArgumentParser()
+    parser = ArgumentParser(description="Run and profile a python script.")
     parser.add_argument('-V', '--version', action='version', version=__version__)
     parser.add_argument('-l', '--line-by-line', action='store_true',
         help="Use the line-by-line profiler instead of cProfile. Implies --builtin.")
