@@ -140,6 +140,8 @@ class ContextualProfile(Profile):
 
 class RepeatedTimer(object):
     """
+    Background timer for outputting file every n seconds.
+    
     Adapted from
     https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds/40965385#40965385
     """
@@ -216,7 +218,8 @@ def main(args=None):
     parser.add_argument('-z', '--skip-zero', action='store_true',
         help="Hide functions which have not been called")
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-        help="Outputs cumulative profiling results to file every n seconds, defaults to 60.")
+        help="Enables outputting of cumulative profiling results to file every n seconds.
+            "Minimum value is 1 (second). Defaults to disabled.")
 
     parser.add_argument('script', help="The python script file to run")
     parser.add_argument('args', nargs='...', help="Optional script arguments")
