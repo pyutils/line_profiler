@@ -6,6 +6,8 @@
 import functools
 import os
 import sys
+import threading
+import time
 from argparse import ArgumentError, ArgumentParser
 
 try:
@@ -136,6 +138,36 @@ class ContextualProfile(Profile):
         self.disable_by_count()
 
 
+class RepeatedTimer(object):
+    """
+    Adapted from
+    https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds/40965385#40965385
+    """
+    def __init__(self, interval, dump_func, outfile):
+        self._timer = None
+        self.interval = interval
+        self.dump_func = dump_func
+        self.outfile = outfile
+        self.is_running = False
+        self.next_call = time.time()
+        self.start()
+
+    def _run(self):
+        self.is_running = False
+        self.start()
+        self.dump_func(self.outfile)
+
+    def start(self):
+        if not self.is_running:
+            self.next_call += self.interval
+            self._timer = threading.Timer(self.next_call - time.time(), self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):
+        self._timer.cancel()
+        self.is_running = False
+
 def find_script(script_name):
     """ Find the script.
 
@@ -183,6 +215,8 @@ def main(args=None):
         "displayed (default: 1e-6)")
     parser.add_argument('-z', '--skip-zero', action='store_true',
         help="Hide functions which have not been called")
+    parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
+        help="Outputs cumulative profiling results to file every n seconds, defaults to 60.")
 
     parser.add_argument('script', help="The python script file to run")
     parser.add_argument('args', nargs='...', help="Optional script arguments")
@@ -227,6 +261,8 @@ def main(args=None):
     # kernprof.py's.
     sys.path.insert(0, os.path.dirname(script_file))
 
+    if options.output_interval:
+        rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     try:
         try:
             execfile_ = execfile
@@ -238,6 +274,8 @@ def main(args=None):
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
+        if options.output_interval:
+            rt.stop()
         prof.dump_stats(options.outfile)
         print('Wrote profile results to %s' % options.outfile)
         if options.view:

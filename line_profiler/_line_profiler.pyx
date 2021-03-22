@@ -67,7 +67,7 @@ cdef class LineTiming:
         self.total_time = 0
         self.nhits = 0
 
-    cdef hit(self, PY_LONG_LONG dt):
+    cdef void hit(self, PY_LONG_LONG dt):
         """ Record a line timing.
         """
         self.nhits += 1
