@@ -218,7 +218,7 @@ def main(args=None):
     parser.add_argument('-z', '--skip-zero', action='store_true',
         help="Hide functions which have not been called")
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-        help="Enables outputting of cumulative profiling results to file every n seconds.
+        help="Enables outputting of cumulative profiling results to file every n seconds."
             "Minimum value is 1 (second). Defaults to disabled.")
 
     parser.add_argument('script', help="The python script file to run")
