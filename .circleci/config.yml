@@ -246,6 +246,7 @@ jobs:
   .test_minimal_template: &test_minimal_template  
     <<: 
         - *common_template
+    resource_class: small
     steps:
       - checkout
       # ### INITIALIZE AND CACHE REQUIREMENTS ###
@@ -281,6 +282,7 @@ jobs:
   .test_full_template: &test_full_template  
     <<: 
         - *common_template
+    resource_class: small
     steps:
       - checkout
       # ### INITIALIZE AND CACHE REQUIREMENTS ###
