@@ -199,23 +199,23 @@ workflows:
   version: 2
   test:
     jobs:
-      - test_full/cp39-39-linux
-      - test_full/cp38-38-linux
-      - test_full/cp37-37m-linux
-      - test_full/cp36-36m-linux
-      - test_full/cp35-35m-linux
-      #- test_full/cp27-27mu-linux
+      - test_full/cp39-cp39-manylinux2010
+      - test_full/cp38-cp38-manylinux2010
+      - test_full/cp37-cp37m-manylinux2010
+      - test_full/cp36-cp36m-manylinux2010
+      - test_full/cp35-cp35m-manylinux2010
+      #- test_full/cp27-27mu-manylinux2010
 
       #- test_full/pypy3
 
-      - gpgsign/cp38-cp38-linux:
+      - gpgsign/cp38-cp38-manylinux2010:
           filters:
             branches:
               only: 
                  - master
                  - release
 
-      - deploy/cp38-cp38-linux:
+      - deploy/cp38-cp38-manylinux2010:
           filters:
             branches:
               only: 
@@ -244,32 +244,22 @@ jobs:
     resource_class: small
     steps:
       - checkout
-      # ### INITIALIZE AND CACHE REQUIREMENTS ###
-      - restore_cache:
-          keys:
-          - v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/build.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
       - run:
-          name: install dependencies
+          name: build_wheel
           command: |
             $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
             . venv/bin/activate
-            pip install -r requirements.txt 
-            # The "full" dependency install
-            # TODO: Test the installed wheel instead of the developer install
-            # python setup.py bdist_wheel --universal
-            pip install .[all] -v
-      - save_cache:
-          paths:
-            - ./venv
-          key: v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/build.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
-      # ### RUN TESTS ###
+            _INSIDE_DOCKER=YES REPO_ROOT="." MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_manylinux_build.sh
       - run:
-          name: run tests
+          name: run_tests
           command: |
             . venv/bin/activate
-            pip install -r requirements.txt 
+            BDIST_WHEEL_PATH=$(ls dist/*-*-$MB_PYTHON_TAG*.whl)
+            echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
+            pip install ${BDIST_WHEEL_PATH}[all]
             python run_tests.py
       - store_artifacts:
+          # TODO: store wheel as an artifact
           path: test-reports
           destination: test-reports
 
@@ -357,70 +347,71 @@ jobs:
   # All we need to do is change the base docker image so python is the
   # version we want we can reuse everything else from the template
   
-  test_full/cp39-39-linux:
+  test_full/cp39-cp39-manylinux2010:
     <<: *test_full_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp39-cp39/bin/python
+      - MB_PYTHON_TAG=cp39-cp39
     docker:
-      - image: circleci/python:3.9
-    working_directory: ~/repo-full-39
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/repo-full-cp39
   
-  test_full/cp38-38-linux:
+  test_full/cp38-cp38-manylinux2010:
     <<: *test_full_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+      - MB_PYTHON_TAG=cp38-cp38
     docker:
-      - image: circleci/python:3.8
-    working_directory: ~/repo-full-38
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/repo-full-cp38
   
-  test_full/cp37-37m-linux:
+  test_full/cp37-cp37m-manylinux2010:
     <<: *test_full_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp37-cp37m/bin/python
+      - MB_PYTHON_TAG=cp37-cp37m
     docker:
-      - image: circleci/python:3.7
-    working_directory: ~/repo-full-37
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/repo-full-cp37
 
-  test_full/cp36-36m-linux:
+  test_full/cp36-cp36m-manylinux2010:
     <<: *test_full_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp36-cp36m/bin/python
+      - MB_PYTHON_TAG=cp36-cp36m
     docker:
-      - image: circleci/python:3.5
-    working_directory: ~/repo-full-36
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/repo-full-cp36
 
-  test_full/cp35-35m-linux:
+  test_full/cp35-cp35m-manylinux2010:
     <<: *test_full_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp35-cp35m/bin/python
+      - MB_PYTHON_TAG=cp35-cp35m
     docker:
-      - image: circleci/python:3.5
-    working_directory: ~/repo-full-35
-
-  #test_full/cp27-27mu-linux:
-  #  <<: *test_full_template
-  #  docker:
-  #    - image: circleci/python:2.7
-  #  working_directory: ~/repo-full-27
-
-  # ------------
-
-  # --- pypy ----
-  # line_profiler does not currently support pypy
-
-  #test_full/pypy3:
-  #  <<: *test_full_template
-  #  docker:
-  #    - image: pypy:3
-  #  environment:
-  #    - PYTHON_EXE: pypy3
-  #  working_directory: ~/repo-full-pypy3
-
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/repo-full-cp35
  
   # -- gpgsign + deploy
   
-  gpgsign/cp38-cp38-linux:
+  gpgsign/cp38-cp38-manylinux2010:
     <<: *gpgsign_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+      - MB_PYTHON_TAG=cp38-cp38
     docker:
-      - image: circleci/python:3.8
-    working_directory: ~/gpgsign/cp38-cp38-linux
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/gpgsign/cp38-cp38-manylinux2010
 
 
-  deploy/cp38-cp38-linux:
+  deploy/cp38-cp38-manylinux2010:
     <<: *deploy_template
+    environment:
+      - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+      - MB_PYTHON_TAG=cp38-cp38
     docker:
-      - image: circleci/python:3.9
-    working_directory: ~/deploy/cp38-cp38-linux
+      - image: quay.io/pypa/manylinux2010_x86_64:latest
+    working_directory: ~/deploy/cp38-cp38-manylinux2010
         
 
 __scratch_work__:
@@ -438,8 +429,8 @@ __scratch_work__:
         $HOME/.local/bin/circleci switch
 
         $HOME/.local/bin/circleci config validate
-        $HOME/.local/bin/circleci local execute --job test_minimal/cp39-cp39-linux
-        $HOME/.local/bin/circleci local execute --config .circleci/config.yml --job test_full/cp38-38-linux
+        $HOME/.local/bin/circleci local execute --job test_full/cp39-cp39-manylinux2010
+        $HOME/.local/bin/circleci local execute --config .circleci/config.yml --job test_full/cp38-cp38-manylinux2010
         $HOME/.local/bin/circleci local execute --config .circleci/config.yml 
 
 
