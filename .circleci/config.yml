@@ -431,28 +431,58 @@ jobs:
     working_directory: ~/repo-full-cp35
  
   # -- gpgsign + deploy
+  # We have to use a different image to do GPG signing
+  
+  gpgsign/cp39-cp39-manylinux2010:
+    <<: *gpgsign_template
+    environment:
+      - MB_PYTHON_TAG=cp39-cp39
+    docker:
+      - image: circleci/python:3.8
+    working_directory: ~/gpgsign/cp39-cp39-manylinux2010
   
   gpgsign/cp38-cp38-manylinux2010:
     <<: *gpgsign_template
     environment:
-      #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
       - MB_PYTHON_TAG=cp38-cp38
     docker:
-      # We have to use a different image to do GPG signing
       - image: circleci/python:3.8
-      #- image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/gpgsign/cp38-cp38-manylinux2010
-
-
-  deploy/cp38-cp38-manylinux2010:
-    <<: *deploy_template
+  
+  gpgsign/cp37-cp37m-manylinux2010:
+    <<: *gpgsign_template
     environment:
-      #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
-      - MB_PYTHON_TAG=cp38-cp38
+      - MB_PYTHON_TAG=cp37-cp37m
     docker:
-      - image: circleci/python:3.8
-      #- image: quay.io/pypa/manylinux2010_x86_64:latest
-    working_directory: ~/deploy/cp38-cp38-manylinux2010
+      - image: circleci/python:3.7
+    working_directory: ~/gpgsign/cp37-cp37m-manylinux2010
+  
+  gpgsign/cp36-cp36m-manylinux2010:
+    <<: *gpgsign_template
+    environment:
+      - MB_PYTHON_TAG=cp36-cp36m
+    docker:
+      - image: circleci/python:3.6
+    working_directory: ~/gpgsign/cp36-cp36m-manylinux2010
+
+  gpgsign/cp35-cp35m-manylinux2010:
+    <<: *gpgsign_template
+    environment:
+      - MB_PYTHON_TAG=cp35-cp35m
+    docker:
+      - image: circleci/python:3.5
+    working_directory: ~/gpgsign/cp35-cp35m-manylinux2010
+
+
+  #deploy/cp38-cp38-manylinux2010:
+  #  <<: *deploy_template
+  #  environment:
+  #    #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+  #    - MB_PYTHON_TAG=cp38-cp38
+  #  docker:
+  #    - image: circleci/python:3.8
+  #    #- image: quay.io/pypa/manylinux2010_x86_64:latest
+  #  working_directory: ~/deploy/cp38-cp38-manylinux2010
         
 
 __scratch_work__:
