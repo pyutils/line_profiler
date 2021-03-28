@@ -253,6 +253,7 @@ jobs:
           command: |
             $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
             . venv/bin/activate
+            pip install -r requirements.txt 
             # The "full" dependency install
             # TODO: Test the installed wheel instead of the developer install
             # python setup.py bdist_wheel --universal
@@ -266,6 +267,7 @@ jobs:
           name: run tests
           command: |
             . venv/bin/activate
+            pip install -r requirements.txt 
             python run_tests.py
       - store_artifacts:
           path: test-reports
