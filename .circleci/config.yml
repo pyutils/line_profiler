@@ -243,41 +243,6 @@ jobs:
     steps:
       - checkout
 
-  .test_minimal_template: &test_minimal_template  
-    <<: 
-        - *common_template
-    resource_class: small
-    steps:
-      - checkout
-      # ### INITIALIZE AND CACHE REQUIREMENTS ###
-      - restore_cache:
-          # NOTE: cache keys should contain the Python Version
-          keys:
-          - v3-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
-      - run:
-          name: install dependencies
-          command: |
-            $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
-            . venv/bin/activate
-            # The "minimal" tests install barebones requirements
-            #python setup.py bdist_wheel --universal
-            #pip install -r requirements/tests.txt
-            #pip install -r requirements/runtime.txt 
-            pip install .[tests] -v
-      - save_cache:
-          paths:
-            - ./venv
-          key: v3-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
-      # ### RUN TESTS ###
-      - run:
-          name: run tests
-          command: |
-            . venv/bin/activate
-            python run_tests.py
-      - store_artifacts:
-          path: test-reports
-          destination: test-reports
-
 
   .test_full_template: &test_full_template  
     <<: 
@@ -288,7 +253,7 @@ jobs:
       # ### INITIALIZE AND CACHE REQUIREMENTS ###
       - restore_cache:
           keys:
-          - v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/optional.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
+          - v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/build.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
       - run:
           name: install dependencies
           command: |
@@ -301,7 +266,7 @@ jobs:
       - save_cache:
           paths:
             - ./venv
-          key: v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/optional.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
+          key: v2-dependencies-{{ checksum "requirements/runtime.txt" }}-{{ checksum "requirements/build.txt" }}-{{ checksum "requirements/tests.txt" }}-{{ .Environment.CIRCLE_JOB }}
       # ### RUN TESTS ###
       - run:
           name: run tests
@@ -433,60 +398,17 @@ jobs:
   #  working_directory: ~/repo-full-27
 
   # ------------
-  
-  test_minimal/cp39-cp39-linux:
-    <<: *test_minimal_template
-    docker:
-      - image: circleci/python:3.9
-    working_directory: ~/{{ .Environment.CIRCLE_JOB }}
-  
-  test_minimal/cp38-38-linux:
-    <<: *test_minimal_template
-    docker:
-      - image: circleci/python:3.8
-    working_directory: ~/repo-minimal-38
-
-  test_minimal/cp37-37m-linux:
-    <<: *test_minimal_template
-    docker:
-      - image: circleci/python:3.7
-    working_directory: ~/test_minimal/cp37-37m-linux
-
-  test_minimal/cp36-36m-linux:
-    <<: *test_minimal_template
-    docker:
-      - image: circleci/python:3.6
-    working_directory: ~/repo-minimal-36
-
-  test_minimal/cp35-35m-linux:
-    <<: *test_minimal_template
-    docker:
-      - image: circleci/python:3.5
-    working_directory: ~/repo-minimal-35
-
-  #test_minimal/cp27-27mu-linux:
-  #  <<: *test_minimal_template
-  #  docker:
-  #    - image: circleci/python:2.7
-  #  working_directory: ~/repo-minimal-27
 
   # --- pypy ----
+  # line_profiler does not currently support pypy
 
-  test_minimal/pypy3:
-    <<: *test_minimal_template
-    docker:
-      - image: pypy:3
-    environment:
-      - PYTHON_EXE: pypy3
-    working_directory: ~/repo-minimal-pypy3
-
-  test_full/pypy3:
-    <<: *test_full_template
-    docker:
-      - image: pypy:3
-    environment:
-      - PYTHON_EXE: pypy3
-    working_directory: ~/repo-full-pypy3
+  #test_full/pypy3:
+  #  <<: *test_full_template
+  #  docker:
+  #    - image: pypy:3
+  #  environment:
+  #    - PYTHON_EXE: pypy3
+  #  working_directory: ~/repo-full-pypy3
 
  
   # -- gpgsign + deploy
