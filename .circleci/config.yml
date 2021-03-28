@@ -274,6 +274,9 @@ jobs:
       - store_artifacts:
           path: .coverage
           destination: .coverage
+      - store_artifacts:
+          path: dist
+          destination: dist
 
 
   .gpgsign_template: &gpgsign_template  
