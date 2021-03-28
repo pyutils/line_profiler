@@ -199,20 +199,14 @@ workflows:
   version: 2
   test:
     jobs:
+      - test_full/cp39-39-linux
       - test_full/cp38-38-linux
       - test_full/cp37-37m-linux
       - test_full/cp36-36m-linux
       - test_full/cp35-35m-linux
       #- test_full/cp27-27mu-linux
 
-      - test_minimal/cp38-38-linux
-      - test_minimal/cp37-37m-linux
-      - test_minimal/cp36-36m-linux
-      - test_minimal/cp35-35m-linux
-      #- test_minimal/cp27-27mu-linux
-
-      - test_minimal/pypy3
-      - test_full/pypy3
+      #- test_full/pypy3
 
       - gpgsign/cp38-cp38-linux:
           filters:
