@@ -257,6 +257,10 @@ jobs:
             MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             _INSIDE_DOCKER=YES REPO_ROOT="." MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_manylinux_build.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+              - dist
       - run:
           name: install_wheel
           command: |
@@ -271,13 +275,9 @@ jobs:
           command: |
             . venv/bin/activate
             python run_tests.py
-      - store_artifacts:
-          path: .coverage
-          destination: .coverage
-      - persist_to_workspace:
-          root: .
-          paths:
-              - dist
+      #- store_artifacts:
+      #    path: .coverage
+      #    destination: .coverage
 
 
   .gpgsign_template: &gpgsign_template  
@@ -285,6 +285,8 @@ jobs:
         - *common_template
     steps:
       - checkout
+      - attach_workspace:
+          at: .
       - run:
           name: gpg_sign_dist
           command: |
@@ -315,9 +317,9 @@ jobs:
             pip install requests[security] twine wheel
             echo "Execute the publish script in dry mode"
             MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=False DO_TAG=False ./publish.sh 
-      - store_artifacts:
-          path: dist
-          destination: dist
+      #- store_artifacts:
+      #    path: dist
+      #    destination: dist
 
 
   .deploy_template: &deploy_template  
