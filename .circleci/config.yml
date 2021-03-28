@@ -33,7 +33,7 @@ __doc__: &__doc__
             sed 's|pyutils|<YOUR-GITHUB-USERNAME>|g' | \
             sed 's|line_profiler|<YOUR-REPO>|g' | \
             sed 's|GPG_ID|<YOUR-GPG-ID>|g' | \
-            sed 's|CIRCLE_CI_SECRET|<YOUR_CI_SECRET>|g' | \
+            sed 's|PYUTILS_CI_GITHUB_SECRET|<YOUR_CI_SECRET>|g' | \
         tee /tmp/repl && colordiff .circleci/config.yml /tmp/repl
         ```
 
@@ -66,7 +66,7 @@ __doc__: &__doc__
 
         * TWINE_PASSWORD - this is your pypi password 
 
-        * CIRCLE_CI_SECRET - We will use this as a secret key to encrypt/decrypt gpg secrets 
+        * PYUTILS_CI_GITHUB_SECRET - We will use this as a secret key to encrypt/decrypt gpg secrets 
             This is only needed if you want to automatically sign published
             wheels with a gpg key.
 
@@ -109,7 +109,7 @@ __doc__: &__doc__
 
             export TWINE_USERNAME=<pypi-username>
             export TWINE_PASSWORD=<pypi-password>
-            export CIRCLE_CI_SECRET="<a-very-long-secret-string>"
+            export PYUTILS_CI_GITHUB_SECRET="<a-very-long-secret-string>"
             export GITHUB_PUSH_TOKEN='git-push-token:<token-password>'
         ```
 
@@ -127,7 +127,7 @@ __doc__: &__doc__
         
         # Load or generate secrets
         source $(secret_loader.sh)
-        echo $CIRCLE_CI_SECRET
+        echo $PYUTILS_CI_GITHUB_SECRET
         echo $TWINE_USERNAME
 
         # ADD RELEVANT VARIABLES TO CIRCLECI SECRET VARIABLES
@@ -135,33 +135,33 @@ __doc__: &__doc__
         # See previous CIRCLE_CI section for more details
 
         # HOW TO ENCRYPT YOUR SECRET GPG KEY
-        IDENTIFIER="GPG_ID"
+        IDENTIFIER="PyUtils"
         GPG_KEYID=$(gpg --list-keys --keyid-format LONG "$IDENTIFIER" | head -n 2 | tail -n 1 | awk '{print $1}' | tail -c 9)
         echo "GPG_KEYID = $GPG_KEYID"
 
         # Export plaintext gpg public keys, private keys, and trust info
         mkdir -p dev
-        gpg --armor --export-secret-keys $GPG_KEYID > dev/ci_secret_gpg_key.pgp
-        gpg --armor --export $GPG_KEYID > dev/ci_public_gpg_key.pgp
-        gpg --export-ownertrust > dev/gpg_owner_trust
+        gpg --armor --export-secret-keys $GPG_KEYID > dev/cci_secret_gpg_key.pgp
+        gpg --armor --export $GPG_KEYID > dev/cci_public_gpg_key.pgp
+        gpg --export-ownertrust > dev/cci_gpg_owner_trust
 
         # Encrypt gpg keys and trust with CI secret
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_public_gpg_key.pgp > dev/ci_public_gpg_key.pgp.enc
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_secret_gpg_key.pgp > dev/ci_secret_gpg_key.pgp.enc
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/gpg_owner_trust > dev/gpg_owner_trust.enc
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/cci_public_gpg_key.pgp > dev/cci_public_gpg_key.pgp.enc
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/cci_secret_gpg_key.pgp > dev/cci_secret_gpg_key.pgp.enc
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/cci_gpg_owner_trust > dev/cci_gpg_owner_trust.enc
         echo $GPG_KEYID > dev/public_gpg_key
 
         # Test decrpyt
         cat dev/public_gpg_key
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc 
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc 
-        GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_key.pgp.enc 
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc 
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc 
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc 
 
         source $(secret_unloader.sh)
 
         # Look at what we did, clean up, and add it to git
         ls dev/*.enc
-        rm dev/gpg_owner_trust dev/*.pgp
+        rm dev/cci_gpg_owner_trust dev/*.pgp
         git status
         git add dev/*.enc
         git add dev/public_gpg_key
@@ -199,21 +199,20 @@ workflows:
   version: 2
   test:
     jobs:
-      - test_full/cp39-cp39-manylinux2010
+      #- test_full/cp39-cp39-manylinux2010
       - test_full/cp38-cp38-manylinux2010
-      - test_full/cp37-cp37m-manylinux2010
-      - test_full/cp36-cp36m-manylinux2010
-      - test_full/cp35-cp35m-manylinux2010
-      #- test_full/cp27-27mu-manylinux2010
-
-      #- test_full/pypy3
+      #- test_full/cp37-cp37m-manylinux2010
+      #- test_full/cp36-cp36m-manylinux2010
+      #- test_full/cp35-cp35m-manylinux2010
 
       - gpgsign/cp38-cp38-manylinux2010:
-          filters:
-            branches:
-              only: 
-                 - master
-                 - release
+          requires:
+              - test_full/cp38-cp38-manylinux2010
+          #filters:
+          #  branches:
+          #    only: 
+          #       - master
+          #       - release
 
       - deploy/cp38-cp38-manylinux2010:
           filters:
@@ -245,23 +244,36 @@ jobs:
     steps:
       - checkout
       - run:
+          name: prepare_env
+          command: |
+            $PYTHON_EXE -m venv venv
+            $PYTHON_EXE -m pip install --upgrade pip
+            . venv/bin/activate
+            pip install --upgrade pip
+      - run:
           name: build_wheel
           command: |
-            $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
             . venv/bin/activate
+            MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+            VERSION=$(python -c "import setup; print(setup.VERSION)") 
             _INSIDE_DOCKER=YES REPO_ROOT="." MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_manylinux_build.sh
+      - run:
+          name: install_wheel
+          command: |
+            . venv/bin/activate
+            pip install --upgrade pip
+            MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+            VERSION=$(python -c "import setup; print(setup.VERSION)") 
+            BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
+            pip install ${BDIST_WHEEL_PATH}[all]
       - run:
           name: run_tests
           command: |
             . venv/bin/activate
-            BDIST_WHEEL_PATH=$(ls dist/*-*-$MB_PYTHON_TAG*.whl)
-            echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
-            pip install ${BDIST_WHEEL_PATH}[all]
             python run_tests.py
       - store_artifacts:
-          # TODO: store wheel as an artifact
-          path: test-reports
-          destination: test-reports
+          path: .coverage
+          destination: .coverage
 
 
   .gpgsign_template: &gpgsign_template  
@@ -270,10 +282,12 @@ jobs:
     steps:
       - checkout
       - run:
-          name: build_gpg_deps
+          name: gpg_sign_dist
           command: |
-            $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
-            . venv/bin/activate
+            #$PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
+            #. venv/bin/activate
+            ls -al
+            ls -al dist
             export GPG_EXECUTABLE=gpg
             export GPG_KEYID=$(cat dev/public_gpg_key)
             echo "GPG_KEYID = $GPG_KEYID"
@@ -286,17 +300,17 @@ jobs:
             echo "-- QUERY GPG KEYS (done twice as a workaround)"
             $GPG_EXECUTABLE --list-keys || $GPG_EXECUTABLE --list-keys
             echo "-- Decrypt and import GPG Keys / trust"
-            # note CIRCLE_CI_SECRET is a protected variables only available on master and release branch
-            echo "CIRCLE_CI_SECRET = $CIRCLE_CI_SECRET"
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+            # note PYUTILS_CI_GITHUB_SECRET is a protected variables only available on master and release branch
+            echo "PYUTILS_CI_GITHUB_SECRET = $PYUTILS_CI_GITHUB_SECRET"
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
             $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
             $GPG_EXECUTABLE --list-keys  
             # The publish script only builds wheels and does gpg signing if DO_UPLOAD is no
             pip install requests[security] twine wheel
             echo "Execute the publish script in dry mode"
-            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=no ./publish.sh 
+            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=False DO_TAG=False ./publish.sh 
       - store_artifacts:
           path: dist
           destination: dist
@@ -310,31 +324,38 @@ jobs:
       - run:
           name: deploy
           command: |
-            $PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
-            . venv/bin/activate
+            #$PYTHON_EXE -m venv venv 
+            #. venv/bin/activate
             export GPG_EXECUTABLE=gpg
             export GPG_KEYID=$(cat dev/public_gpg_key)
             # Decrypt and import GPG Keys / trust
-            # note CIRCLE_CI_SECRET is a protected variables only available on master and release branch
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-            GLKWS=$CIRCLE_CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+            # note PYUTILS_CI_GITHUB_SECRET is a protected variables only available on master and release branch
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
+            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
             $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
             $GPG_EXECUTABLE --list-keys  
             # Install twine
             pip install six pyopenssl ndg-httpsclient pyasn1 -U 
             pip install requests[security] twine wheel
             # Execute the publish script for real this time
-            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=yes ./publish.sh 
+            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=True DO_TAG=False ./publish.sh 
             # Have the server git-tag the release and push the tags
-            VERSION=$(python -c "import setup; print(setup.VERSION)")
+            VERSION=$($PYTHON_EXE -c "import setup; print(setup.VERSION)")
             # do sed twice to handle the case of https clone with and without a read token
             URL_HOST=$(git remote get-url origin | sed -e 's|https\?://.*@||g' | sed -e 's|https\?://||g')
             echo "URL_HOST = $URL_HOST"
-            git config user.email "ci@circleci.com"
-            git config user.name "CircleCI"
-            git tag $VERSION -m "tarball tag $VERSION"
-            git push --tags "https://${GIT_PUSH_TOKEN}@${URL_HOST}"
+            # A git config user name and email is required. Set if needed.
+            if [[ "$(git config user.email)" == "" ]]; then
+                git config user.email "ci@circleci.com"
+                git config user.name "CircleCI"
+            fi
+            if [ $(git tag -l "$VERSION") ]; then
+                echo "Tag already exists"
+            else
+                git tag $VERSION -m "tarball tag $VERSION"
+                git push --tags "https://${GITHUB_PUSH_TOKEN}@${URL_HOST}"
+            fi
 
 
   ###################################
@@ -397,20 +418,23 @@ jobs:
   gpgsign/cp38-cp38-manylinux2010:
     <<: *gpgsign_template
     environment:
-      - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+      #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
       - MB_PYTHON_TAG=cp38-cp38
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      # We have to use a different image to do GPG signing
+      - image: circleci/python:3.8
+      #- image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/gpgsign/cp38-cp38-manylinux2010
 
 
   deploy/cp38-cp38-manylinux2010:
     <<: *deploy_template
     environment:
-      - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
+      #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
       - MB_PYTHON_TAG=cp38-cp38
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      - image: circleci/python:3.8
+      #- image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/deploy/cp38-cp38-manylinux2010
         
 
@@ -433,6 +457,13 @@ __scratch_work__:
         $HOME/.local/bin/circleci local execute --config .circleci/config.yml --job test_full/cp38-cp38-manylinux2010
         $HOME/.local/bin/circleci local execute --config .circleci/config.yml 
 
+        $HOME/.local/bin/circleci local execute --job test_full/cp38-cp38-manylinux2010
+
+        load_secrets
+        $HOME/.local/bin/circleci local execute --config .circleci/config.yml \
+            -e GITHUB_PUSH_TOKEN=$GITHUB_PUSH_TOKEN \
+            -e PYUTILS_CI_GITHUB_SECRET=$PYUTILS_CI_GITHUB_SECRET \
+            --job gpgsign/cp38-cp38-manylinux2010
 
         # Manual testing scratch work
         docker run -v $(pwd):/io -it pypy:3 bash

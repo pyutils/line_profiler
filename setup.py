@@ -208,8 +208,8 @@ if __name__ == '__main__':
     if USE_SKBUILD:
         if '--universal' in sys.argv:
             # Dont use scikit-build for universal wheels
-            if 'develop' in sys.argv:
-                sys.argv.remove('--universal')
+            # if 'develop' in sys.argv:
+            sys.argv.remove('--universal')
             from setuptools import setup  # NOQA
         else:
             from skbuild import setup
