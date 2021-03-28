@@ -435,7 +435,7 @@ jobs:
   # ------------
   
   test_minimal/cp39-cp39-linux:
-    <<: *test_full_template
+    <<: *test_minimal_template
     docker:
       - image: circleci/python:3.9
     working_directory: ~/{{ .Environment.CIRCLE_JOB }}
@@ -520,7 +520,7 @@ __scratch_work__:
         $HOME/.local/bin/circleci switch
 
         $HOME/.local/bin/circleci config validate
-        $HOME/.local/bin/circleci local execute --job test_minimal_3.9
+        $HOME/.local/bin/circleci local execute --job test_minimal/cp39-cp39-linux
         $HOME/.local/bin/circleci local execute --config .circleci/config.yml --job test_full/cp38-38-linux
         $HOME/.local/bin/circleci local execute --config .circleci/config.yml 
 
