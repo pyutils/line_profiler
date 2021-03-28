@@ -355,7 +355,7 @@ jobs:
   # All we need to do is change the base docker image so python is the
   # version we want we can reuse everything else from the template
   
-  test_full/cp39-cp39-linux:
+  test_full/cp39-39-linux:
     <<: *test_full_template
     docker:
       - image: circleci/python:3.9
