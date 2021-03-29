@@ -290,7 +290,7 @@ fi
 
 if [[ "$DO_TAG" == "True" ]]; then
     git tag $VERSION -m "tarball tag $VERSION"
-    git push --tags $DEPLOY_REMOTE $DEPLOY_BRANCH
+    git push --tags $DEPLOY_REMOTE 
 else
     echo "Not tagging"
 fi

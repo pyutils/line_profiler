@@ -76,6 +76,10 @@ __doc__: &__doc__
             To make a API token go to:
                 https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token
 
+                # For an organizatino, make a deploy key, not really 100% sure to do this correctly
+                # https://stackoverflow.com/questions/26372417/github-oauth2-token-how-to-restrict-access-to-read-a-single-private-repo
+                # https://github.com/pyutils/line_profiler/settings/keys
+
         Register these secret variables in your projects secret environment variables
             https://app.circleci.com/settings/project/github/pyutils/line_profiler/environment-variables
 
@@ -299,7 +303,7 @@ jobs:
       - attach_workspace:
           at: .
       - run:
-          name: gpg_sign_dist
+          name: sign_and_deploy
           command: |
             #$PYTHON_EXE -m venv venv || virtualenv -v venv  # first command is python3 || second is python2
             #. venv/bin/activate
@@ -326,53 +330,42 @@ jobs:
             $GPG_EXECUTABLE --list-keys  
             # The publish script only builds wheels and does gpg signing if DO_UPLOAD is no
             pip install requests[security] twine wheel
-            echo "Execute the publish script in dry mode"
-            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=False DO_TAG=False ./publish.sh 
-      #- store_artifacts:
-      #    path: dist
-      #    destination: dist
-
-
-  .deploy_template: &deploy_template  
-    <<: 
-        - *common_template
-    steps:
-      - checkout
-      - run:
-          name: deploy
-          command: |
-            #$PYTHON_EXE -m venv venv 
-            #. venv/bin/activate
-            export GPG_EXECUTABLE=gpg
-            export GPG_KEYID=$(cat dev/public_gpg_key)
-            # Decrypt and import GPG Keys / trust
-            # note PYUTILS_CI_GITHUB_SECRET is a protected variables only available on master and release branch
-            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-            GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-            $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
-            $GPG_EXECUTABLE --list-keys  
-            # Install twine
-            pip install six pyopenssl ndg-httpsclient pyasn1 -U 
-            pip install requests[security] twine wheel
-            # Execute the publish script for real this time
-            MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE CURRENT_BRANCH=release DEPLOY_BRANCH=release DO_UPLOAD=True DO_TAG=False ./publish.sh 
-            # Have the server git-tag the release and push the tags
-            VERSION=$($PYTHON_EXE -c "import setup; print(setup.VERSION)")
-            # do sed twice to handle the case of https clone with and without a read token
-            URL_HOST=$(git remote get-url origin | sed -e 's|https\?://.*@||g' | sed -e 's|https\?://||g')
-            echo "URL_HOST = $URL_HOST"
-            # A git config user name and email is required. Set if needed.
-            if [[ "$(git config user.email)" == "" ]]; then
-                git config user.email "ci@circleci.com"
-                git config user.name "CircleCI"
-            fi
-            if [ $(git tag -l "$VERSION") ]; then
-                echo "Tag already exists"
+            if [[ "${CIRCLE_BRANCH}" != "release" ]]; then
+                # ----
+                echo "Execute the publish script in dry mode"
+                MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID GPG_EXECUTABLE=$GPG_EXECUTABLE DO_UPLOAD=False DO_TAG=False ./publish.sh 
             else
-                git tag $VERSION -m "tarball tag $VERSION"
-                git push --tags "https://${GITHUB_PUSH_TOKEN}@${URL_HOST}"
+                # ----
+                # Install twine
+                pip install six pyopenssl ndg-httpsclient pyasn1 -U 
+                # Execute the publish script for real this time
+                MB_PYTHON_TAG=$MB_PYTHON_TAG DO_GPG=True GPG_KEYID=$GPG_KEYID TWINE_PASSWORD=$TWINE_PASSWORD TWINE_USERNAME=$TWINE_USERNAME GPG_EXECUTABLE=$GPG_EXECUTABLE DO_UPLOAD=True DO_TAG=False ./publish.sh 
+                # Have the server git-tag the release and push the tags
+                VERSION=$($PYTHON_EXE -c "import setup; print(setup.VERSION)")
+                # do sed twice to handle the case of https clone with and without a read token
+                URL_HOST=$(git remote get-url origin | sed -e 's|https\?://.*@||g' | sed -e 's|https\?://||g')
+                echo "URL_HOST = $URL_HOST"
+                # A git config user name and email is required. Set if needed.
+                # Need to figure out how to use deploy keys with this
+                #if [[ "$(git config user.email)" == "" ]]; then
+                #    git config user.email "ci@circleci.com"
+                #    git config user.name "CircleCI"
+                #fi
+                #if [ $(git tag -l "$VERSION") ]; then
+                #    echo "Tag already exists"
+                #else
+                #    git tag $VERSION -m "tarball tag $VERSION"
+                #    git push --tags "https://${GITHUB_PUSH_TOKEN}@${URL_HOST}"
+                #fi
             fi
+
+      - store_artifacts:
+          path: dist
+          destination: dist
+
+      - store_artifacts:
+          path: wheelhouse
+          destination: wheelhouse
 
 
   ###################################
@@ -474,17 +467,6 @@ jobs:
     working_directory: ~/gpgsign/cp35-cp35m-manylinux2010
 
 
-  #deploy/cp38-cp38-manylinux2010:
-  #  <<: *deploy_template
-  #  environment:
-  #    #- PYTHON_EXE: /opt/python/cp38-cp38/bin/python
-  #    - MB_PYTHON_TAG=cp38-cp38
-  #  docker:
-  #    - image: circleci/python:3.8
-  #    #- image: quay.io/pypa/manylinux2010_x86_64:latest
-  #  working_directory: ~/deploy/cp38-cp38-manylinux2010
-        
-
 __scratch_work__:
     docker:
       - image: pypy:3
@@ -511,19 +493,4 @@ __scratch_work__:
             -e GITHUB_PUSH_TOKEN=$GITHUB_PUSH_TOKEN \
             -e PYUTILS_CI_GITHUB_SECRET=$PYUTILS_CI_GITHUB_SECRET \
             --job gpgsign/cp38-cp38-manylinux2010
-
-        # Manual testing scratch work
-        docker run -v $(pwd):/io -it pypy:3 bash
-
-        cd /io
-
-        pypy3 -m venv venv 
-        . venv/bin/activate
-        # The "minimal" tests install barebones requirements
-        pip install -r requirements/tests.txt
-        pip install -r requirements/runtime.txt 
-        pip install -e .
-
-        ./run_doctests.sh || echo "pypy failed, but this is allowed"
-        ./run_tests.sh || echo "pypy failed, but this is allowed"
         "
