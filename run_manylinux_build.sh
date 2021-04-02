@@ -89,6 +89,7 @@ if [ "$_INSIDE_DOCKER" != "YES" ]; then
 
     BDIST_WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-$MB_PYTHON_TAG*.whl)
     echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
+    echo "Finish outside docker part"
 else
     set -x
     set -e
@@ -114,4 +115,5 @@ else
     /opt/python/cp37-cp37m/bin/python -m auditwheel repair dist/$NAME-$VERSION-$MB_PYTHON_TAG*.whl
     chmod -R o+rw wheelhouse
     chmod -R o+rw $NAME.egg-info
+    echo "Finish inside docker part"
 fi
