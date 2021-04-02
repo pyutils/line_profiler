@@ -87,6 +87,7 @@ if [ "$_INSIDE_DOCKER" != "YES" ]; then
     set +x
     '''
 
+    ls -al wheelhouse
     BDIST_WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-$MB_PYTHON_TAG*.whl)
     echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
 else
