@@ -41,9 +41,12 @@ jobs:
         echo "====="
     - name: Install Wheel
       run: |
-        ls
-        docker --version
-        #pytest
+        BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
+        echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
+        python -m pip install $BDIST_WHEEL_PATH[all]
+    - name: Test Wheel
+      run: |
+        python run_tests.py
 
   #deploy:
   #  runs-on: ubuntu-latest
