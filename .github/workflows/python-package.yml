@@ -67,15 +67,11 @@ jobs:
        
 ###
 
-__doc__: |
-
-    cd $HOME/code
-    git clone https://github.com/nektos/act.git $HOME/code/act
-    cd $HOME/code/act
-
-    chmod +x install.sh
-    ./install.sh -b $HOME/.local/opt/act
-
-    cd $HOME/code/line_profiler
-
-    /home/joncrall/.local/opt/act/act
+#__doc__: |
+#    cd $HOME/code
+#    git clone https://github.com/nektos/act.git $HOME/code/act
+#    cd $HOME/code/act
+#    chmod +x install.sh
+#    ./install.sh -b $HOME/.local/opt/act
+#    cd $HOME/code/line_profiler
+#    /home/joncrall/.local/opt/act/act
