@@ -42,6 +42,8 @@ jobs:
     - name: Install Wheel
       run: |
         ls -al
+        MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+        VERSION=$(python -c "import setup; print(setup.VERSION)") 
         BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
         echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
         python -m pip install $BDIST_WHEEL_PATH[all]
