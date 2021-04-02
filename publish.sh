@@ -303,6 +303,7 @@ if [[ "$DO_UPLOAD" == "True" ]]; then
     for WHEEL_PATH in "${WHEEL_PATHS[@]}"
     do
         if [ "$DO_GPG" == "True" ]; then
+            --repository-url https://test.pypi.org/legacy/
             twine upload --username $TWINE_USERNAME --password=$TWINE_PASSWORD --sign $WHEEL_PATH.asc $WHEEL_PATH  || { echo 'failed to twine upload' ; exit 1; }
         else
             twine upload --username $TWINE_USERNAME --password=$TWINE_PASSWORD $WHEEL_PATH  || { echo 'failed to twine upload' ; exit 1; }
