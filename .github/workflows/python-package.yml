@@ -41,7 +41,8 @@ jobs:
         echo "====="
     - name: Install Wheel
       run: |
-        BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
+        ls -al
+        BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
         echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
         python -m pip install $BDIST_WHEEL_PATH[all]
     - name: Test Wheel
@@ -70,11 +71,12 @@ jobs:
        
 ###
 
-#__doc__: |
-#    cd $HOME/code
-#    git clone https://github.com/nektos/act.git $HOME/code/act
-#    cd $HOME/code/act
-#    chmod +x install.sh
-#    ./install.sh -b $HOME/.local/opt/act
-#    cd $HOME/code/line_profiler
-#    /home/joncrall/.local/opt/act/act
+__doc__: |
+    # How to run locally
+    cd $HOME/code
+    git clone https://github.com/nektos/act.git $HOME/code/act
+    cd $HOME/code/act
+    chmod +x install.sh
+    ./install.sh -b $HOME/.local/opt/act
+    cd $HOME/code/line_profiler
+    $HOME/.local/opt/act/act
