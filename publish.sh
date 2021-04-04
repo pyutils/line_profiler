@@ -35,17 +35,43 @@ Usage:
     export TWINE_USERNAME=<pypi-username>
     export TWINE_PASSWORD=<pypi-password>
 
-    source $(secret_loader.sh)
-
     MB_PYTHON_TAG=cp38-cp38m 
     MB_PYTHON_TAG=cp37-cp37m 
     MB_PYTHON_TAG=cp36-cp36m 
     MB_PYTHON_TAG=cp35-cp35m 
-
     echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
-    MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_multibuild.sh
 
-    MB_PYTHON_TAG=py3-none-any ./publish.sh
+    load_secrets
+
+    export WHEEL_NAME_HACK=True
+    TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME
+    TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD
+    TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/" 
+
+    MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+    VERSION=$(python -c "import setup; print(setup.VERSION)") 
+    NAME=$(python -c "import setup; print(setup.NAME)") 
+    echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
+    echo "VERSION = $VERSION"
+    echo "NAME = $NAME"
+
+    NAME=$NAME \
+        VERSION=$VERSION \
+        MB_PYTHON_TAG=$MB_PYTHON_TAG \
+        WHEEL_NAME_HACK=$WHEEL_NAME_HACK \
+        ./run_manylinux_build.sh
+
+    NAME=$NAME \
+        VERSION=$VERSION \
+        MB_PYTHON_TAG=$MB_PYTHON_TAG \
+        TWINE_REPOSITORY_URL=$TWINE_REPOSITORY_URL \
+        TWINE_USERNAME=$TWINE_USERNAME \
+        TWINE_PASSWORD=$TWINE_PASSWORD \
+        DO_TAG=False \
+        DO_UPLOAD=True \
+        ./publish.sh
+
+    #MB_PYTHON_TAG=py3-none-any ./publish.sh
 '''
 
 check_variable(){
@@ -104,8 +130,14 @@ DO_TAG=$(normalize_boolean "$DO_TAG")
 
 TWINE_USERNAME=${TWINE_USERNAME:=""}
 TWINE_PASSWORD=${TWINE_PASSWORD:=""}
-#TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
-TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://upload.pypi.org/legacy/"}
+
+
+if [[ "$(cat .git/HEAD)" != "ref: refs/heads/release" ]]; then 
+    # If we are not on release, then default to the test pypi upload repo
+    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
+else
+    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://upload.pypi.org/legacy/"}
+fi
 
 
 if [[ "$(which gpg2)" != "" ]]; then
@@ -120,8 +152,10 @@ GPG_KEYID=${GPG_KEYID:=$(git config --global user.signingkey)}
 
 echo "
 === PYPI BUILDING SCRIPT ==
+NAME='$NAME'
 VERSION='$VERSION'
 TWINE_USERNAME='$TWINE_USERNAME'
+TWINE_REPOSITORY_URL = $TWINE_REPOSITORY_URL
 GPG_KEYID = '$GPG_KEYID'
 MB_PYTHON_TAG = '$MB_PYTHON_TAG'
 
@@ -129,6 +163,7 @@ DO_UPLOAD=${DO_UPLOAD}
 DO_TAG=${DO_TAG}
 DO_GPG=${DO_GPG}
 DO_BUILD=${DO_BUILD}
+
 "
 
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function
 
-__version__ = '3.2.0'
+__version__ = '3.2.1'
 
 try:
     import cPickle as pickle
@@ -26,6 +26,34 @@ from IPython.utils.ipstruct import Struct
 from IPython.core.error import UsageError
 
 from ._line_profiler import LineProfiler as CLineProfiler
+
+
+# def check_version():
+#     import re
+#     pat = re.compile('^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$', flags=re.IGNORECASE)
+#     pass
+
+
+def _augment_version(__version__):
+    from os.path import join, dirname, exists
+    repo_dpath = join(dirname(dirname(__file__)))
+    git_dpath = join(repo_dpath, '.git')
+    if exists(git_dpath):
+        head_fpath = join(git_dpath, 'HEAD')
+        with open(head_fpath, 'r') as file:
+            ref = file.readline().split()[-1]
+        ref_fpath = join(git_dpath, ref)
+        with open(ref_fpath, 'r') as file:
+            ref_hash = file.read().strip()
+        hashid = ref_hash[0:8]
+        if 0:
+            if ref != 'refs/heads/release':
+                if '.dev' in __version__:
+                    __version__ = __version__[:__version__.find('.dev')]
+                __version__ = __version__ + '+' + hashid
+    return __version__
+
+#__version__ = _augment_version(__version__)
 
 # Python 2/3 compatibility utils
 # ===========================================================
