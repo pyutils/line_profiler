@@ -51,17 +51,21 @@ def parse_description():
     return ''
 
 
-def parse_requirements(fname='requirements.txt', with_version=False):
+def parse_requirements(fname='requirements.txt', with_version=True):
     """
     Parse the package dependencies listed in a requirements file but strips
     specific versioning information.
 
     Args:
         fname (str): path to requirements file
-        with_version (bool, default=False): if true include version specs
+        with_version (bool, default=True): if true include version specs
 
     Returns:
         List[str]: list of requirements items
+
+    References:
+        https://pip.pypa.io/en/stable/reference/pip_install/#requirement-specifiers
+        https://www.python.org/dev/peps/pep-0440/#version-specifiers
 
     CommandLine:
         python -c "import setup; print(setup.parse_requirements())"
@@ -74,6 +78,9 @@ def parse_requirements(fname='requirements.txt', with_version=False):
     def parse_line(line):
         """
         Parse information from a line in a requirements text file
+
+        Ignore:
+            line = 'foobar >=1.0, <= 2.1'
         """
         if line.startswith('-r '):
             # Allow specifying requirements in other files
@@ -86,21 +93,29 @@ def parse_requirements(fname='requirements.txt', with_version=False):
                 info['package'] = line.split('#egg=')[1]
             else:
                 # Remove versioning from the package
-                pat = '(' + '|'.join(['>=', '==', '>']) + ')'
+                cmp_ops = ['>=', '>', '<=', '<', '!=', '~=', '==', '===']
+                pat = '(' + '|'.join(cmp_ops) + ')'
                 parts = re.split(pat, line, maxsplit=1)
                 parts = [p.strip() for p in parts]
 
                 info['package'] = parts[0]
                 if len(parts) > 1:
-                    op, rest = parts[1:]
+                    op1, rest = parts[1:]
                     if ';' in rest:
                         # Handle platform specific dependencies
                         # http://setuptools.readthedocs.io/en/latest/setuptools.html#declaring-platform-specific-dependencies
-                        version, platform_deps = map(str.strip, rest.split(';'))
+                        version_rest, platform_deps = map(str.strip, rest.split(';'))
                         info['platform_deps'] = platform_deps
                     else:
-                        version = rest  # NOQA
-                    info['version'] = (op, version)
+                        version_rest = rest  # NOQA
+                    # Multiple version requirments may be specified
+                    version = []
+                    version_text = op1 + version_rest
+                    for clause in version_text.split(','):
+                        cparts = [p.strip() for p in re.split(pat, clause)]
+                        cparts = [p for p in cparts if p]
+                        version.append(cparts)
+                    info['version'] = version
             yield info
 
     def parse_require_file(fpath):
@@ -115,8 +130,15 @@ def parse_requirements(fname='requirements.txt', with_version=False):
         if exists(require_fpath):
             for info in parse_require_file(require_fpath):
                 parts = [info['package']]
-                if with_version and 'version' in info:
-                    parts.extend(info['version'])
+                if 'version' in info:
+                    # FIXME: add mode that lets you exclude minimum reqs
+                    clauses = []
+                    for clause in info['version']:
+                        op, arg = clause
+                        if with_version:
+                            clauses.append(op + arg)
+                    version_part = ','.join(clauses)
+                    parts.append(version_part)
                 if not sys.version.startswith('3.4'):
                     # apparently package_deps are broken in 3.4
                     platform_deps = info.get('platform_deps')
