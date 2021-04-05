@@ -25,7 +25,6 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
-      if: ${{ !env.ACT }}
       run: |
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest
@@ -37,12 +36,10 @@ jobs:
     #    # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
     #    flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Build Wheel
-      if: ${{ !env.ACT }}
       run: |
         ./run_manylinux_build.sh
         echo "====="
     - name: Install Wheel
-      if: ${{ !env.ACT }}
       run: |
         ls -al
         ls -al wheelhouse
@@ -54,7 +51,6 @@ jobs:
         echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
         python -m pip install $BDIST_WHEEL_PATH[all]
     - name: Test Wheel
-      if: ${{ !env.ACT }}
       run: |
         python run_tests.py
     - name: Sign and Publish

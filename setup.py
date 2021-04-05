@@ -217,11 +217,17 @@ def _augment_project_info(NAME, VERSION):
     if exists(git_dpath):
         head_fpath = join(git_dpath, 'HEAD')
         with open(head_fpath, 'r') as file:
-            ref = file.readline().split()[-1]
-        ref_fpath = join(git_dpath, ref)
-        with open(ref_fpath, 'r') as file:
-            ref_hash = file.read().strip()
-        hashid = ref_hash[0:8]
+            head_contents = file.read()
+
+        try:
+            ref = head_contents.split('\n')[0].split(-1)
+            ref_fpath = join(git_dpath, ref)
+            with open(ref_fpath, 'r') as file:
+                ref_hash = file.read().strip()
+            hashid = ref_hash[0:8]
+        except Exception:
+            print('head_contents = {!r}'.format(head_contents))
+            raise
 
         if ref != 'refs/heads/release':
             if '.dev' in VERSION:
