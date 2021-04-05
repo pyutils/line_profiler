@@ -58,7 +58,7 @@ jobs:
         TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
         PYUTILS_TWINE_USERNAME: ${{ secrets.PYUTILS_TWINE_USERNAME }}
         PYUTILS_TWINE_PASSWORD: ${{ secrets.PYUTILS_TWINE_PASSWORD }}
-        #TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
+        #TEST_TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
         #PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
         #PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
       run: |
