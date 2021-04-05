@@ -6,8 +6,8 @@ name: Python package
 on:
   push:
     branches: [ release ]
-  #pull_request:
-  #  branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
 jobs:
   build:
@@ -84,17 +84,17 @@ jobs:
         GPG_KEYID=$(cat dev/public_gpg_key)
         echo "GPG_KEYID = '$GPG_KEYID'"
         #
-        #export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
-        #export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
-        #export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
-        #MB_PYTHON_TAG=$MB_PYTHON_TAG \
-        #    DO_GPG=True GPG_KEYID=$GPG_KEYID \
-        #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
-        #    TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
-        #    TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
-        #    GPG_EXECUTABLE=$GPG_EXECUTABLE \
-        #    DO_UPLOAD=True \
-        #    DO_TAG=False ./publish.sh
+        export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
+        export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
+        export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
+        MB_PYTHON_TAG=$MB_PYTHON_TAG \
+            DO_GPG=True GPG_KEYID=$GPG_KEYID \
+            TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
+            TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
+            TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
+            GPG_EXECUTABLE=$GPG_EXECUTABLE \
+            DO_UPLOAD=True \
+            DO_TAG=False ./publish.sh
         #
         #export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
         #export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
