@@ -218,21 +218,18 @@ def _augment_project_info(NAME, VERSION):
         head_fpath = join(git_dpath, 'HEAD')
         with open(head_fpath, 'r') as file:
             head_contents = file.read()
-
-        try:
+        part1 = head_contents.split(' ')[0]
+        if part1 == 'ref:':
             ref = head_contents.split('\n')[0].split(-1)
             ref_fpath = join(git_dpath, ref)
             with open(ref_fpath, 'r') as file:
                 ref_hash = file.read().strip()
-            hashid = ref_hash[0:8]
-        except Exception:
-            print('head_contents = {!r}'.format(head_contents))
-            raise
-
+        else:
+            ref = None
+            ref_hash = head_contents.split('\n')[0][0:8]
+        hashid = ref_hash[0:8]
         if ref != 'refs/heads/release':
-            if '.dev' in VERSION:
-                VERSION = VERSION[:VERSION.find('.dev')]
-            VERSION = VERSION + '+' + hashid
+            VERSION = VERSION.split('+')[0] + '+' + hashid
 
         if os.environ.get('WHEEL_NAME_HACK', ''):
             NAME = NAME + '_test'

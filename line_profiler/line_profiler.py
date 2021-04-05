@@ -34,26 +34,29 @@ from ._line_profiler import LineProfiler as CLineProfiler
 #     pass
 
 
-def _augment_version(__version__):
+def _augment_version(VERSION):
     from os.path import join, dirname, exists
-    repo_dpath = join(dirname(dirname(__file__)))
+    repo_dpath = join(dirname(__file__))
     git_dpath = join(repo_dpath, '.git')
     if exists(git_dpath):
         head_fpath = join(git_dpath, 'HEAD')
         with open(head_fpath, 'r') as file:
-            ref = file.readline().split()[-1]
-        ref_fpath = join(git_dpath, ref)
-        with open(ref_fpath, 'r') as file:
-            ref_hash = file.read().strip()
+            head_contents = file.read()
+        part1 = head_contents.split(' ')[0]
+        if part1 == 'ref:':
+            ref = head_contents.split('\n')[0].split(-1)
+            ref_fpath = join(git_dpath, ref)
+            with open(ref_fpath, 'r') as file:
+                ref_hash = file.read().strip()
+        else:
+            ref = None
+            ref_hash = head_contents.split('\n')[0][0:8]
         hashid = ref_hash[0:8]
-        if 0:
-            if ref != 'refs/heads/release':
-                if '.dev' in __version__:
-                    __version__ = __version__[:__version__.find('.dev')]
-                __version__ = __version__ + '+' + hashid
-    return __version__
+        if ref != 'refs/heads/release':
+            VERSION = VERSION.split('+')[0] + '+' + hashid
+    return VERSION
 
-#__version__ = _augment_version(__version__)
+__version__ = _augment_version(__version__)
 
 # Python 2/3 compatibility utils
 # ===========================================================
