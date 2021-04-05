@@ -44,7 +44,7 @@ def _augment_version(VERSION):
             head_contents = file.read()
         part1 = head_contents.split(' ')[0]
         if part1 == 'ref:':
-            ref = head_contents.split('\n')[0].split(-1)
+            ref = head_contents.split('\n')[0].split()[-1]
             ref_fpath = join(git_dpath, ref)
             with open(ref_fpath, 'r') as file:
                 ref_hash = file.read().strip()
