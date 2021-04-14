@@ -25,6 +25,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
+        rm -rf .git  # remove git repo which disable local versioning for publishing
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest
         #if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -64,6 +65,7 @@ jobs:
         #PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
         #PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
       run: |
+        ls -al
         GPG_EXECUTABLE=gpg
         $GPG_EXECUTABLE --version
         openssl version
