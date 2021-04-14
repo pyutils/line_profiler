@@ -36,6 +36,7 @@ jobs:
     #    flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Build Wheel
       run: |
+        export LINE_PROFILER_DISABLE_LOCAL_VERSION=1
         ./run_manylinux_build.sh
         echo "====="
     - name: Install Wheel
