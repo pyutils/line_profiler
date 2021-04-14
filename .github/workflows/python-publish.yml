@@ -54,12 +54,13 @@ jobs:
         python run_tests.py
     - name: Sign and Publish
       env:
-        TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
-        PYUTILS_TWINE_USERNAME: ${{ secrets.PYUTILS_TWINE_USERNAME }}
-        PYUTILS_TWINE_PASSWORD: ${{ secrets.PYUTILS_TWINE_PASSWORD }}
-        #TEST_TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
-        #PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
-        #PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
+        # Toggle comments to publish to the test pypi instead of the real one
+        #TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
+        #PYUTILS_TWINE_USERNAME: ${{ secrets.PYUTILS_TWINE_USERNAME }}
+        #PYUTILS_TWINE_PASSWORD: ${{ secrets.PYUTILS_TWINE_PASSWORD }}
+        TEST_TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
+        PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
+        PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
       run: |
         ls -al
         GPG_EXECUTABLE=gpg
@@ -80,31 +81,32 @@ jobs:
         GPG_KEYID=$(cat dev/public_gpg_key)
         echo "GPG_KEYID = '$GPG_KEYID'"
         #
-        export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
-        export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
-        export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
-        MB_PYTHON_TAG=$MB_PYTHON_TAG \
-            DO_GPG=True GPG_KEYID=$GPG_KEYID \
-            TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
-            TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
-            TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
-            GPG_EXECUTABLE=$GPG_EXECUTABLE \
-            DO_UPLOAD=True \
-            DO_TAG=False ./publish.sh
-        #
-        #export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
-        #export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
-        #export PYUTILS_TWINE_PASSWORD=${{ secrets.PYUTILS_TWINE_PASSWORD }}
+        #export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
+        #export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
+        #export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
         #MB_PYTHON_TAG=$MB_PYTHON_TAG \
         #    DO_GPG=True GPG_KEYID=$GPG_KEYID \
-        #    TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD \
-        #    TWINE_USERNAME=$PYUTILS_TWINE_USERNAME \
+        #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
+        #    TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
+        #    TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
         #    GPG_EXECUTABLE=$GPG_EXECUTABLE \
         #    DO_UPLOAD=True \
-        #    DO_TAG=False ./publish.sh 
+        #    DO_TAG=False ./publish.sh
+        #
+        export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
+        export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
+        export PYUTILS_TWINE_PASSWORD=${{ secrets.PYUTILS_TWINE_PASSWORD }}
+        MB_PYTHON_TAG=$MB_PYTHON_TAG \
+            DO_GPG=True GPG_KEYID=$GPG_KEYID \
+            TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD \
+            TWINE_USERNAME=$PYUTILS_TWINE_USERNAME \
+            GPG_EXECUTABLE=$GPG_EXECUTABLE \
+            DO_UPLOAD=True \
+            DO_TAG=False ./publish.sh 
        
 ###
-
+# Unfortunately we cant (yet) use the yaml docstring trick here
+# https://github.community/t/allow-unused-keys-in-workflow-yaml-files/172120
 #__doc__: |
 #    # How to run locally
 #    # https://packaging.python.org/guides/using-testpypi/
