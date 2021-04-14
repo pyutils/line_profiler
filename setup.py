@@ -223,16 +223,10 @@ function-level profiling tools in the Python standard library.
 
 VERSION = parse_version('line_profiler/line_profiler.py')
 MB_PYTHON_TAG = native_mb_python_tag()
-# note: name is temporary until line_profiler pypi name is transfered
 NAME = 'line_profiler'
 
 
-def _augment_project_info(NAME, VERSION):
-    """
-    References:
-        https://stackoverflow.com/questions/58570660/deploying-1-python-package-under-2-different-names
-    """
-    import os
+def _augment_version(VERSION):
     from os.path import join, dirname, exists
     repo_dpath = join(dirname(__file__))
     git_dpath = join(repo_dpath, '.git')
@@ -252,13 +246,11 @@ def _augment_project_info(NAME, VERSION):
         hashid = ref_hash[0:8]
         if ref != 'refs/heads/release':
             VERSION = VERSION.split('+')[0] + '+' + hashid
+    return VERSION
 
-        if os.environ.get('WHEEL_NAME_HACK', ''):
-            NAME = NAME + '_test'
 
-    return NAME, VERSION
-
-NAME, VERSION = _augment_project_info(NAME, VERSION)
+if not os.environ.get('LINE_PROFILER_DISABLE_LOCAL_VERSION', ''):
+    VERSION = _augment_version(VERSION)
 
 
 if __name__ == '__main__':

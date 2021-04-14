@@ -83,6 +83,7 @@ jobs:
         export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
         export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
         export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
+        export LINE_PROFILER_DISABLE_LOCAL_VERSION=1
         MB_PYTHON_TAG=$MB_PYTHON_TAG \
             DO_GPG=True GPG_KEYID=$GPG_KEYID \
             TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
