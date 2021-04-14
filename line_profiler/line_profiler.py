@@ -30,7 +30,6 @@ def _augment_version(VERSION):
     from os.path import join, dirname, exists
     repo_dpath = join(dirname(dirname(__file__)))
     git_dpath = join(repo_dpath, '.git')
-    print('git_dpath = {!r}'.format(git_dpath))
     if exists(git_dpath):
         head_fpath = join(git_dpath, 'HEAD')
         with open(head_fpath, 'r') as file:
@@ -51,9 +50,7 @@ def _augment_version(VERSION):
 
 
 __version__ = '3.2.1'
-
-if not os.environ.get('LINE_PROFILER_DISABLE_LOCAL_VERSION', ''):
-    __version__ = _augment_version(__version__)
+__version__ = _augment_version(__version__)
 
 # Python 2/3 compatibility utils
 # ===========================================================

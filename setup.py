@@ -249,8 +249,7 @@ def _augment_version(VERSION):
     return VERSION
 
 
-if not os.environ.get('LINE_PROFILER_DISABLE_LOCAL_VERSION', ''):
-    VERSION = _augment_version(VERSION)
+VERSION = _augment_version(VERSION)
 
 
 if __name__ == '__main__':
