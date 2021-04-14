@@ -343,11 +343,11 @@ if [[ "$DO_UPLOAD" == "True" ]]; then
         if [ "$DO_GPG" == "True" ]; then
             twine upload --username $TWINE_USERNAME --password=$TWINE_PASSWORD  \
                 --repository-url $TWINE_REPOSITORY_URL \
-                --sign $WHEEL_PATH.asc $WHEEL_PATH  --verbose || { echo 'failed to twine upload' ; exit 1; }
+                --sign $WHEEL_PATH.asc $WHEEL_PATH --skip-existing --verbose || { echo 'failed to twine upload' ; exit 1; }
         else
             twine upload --username $TWINE_USERNAME --password=$TWINE_PASSWORD \
                 --repository-url $TWINE_REPOSITORY_URL \
-                $WHEEL_PATH  --verbose || { echo 'failed to twine upload' ; exit 1; }
+                $WHEEL_PATH --skip-existing --verbose || { echo 'failed to twine upload' ; exit 1; }
         fi
     done
     echo """
