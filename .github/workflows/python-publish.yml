@@ -103,7 +103,27 @@ jobs:
             GPG_EXECUTABLE=$GPG_EXECUTABLE \
             DO_UPLOAD=True \
             DO_TAG=False ./publish.sh 
-       
+
+  build_arm64:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+          python-version: [3.6, 3.7, 3.8, 3.9]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up QEMU
+      id: qemu
+      uses: docker/setup-qemu-action@v1  
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Build and Test Wheel Arm64
+      run: |
+        ./run_manylinux_build.sh aarch64 publish
+        echo "====="
 ###
 # Unfortunately we cant (yet) use the yaml docstring trick here
 # https://github.community/t/allow-unused-keys-in-workflow-yaml-files/172120

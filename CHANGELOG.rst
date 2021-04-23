@@ -3,6 +3,7 @@ Changes
 
 3.2.0
 ~~~~~
+* ENH: Add linux aarch64 wheel support.
 * Dropped 2.7 support, manylinux docker images no longer support 2.7 
 * ENH: Add command line option to specify time unit and skip displaying
   functions which have not been profiled.

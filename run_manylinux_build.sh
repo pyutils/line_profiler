@@ -49,18 +49,26 @@ docker pull quay.io/pypa/manylinux2010_x86_64:latest
 
 
 #DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/erotemic/manylinux-for:x86_64-opencv4.1.0-v2"}
-DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/pypa/manylinux2010_x86_64:latest"}
+if [ "$1" == "aarch64" ]; then
+    DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/pypa/manylinux2014_aarch64:latest"}
+else
+    DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/pypa/manylinux2010_x86_64:latest"}
+fi
 # Valid multibuild python versions are:
 # cp27-cp27m  cp27-cp27mu  cp34-cp34m  cp35-cp35m  cp36-cp36m  cp37-cp37m, cp38-cp38m
 MB_PYTHON_TAG=${MB_PYTHON_TAG:=$(python -c "import setup; print(setup.native_mb_python_tag())")}
 NAME=${NAME:=$(python -c "import setup; print(setup.NAME)")}
 VERSION=${VERSION:=$(python -c "import setup; print(setup.VERSION)")}
 REPO_ROOT=${REPO_ROOT:=/io}
+ARCH=$1
+COMMAND=$2
 echo "
 MB_PYTHON_TAG = $MB_PYTHON_TAG
 DOCKER_IMAGE = $DOCKER_IMAGE
 VERSION = $VERSION
 NAME = $NAME
+ARCH = $ARCH
+COMMAND = $COMMAND
 "
 
 if [ "$_INSIDE_DOCKER" != "YES" ]; then
@@ -70,10 +78,12 @@ if [ "$_INSIDE_DOCKER" != "YES" ]; then
         -v $PWD:/io \
         -e _INSIDE_DOCKER="YES" \
         -e NAME="$NAME" \
+	-e ARCH="$ARCH" \
+	-e COMMAND="$COMMAND" \
         -e VERSION="$VERSION" \
         -e MB_PYTHON_TAG="$MB_PYTHON_TAG" \
         -e WHEEL_NAME_HACK="$WHEEL_NAME_HACK" \
-        $DOCKER_IMAGE bash -c 'cd /io && ./run_manylinux_build.sh'
+        $DOCKER_IMAGE bash -c 'cd /io && ./run_manylinux_build.sh $ARCH $COMMAND'
 
     __interactive__='''
     docker run --rm \
@@ -117,4 +127,51 @@ else
     /opt/python/cp37-cp37m/bin/python -m auditwheel repair dist/$NAME-$VERSION-$MB_PYTHON_TAG*.whl
     chmod -R o+rw wheelhouse
     chmod -R o+rw $NAME.egg-info
+fi
+if [ `uname -m` == "aarch64" ]; then
+    #install wheel
+    echo "=====================================================Install Wheel====================================================="
+    ls -al
+    ls -al wheelhouse
+    MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
+    VERSION=$(python -c "import setup; print(setup.VERSION)")
+    echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
+    echo "VERSION = $VERSION"
+    BDIST_WHEEL_PATH=$(ls wheelhouse/*-${VERSION}-${MB_PYTHON_TAG}-*2014_aarch64.whl)
+    echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
+    python -m pip install $BDIST_WHEEL_PATH[all]
+    #test wheel
+    echo "=====================================================Test Wheel====================================================="
+    python run_tests.py
+    if [ "$COMMAND" == "publish" ]; then
+        echo "=====================================================Publish Wheel====================================================="
+        ls -al
+        GPG_EXECUTABLE=gpg
+        $GPG_EXECUTABLE --version
+        openssl version
+        $GPG_EXECUTABLE --list-keys
+        export PYUTILS_CI_GITHUB_SECRET=${{ secrets.PYUTILS_CI_GITHUB_SECRET }}
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
+        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import
+        $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
+        $GPG_EXECUTABLE --list-keys
+        MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
+        VERSION=$(python -c "import setup; print(setup.VERSION)")
+        pip install twine
+        pip install six pyopenssl ndg-httpsclient pyasn1 -U --user
+        pip install requests[security] twine --user
+        GPG_KEYID=$(cat dev/public_gpg_key)
+        echo "GPG_KEYID = '$GPG_KEYID'"
+        export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
+        export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
+        export PYUTILS_TWINE_PASSWORD=${{ secrets.PYUTILS_TWINE_PASSWORD }}
+        MB_PYTHON_TAG=$MB_PYTHON_TAG \
+            DO_GPG=True GPG_KEYID=$GPG_KEYID \
+            TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD \
+            TWINE_USERNAME=$PYUTILS_TWINE_USERNAME \
+            GPG_EXECUTABLE=$GPG_EXECUTABLE \
+            DO_UPLOAD=True \
+            DO_TAG=False ./publish.sh
+    fi
 fi
