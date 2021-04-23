@@ -389,8 +389,8 @@ See `CHANGELOG`_.
    :target: https://pypi.python.org/pypi/line_profiler
 .. |Downloads| image:: https://img.shields.io/pypi/dm/line_profiler.svg
    :target: https://pypistats.org/packages/line_profiler
-.. |ActionsTest| image:: https://github.com/pyutils/line_profiler/actions/workflows/python-package.yml/badge.svg
-   :target: https://github.com/pyutils/line_profiler/actions/workflows/python-package.yml
+.. |ActionsTest| image:: https://github.com/pyutils/line_profiler/actions/workflows/python-test.yml/badge.svg
+   :target: https://github.com/pyutils/line_profiler/actions/workflows/python-test.yml
 .. |ActionsPublish| image:: https://github.com/pyutils/line_profiler/actions/workflows/python-publish.yml/badge.svg
    :target: https://github.com/pyutils/line_profiler/actions/workflows/python-publish.yml
 
