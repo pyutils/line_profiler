@@ -251,8 +251,8 @@ def main(args=None):
     sys.path.insert(0, os.path.dirname(script_file))
 
     original_stdout = sys.stdout
-    if options.output_interval_threaded:
-        rt = RepeatedTimer(max(options.output_interval_threaded, 1), prof.dump_stats, options.outfile)
+    if options.output_interval:
+        rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     try:
         try:
             execfile_ = execfile
@@ -264,7 +264,7 @@ def main(args=None):
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
-        if options.output_interval_threaded:
+        if options.output_interval:
             rt.stop()
         prof.dump_stats(options.outfile)
         print('Wrote profile results to %s' % options.outfile)
