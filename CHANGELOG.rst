@@ -1,6 +1,10 @@
 Changes
 =======
 
+3.2.2
+~~~~~
+* ENH: Added better error message when c-extension is not compiled.
+
 3.2.0
 ~~~~~
 * Dropped 2.7 support, manylinux docker images no longer support 2.7 
