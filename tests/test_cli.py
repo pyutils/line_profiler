@@ -56,6 +56,7 @@ def test_version_agreement():
     info1 = ub.cmd('python -m line_profiler --version')
     info2 = ub.cmd('python -m kernprof --version')
 
+    # Strip local version suffixes
     version1 = info1['out'].strip().split('+')[0]
     version2 = info2['out'].strip().split('+')[0]
 

@@ -1,7 +1,7 @@
 line_profiler and kernprof
 --------------------------
 
-|Pypi| |Downloads| |CircleCI| |ActionsTest| |ActionsPublish|
+|Pypi| |Downloads| |CircleCI| |ActionsTest| |ActionsPublish| |Codecov|
 
 
 NOTICE: This is the official `line_profiler` repository. The most recent

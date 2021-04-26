@@ -4,6 +4,7 @@ Changes
 3.2.2
 ~~~~~
 * ENH: Added better error message when c-extension is not compiled.
+* FIX: Kernprof no longer imports line_profiler to avoid side effects.
 
 3.2.0
 ~~~~~
