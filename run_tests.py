@@ -41,7 +41,7 @@ if __name__ == '__main__':
 
         package_name = 'line_profiler'
         pytest_args = [
-            '--cov-config', '../.coveragerc',
+            '--cov-config', '../pyproject.toml',
             '--cov-report', 'html',
             '--cov-report', 'term',
             '--cov-report', 'xml',
