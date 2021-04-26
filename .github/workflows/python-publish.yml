@@ -22,6 +22,13 @@ jobs:
     - name: Enable Developer Command Prompt
       uses: ilammy/msvc-dev-cmd@v1
 
+    # Emulate aarch64 ppc64le s390x under linux
+    - name: Set up QEMU
+      if: runner.os == 'Linux'
+      uses: docker/setup-qemu-action@v1
+      with:
+        platforms: all
+
     - name: Build wheels
       uses: joerick/cibuildwheel@v1.10.0
       with:
@@ -31,6 +38,9 @@ jobs:
         CIBW_SKIP: cp27-* *-win32 pp*
         CIBW_TEST_REQUIRES: -r requirements/tests.txt
         CIBW_TEST_COMMAND: python {project}/run_tests.py
+        # configure cibuildwheel to build native archs ('auto'), and some
+        # emulated ones
+        CIBW_ARCHS_LINUX: auto aarch64 ppc64le s390x
 
     
     # Configure compilers for Windows 32bit. Does nothing on Linux/Mac.
