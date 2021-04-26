@@ -44,6 +44,7 @@ if __name__ == '__main__':
             '--cov-config', '../.coveragerc',
             '--cov-report', 'html',
             '--cov-report', 'term',
+            '--cov-report', 'xml',
             '--cov=' + package_name,
             '--cov=' + 'kernprof',
         ]
