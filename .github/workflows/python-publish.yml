@@ -10,11 +10,19 @@ on:
 
 jobs:
   build_and_test:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }}, arch=${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
+        arch: [auto]
+        include:
+          - os: ubuntu-latest
+            arch: aarch64
+          # - os: ubuntu-latest
+          #   arch: ppc64le
+          # - os: ubuntu-latest
+          #   arch: s390x
     steps:
     - uses: actions/checkout@v2
 
@@ -40,7 +48,7 @@ jobs:
         CIBW_TEST_COMMAND: python {project}/run_tests.py
         # configure cibuildwheel to build native archs ('auto'), and some
         # emulated ones
-        CIBW_ARCHS_LINUX: auto aarch64 ppc64le s390x
+        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
 
     
     # Configure compilers for Windows 32bit. Does nothing on Linux/Mac.
