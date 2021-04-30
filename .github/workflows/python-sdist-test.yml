@@ -33,10 +33,12 @@ jobs:
     - name: Install sdist
       run: |
         cd dist
-        pip install line_profiler_*.tar.gz -v
+        ls -al
+        pip install line_profiler*.tar.gz -v
     - name: Test sdist
       run: |
         pwd
+        ls -al
         # Ensure the source doesn't conflict with the test
         rm -rf line_profiler
         rm -rf kernprof.py  
