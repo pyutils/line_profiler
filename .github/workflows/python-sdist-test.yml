@@ -27,12 +27,18 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install -r requirements/build.txt
-    - name: Create Source Dist
+    - name: Build sdist
       run: |
         python setup.py sdist
-    - name: Install from SDist
+    - name: Install sdist
       run: |
         cd dist
         pip install line_profiler_*.tar.gz -v
-        cd ..
+    - name: Test sdist
+      run: |
+        pwd
+        # Ensure the source doesn't conflict with the test
+        rm -rf line_profiler
+        rm -rf kernprof.py  
+        # cd ..
         python run_tests.py
