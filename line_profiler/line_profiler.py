@@ -25,10 +25,10 @@ from IPython.core.error import UsageError
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
-except ModuleNotFoundError as ex:
-    raise ModuleNotFoundError(
-        'The line_profiler._line_profiler c-extension module has not '
-        'been compiled. ex={!r}'.format(ex)
+except ImportError as ex:
+    raise ImportError(
+        'The line_profiler._line_profiler c-extension is not importable. '
+        'Has it been compiled? Underlying error is ex={!r}'.format(ex)
     )
 
 
