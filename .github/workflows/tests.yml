@@ -5,8 +5,11 @@ name: python_publish
 
 on:
   push:
-    # This will only execute on the release branch
-    branches: [ release ]
+    branches: [ master, dev/github_actions ]
+    tags:
+      - '*'
+  pull_request:
+    branches: [ master ]
 
 jobs:
   lint:
@@ -101,6 +104,31 @@ jobs:
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
+
+    - name: Set up Python 3.8 to combine coverage Linux
+      if: runner.os == 'Linux'
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
+    - name: Combine coverage Linux
+      if: runner.os == 'Linux'
+      run: |
+        echo '############ PWD'
+        pwd
+        python -m pip install coverage[toml]
+        echo '############ combine'
+        coverage combine ./wheelhouse
+        echo '############ XML'
+        coverage xml -o ./tests/coverage.xml
+        echo '############ FIND'
+        find . -name .coverage.*
+        find . -name coverage.xml
+
+    - name: Codecov Upload
+      uses: codecov/codecov-action@v1
+      with:
+        file: ./tests/coverage.xml
 
     - uses: actions/upload-artifact@v2
       with:
