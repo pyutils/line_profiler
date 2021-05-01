@@ -1,4 +1,5 @@
 from os.path import join
+from sys import executable
 
 
 def test_cli():
@@ -40,24 +41,9 @@ def test_cli():
     tmp_lprof_fpath = join(tmp_dpath, 'foo.py.lprof')
     tmp_lprof_fpath
 
-    info = ub.cmd('python -m line_profiler {}'.format(tmp_lprof_fpath),
+    info = ub.cmd('{} -m line_profiler {}'.format(executable,tmp_lprof_fpath),
                   cwd=tmp_dpath, verbose=3)
     assert info['ret'] == 0
     # Check for some patterns that should be in the output
     assert '% Time' in info['out']
     assert '7       100' in info['out']
-
-
-def test_version_agreement():
-    """
-    Ensure that line_profiler and kernprof have the same version info
-    """
-    import ubelt as ub
-    info1 = ub.cmd('python -m line_profiler --version')
-    info2 = ub.cmd('python -m kernprof --version')
-
-    # Strip local version suffixes
-    version1 = info1['out'].strip().split('+')[0]
-    version2 = info2['out'].strip().split('+')[0]
-
-    assert version2 == version1, 'kernprof and line_profiler must be in sync'

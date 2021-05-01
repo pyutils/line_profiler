@@ -9,100 +9,132 @@ on:
     branches: [ release ]
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
+  build_and_test:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-          python-version: [3.6, 3.7, 3.8, 3.9]
-
+        os: [ubuntu-latest, windows-latest, macOS-latest]
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+
+    # Configure compilers for Windows 64bit. Does nothing on Linux/Mac.
+    - name: Enable Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Build wheels
+      uses: joerick/cibuildwheel@v1.10.0
       with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      run: |
-        rm -rf .git  # remove git repo which disable local versioning for publishing
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest
-        #if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    #- name: Lint with flake8
-    #  run: |
-    #    # stop the build if there are Python syntax errors or undefined names
-    #    flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-    #    # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-    #    flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Build Wheel
-      run: |
-        ./run_manylinux_build.sh
-        echo "====="
-    - name: Install Wheel
-      run: |
-        ls -al
-        ls -al wheelhouse
-        MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
-        VERSION=$(python -c "import setup; print(setup.VERSION)") 
-        echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
-        echo "VERSION = $VERSION"
-        BDIST_WHEEL_PATH=$(ls wheelhouse/*-${VERSION}-${MB_PYTHON_TAG}-*2010_x86_64.whl)
-        echo "BDIST_WHEEL_PATH = $BDIST_WHEEL_PATH"
-        python -m pip install $BDIST_WHEEL_PATH[all]
-    - name: Test Wheel
-      run: |
-        python run_tests.py
-    - name: Sign and Publish
+        output-dir: wheelhouse
+      # to supply options, put them in 'env', like:
       env:
-        # Toggle comments to publish to the test pypi instead of the real one
-        #TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
-        #PYUTILS_TWINE_USERNAME: ${{ secrets.PYUTILS_TWINE_USERNAME }}
-        #PYUTILS_TWINE_PASSWORD: ${{ secrets.PYUTILS_TWINE_PASSWORD }}
-        TEST_TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
-        PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
-        PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
-      run: |
-        ls -al
-        GPG_EXECUTABLE=gpg
-        $GPG_EXECUTABLE --version
-        openssl version
-        $GPG_EXECUTABLE --list-keys
-        export PYUTILS_CI_GITHUB_SECRET=${{ secrets.PYUTILS_CI_GITHUB_SECRET }}
-        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-        GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
-        $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
-        $GPG_EXECUTABLE --list-keys  
-        MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
-        VERSION=$(python -c "import setup; print(setup.VERSION)") 
-        pip install twine
-        pip install six pyopenssl ndg-httpsclient pyasn1 -U --user
-        pip install requests[security] twine --user
-        GPG_KEYID=$(cat dev/public_gpg_key)
-        echo "GPG_KEYID = '$GPG_KEYID'"
-        #
-        #export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
-        #export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
-        #export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
-        #MB_PYTHON_TAG=$MB_PYTHON_TAG \
-        #    DO_GPG=True GPG_KEYID=$GPG_KEYID \
-        #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
-        #    TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
-        #    TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
-        #    GPG_EXECUTABLE=$GPG_EXECUTABLE \
-        #    DO_UPLOAD=True \
-        #    DO_TAG=False ./publish.sh
-        #
-        export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
-        export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
-        export PYUTILS_TWINE_PASSWORD=${{ secrets.PYUTILS_TWINE_PASSWORD }}
-        MB_PYTHON_TAG=$MB_PYTHON_TAG \
-            DO_GPG=True GPG_KEYID=$GPG_KEYID \
-            TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD \
-            TWINE_USERNAME=$PYUTILS_TWINE_USERNAME \
-            GPG_EXECUTABLE=$GPG_EXECUTABLE \
-            DO_UPLOAD=True \
-            DO_TAG=False ./publish.sh 
+        CIBW_SKIP: cp27-* *-win32 pp*
+        CIBW_TEST_REQUIRES: -r requirements/tests.txt
+        CIBW_TEST_COMMAND: python {project}/run_tests.py
+
+    
+    # Configure compilers for Windows 32bit. Does nothing on Linux/Mac.
+    - uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x86
+
+    - name: Build wheels win32
+      if: matrix.os == 'windows-latest'
+      uses: joerick/cibuildwheel@v1.10.0
+      with:
+        output-dir: wheelhouse
+      # to supply options, put them in 'env', like:
+      env:
+        CIBW_BUILD: cp3*-win32
+        CIBW_TEST_REQUIRES: -r requirements/tests.txt
+        CIBW_TEST_COMMAND: python {project}/run_tests.py
+
+    - name: Show built files
+      shell: bash
+      run: ls -la wheelhouse
+
+    - uses: actions/upload-artifact@v2
+      with:
+        name: wheels
+        path: ./wheelhouse/*.whl
+
+  deploy:
+    name: Uploading to PyPi
+    runs-on: ubuntu-latest
+    # if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
+    needs: [build_and_test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: Install built dependencies
+        run: pip install -r requirements/build.txt
+      - name: Build sdist
+        run: python setup.py sdist
+
+      - name: Download wheels
+        uses: actions/download-artifact@v2
+        with:
+          name: wheels
+          path: dist
+
+      - name: Show files to upload
+        shell: bash
+        run: ls -la dist
+      - name: Sign and Publish
+        env:
+          # Toggle comments to publish to the test pypi instead of the real one
+          #TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
+          #PYUTILS_TWINE_USERNAME: ${{ secrets.PYUTILS_TWINE_USERNAME }}
+          #PYUTILS_TWINE_PASSWORD: ${{ secrets.PYUTILS_TWINE_PASSWORD }}
+          TEST_TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
+          PYUTILS_TEST_TWINE_USERNAME: ${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
+          PYUTILS_TEST_TWINE_PASSWORD: ${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
+        run: |
+          ls -al
+          GPG_EXECUTABLE=gpg
+          $GPG_EXECUTABLE --version
+          openssl version
+          $GPG_EXECUTABLE --list-keys
+          export PYUTILS_CI_GITHUB_SECRET=${{ secrets.PYUTILS_CI_GITHUB_SECRET }}
+          GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+          GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
+          GLKWS=$PYUTILS_CI_GITHUB_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/cci_secret_gpg_key.pgp.enc | $GPG_EXECUTABLE --import 
+          $GPG_EXECUTABLE --list-keys  || echo "first one fails for some reason"
+          $GPG_EXECUTABLE --list-keys  
+          MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)")
+          VERSION=$(python -c "import setup; print(setup.VERSION)") 
+          pip install twine
+          pip install six pyopenssl ndg-httpsclient pyasn1 -U --user
+          pip install requests[security] twine --user
+          GPG_KEYID=$(cat dev/public_gpg_key)
+          echo "GPG_KEYID = '$GPG_KEYID'"
+          #
+          #export TWINE_REPOSITORY_URL=https://test.pypi.org/legacy/
+          #export PYUTILS_TEST_TWINE_USERNAME=${{ secrets.PYUTILS_TEST_TWINE_USERNAME }}
+          #export PYUTILS_TEST_TWINE_PASSWORD=${{ secrets.PYUTILS_TEST_TWINE_PASSWORD }}
+          #MB_PYTHON_TAG=$MB_PYTHON_TAG \
+          #    DO_GPG=True GPG_KEYID=$GPG_KEYID \
+          #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL} \
+          #    TWINE_USERNAME=$PYUTILS_TEST_TWINE_USERNAME \
+          #    TWINE_PASSWORD=$PYUTILS_TEST_TWINE_PASSWORD \
+          #    GPG_EXECUTABLE=$GPG_EXECUTABLE \
+          #    DO_UPLOAD=True \
+          #    DO_TAG=False ./publish.sh
+          #
+          export TWINE_REPOSITORY_URL=https://upload.pypi.org/legacy/
+          export PYUTILS_TWINE_USERNAME=${{ secrets.PYUTILS_TWINE_USERNAME }}
+          export PYUTILS_TWINE_PASSWORD=${{ secrets.PYUTILS_TWINE_PASSWORD }}
+          MB_PYTHON_TAG=$MB_PYTHON_TAG \
+              DO_GPG=True GPG_KEYID=$GPG_KEYID \
+              TWINE_PASSWORD=$PYUTILS_TWINE_PASSWORD \
+              TWINE_USERNAME=$PYUTILS_TWINE_USERNAME \
+              GPG_EXECUTABLE=$GPG_EXECUTABLE \
+              DO_UPLOAD=True \
+              DO_TAG=False ./publish.sh 
        
 ###
 # Unfortunately we cant (yet) use the yaml docstring trick here
