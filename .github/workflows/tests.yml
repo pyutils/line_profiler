@@ -178,7 +178,7 @@ jobs:
   deploy:
     name: Uploading to PyPi
     runs-on: ubuntu-latest
-    # if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
     needs: [build_and_test_wheels, build_and_test_sdist]
     steps:
       - name: Checkout source
