@@ -5,9 +5,6 @@ name: Tests
 
 on:
   push:
-    branches: [ master, dev/github_actions ]
-    tags:
-      - '*'
   pull_request:
     branches: [ master ]
 
