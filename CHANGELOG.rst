@@ -4,7 +4,6 @@ Changes
 3.3.0
 ~~~~~
 * New CI for building wheels.
-* CHANGE: Removed support for Python 3.5
 
 3.2.6
 ~~~~~
