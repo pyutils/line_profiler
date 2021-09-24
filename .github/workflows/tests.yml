@@ -32,7 +32,7 @@ jobs:
   build_and_test_sdist:
     name: Test sdist Python 3.8
     runs-on: ubuntu-latest
-    needs: [lint]
+    #needs: [lint]
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python 3.8
@@ -71,10 +71,11 @@ jobs:
   build_and_test_wheels:
     name: ${{ matrix.cibw_build }} on ${{ matrix.os }}, arch=${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
-    needs: [lint]
+    #needs: [lint]
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        #os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest]
         arch: [auto]
         cibw_build: [cp3*-*]
         cibw_skip: ["*-win32"]
