@@ -37,18 +37,6 @@ Usage:
     TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/" 
 
     source $(secret_loader.sh)
-
-    MB_PYTHON_TAG=cp38-cp38m 
-    MB_PYTHON_TAG=cp37-cp37m 
-    MB_PYTHON_TAG=cp36-cp36m 
-    MB_PYTHON_TAG=cp35-cp35m 
-    MB_PYTHON_TAG=cp27-cp27mu
-
-    echo "MB_PYTHON_TAG = $MB_PYTHON_TAG"
-    MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_multibuild.sh
-    DEPLOY_REMOTE=ibeis MB_PYTHON_TAG=$MB_PYTHON_TAG ./publish.sh yes
-
-    MB_PYTHON_TAG=py3-none-any ./publish.sh
 '''
 
 check_variable(){
@@ -83,7 +71,6 @@ normalize_boolean(){
 DEPLOY_REMOTE=${DEPLOY_REMOTE:=origin}
 NAME=${NAME:=$(python -c "import setup; print(setup.NAME)")}
 VERSION=$(python -c "import setup; print(setup.VERSION)")
-MB_PYTHON_TAG=${MB_PYTHON_TAG:=py3-none-any}
 
 # The default should change depending on the application
 #DEFAULT_MODE_LIST=("sdist" "universal" "bdist")
@@ -132,7 +119,6 @@ VERSION='$VERSION'
 TWINE_USERNAME='$TWINE_USERNAME'
 TWINE_REPOSITORY_URL = $TWINE_REPOSITORY_URL
 GPG_KEYID = '$GPG_KEYID'
-MB_PYTHON_TAG = '$MB_PYTHON_TAG'
 
 DO_UPLOAD=${DO_UPLOAD}
 DO_TAG=${DO_TAG}
@@ -173,7 +159,7 @@ fi
 if [[ "$DO_BUILD" == "True" ]]; then
     echo "About to build wheels"
 else
-    if [[ "$DO_UPLOAD" == "False" ]]; then
+    if [[ "$DO_BUILD" == "False" ]]; then
         echo "We are NOT about to build wheels"
     else
         read -p "Do you need to build wheels? (input 'yes' to confirm)" ANS
@@ -208,7 +194,6 @@ if [[ "$WAS_INTERACTION" == "True" ]]; then
     TWINE_USERNAME='$TWINE_USERNAME'
     TWINE_REPOSITORY_URL = $TWINE_REPOSITORY_URL
     GPG_KEYID = '$GPG_KEYID'
-    MB_PYTHON_TAG = '$MB_PYTHON_TAG'
 
     DO_UPLOAD=${DO_UPLOAD}
     DO_TAG=${DO_TAG}
@@ -260,7 +245,7 @@ if [ "$DO_BUILD" == "True" ]; then
             #WHEEL_PATHS+=($WHEEL_PATH)
         elif [[ "$_MODE" == "bdist" ]]; then
             echo "Assume wheel has already been built"
-            WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-$MB_PYTHON_TAG*.whl)
+            WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-*.whl)
             #WHEEL_PATHS+=($WHEEL_PATH)
         else
             echo "bad mode"
@@ -293,7 +278,7 @@ do
         WHEEL_PATH=$(ls dist/$NAME-$VERSION-$UNIVERSAL_TAG*.whl)
         WHEEL_PATHS+=($WHEEL_PATH)
     elif [[ "$_MODE" == "bdist" ]]; then
-        WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-$MB_PYTHON_TAG*.whl)
+        WHEEL_PATH=$(ls wheelhouse/$NAME-$VERSION-*.whl)
         WHEEL_PATHS+=($WHEEL_PATH)
     else
         echo "bad mode"
