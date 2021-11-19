@@ -226,6 +226,7 @@ def main(args=None):
     # kernprof.py's.
     sys.path.insert(0, os.path.dirname(script_file))
 
+    original_stdout = sys.stdout
     try:
         try:
             execfile_ = execfile
@@ -237,6 +238,9 @@ def main(args=None):
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
+        if sys.stdout is not original_stdout:
+            # stdout was replaced by the script.
+            sys.stdout = original_stdout
         prof.dump_stats(options.outfile)
         print('Wrote profile results to %s' % options.outfile)
         if options.view:
