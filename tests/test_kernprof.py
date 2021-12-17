@@ -1,10 +1,5 @@
 import unittest
-import sys
-
 from kernprof import ContextualProfile
-
-PY3 = sys.version_info[0] == 3
-PY35 = PY3 and sys.version_info[1] >= 5
 
 
 def f(x):
@@ -78,13 +73,9 @@ class TestKernprof(unittest.TestCase):
             next(i)
         self.assertEqual(profile.enable_count, 0)
 
-    if PY35:
-        import _test_kernprof_py35
-        test_coroutine_decorator = _test_kernprof_py35.test_coroutine_decorator
-
 if __name__ == '__main__':
     """
     CommandLine:
-        python ~/code/line_profiler/tests/test_kernprof.py
+        python ./tests/test_kernprof.py
     """
     unittest.main()

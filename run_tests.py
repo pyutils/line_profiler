@@ -1,14 +1,15 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 from os.path import dirname, join, abspath
 import sqlite3
 import sys
 import os
 import re
 
+
 def is_cibuildwheel():
     """Check if run with cibuildwheel."""
     return 'CIBUILDWHEEL' in os.environ
+
 
 def temp_rename_kernprof(repo_dir):
     """
@@ -23,10 +24,12 @@ def temp_rename_kernprof(repo_dir):
     elif os.path.isfile(tmp_path):
         os.rename(tmp_path, original_path)
 
+
 def replace_docker_path(path, runner_project_dir):
     """Update path to a file installed in a temp venv to runner_project_dir."""
     pattern = re.compile(r"\/tmp\/.+?\/site-packages")
     return pattern.sub(runner_project_dir, path)
+
 
 def update_coverag_file(coverage_path, runner_project_dir):
     """
@@ -59,9 +62,10 @@ def update_coverag_file(coverage_path, runner_project_dir):
             sqliteConnection.close()
             print('The sqlite connection is closed')
 
+
 def copy_coverage_cibuildwheel_docker(runner_project_dir):
     """
-    When run with cibuildwheel under linux, the tests run in the folder /project 
+    When run with cibuildwheel under linux, the tests run in the folder /project
     inside docker and the coverage files need to be copied to the output folder.
     """
     coverage_path = '/project/tests/.coverage'
@@ -70,7 +74,6 @@ def copy_coverage_cibuildwheel_docker(runner_project_dir):
         env_hash = hash((sys.version, os.environ.get('AUDITWHEEL_PLAT', '')))
         os.makedirs('/output', exist_ok=True)
         os.rename(coverage_path, '/output/.coverage.{}'.format(env_hash))
-
 
 
 if __name__ == '__main__':

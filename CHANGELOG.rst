@@ -1,6 +1,10 @@
 Changes
 =======
 
+3.4.0
+~~~~~
+* Drop support for Python <= 3.5.x
+
 3.3.1
 ~~~~~
 * FIX: Fix bug where lines were not displayed in Jupyter>=6.0 via #93

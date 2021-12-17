@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-# -*- coding: UTF-8 -*-
 """ Script to conveniently run profilers on code in a variety of circumstances.
 """
-
+import builtins
 import functools
 import os
 import sys
@@ -10,9 +9,7 @@ from argparse import ArgumentError, ArgumentParser
 
 # NOTE: This version needs to be manually maintained with the line_profiler
 # __version__ for now.
-__version__ = '3.3.1'
-
-PY3 = sys.version_info[0] == 3
+__version__ = '3.4.0'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.
@@ -25,23 +22,16 @@ except ImportError:
         from profile import Profile
 
 
-# Python 3.x compatibility utils: execfile
-# ========================================
-try:
-    execfile
-except NameError:
-    # Python 3.x doesn't have 'execfile' builtin
-    import builtins
-    exec_ = getattr(builtins, "exec")
-
-    def execfile(filename, globals=None, locals=None):
-        with open(filename, 'rb') as f:
-            exec_(compile(f.read(), filename, 'exec'), globals, locals)
+def execfile(filename, globals=None, locals=None):
+    """ Python 3.x doesn't have 'execfile' builtin """
+    with open(filename, 'rb') as f:
+        exec(compile(f.read(), filename, 'exec'), globals, locals)
 # =====================================
 
 
-
 CO_GENERATOR = 0x0020
+
+
 def is_generator(f):
     """ Return True if a function is a generator.
     """
@@ -55,7 +45,7 @@ class ContextualProfile(Profile):
     """
 
     def __init__(self, *args, **kwds):
-        super(ContextualProfile, self).__init__(*args, **kwds)
+        super().__init__(*args, **kwds)
         self.enable_count = 0
 
     def enable_by_count(self, subcalls=True, builtins=True):
@@ -161,37 +151,36 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    parser = ArgumentParser(description="Run and profile a python script.")
+    parser = ArgumentParser(description='Run and profile a python script.')
     parser.add_argument('-V', '--version', action='version', version=__version__)
     parser.add_argument('-l', '--line-by-line', action='store_true',
-        help="Use the line-by-line profiler instead of cProfile. Implies --builtin.")
+                        help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
     parser.add_argument('-b', '--builtin', action='store_true',
-        help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
-            "'@profile' to decorate functions, or 'with profile:' to profile a "
-            "section of code.")
+                        help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
+                        "'@profile' to decorate functions, or 'with profile:' to profile a "
+                        'section of code.')
     parser.add_argument('-o', '--outfile',
-        help="Save stats to <outfile> (default: 'scriptname.lprof' with "
-            "--line-by-line, 'scriptname.prof' without)")
+                        help="Save stats to <outfile> (default: 'scriptname.lprof' with "
+                        "--line-by-line, 'scriptname.prof' without)")
     parser.add_argument('-s', '--setup',
-        help="Code to execute before the code to profile")
+                        help='Code to execute before the code to profile')
     parser.add_argument('-v', '--view', action='store_true',
-        help="View the results of the profile in addition to saving it")
+                        help='View the results of the profile in addition to saving it')
     parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
 
-        help="Output unit (in seconds) in which the timing info is "
-        "displayed (default: 1e-6)")
+                        help='Output unit (in seconds) in which the timing info is '
+                        'displayed (default: 1e-6)')
     parser.add_argument('-z', '--skip-zero', action='store_true',
-        help="Hide functions which have not been called")
+                        help='Hide functions which have not been called')
 
-    parser.add_argument('script', help="The python script file to run")
-    parser.add_argument('args', nargs='...', help="Optional script arguments")
+    parser.add_argument('script', help='The python script file to run')
+    parser.add_argument('args', nargs='...', help='Optional script arguments')
 
     options = parser.parse_args(args)
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
-
 
     sys.argv = [options.script] + options.args
     if options.setup is not None:
@@ -213,10 +202,6 @@ def main(args=None):
     else:
         prof = ContextualProfile()
     if options.builtin:
-        if PY3:
-            import builtins
-        else:
-            import __builtin__ as builtins
         builtins.__dict__['profile'] = prof
 
     script_file = find_script(options.script)
