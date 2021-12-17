@@ -86,9 +86,6 @@ jobs:
             cibw_skip: ""
           - os: ubuntu-latest
             arch: aarch64
-            cibw_build: cp35-*
-          - os: ubuntu-latest
-            arch: aarch64
             cibw_build: cp36-*
           - os: ubuntu-latest
             arch: aarch64
@@ -99,6 +96,9 @@ jobs:
           - os: ubuntu-latest
             arch: aarch64
             cibw_build: cp39-*
+          - os: ubuntu-latest
+            arch: aarch64
+            cibw_build: cp310-*
 
 
     steps:

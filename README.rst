@@ -60,6 +60,9 @@ Alternateively on windows you might consider using Christoph Gohlke's
 unofficial line-profiler 
 `precompiled win32 wheels <https://www.lfd.uci.edu/~gohlke/pythonlibs/#line_profiler>`_.
 
+The last version of line profiler to support Python 2.7 was 3.1.0 and the last
+version to support Python 3.5 was 3.3.1.
+
 .. _git: http://git-scm.com/
 .. _Cython: http://www.cython.org
 .. _build and install: http://docs.python.org/install/index.html
@@ -68,7 +71,7 @@ unofficial line-profiler
 line_profiler
 =============
 
-The current profiling tools supported in Python 2.7 and later only time
+The current profiling tools supported in Python only time
 function calls. This is a good first step for locating hotspots in one's program
 and is frequently all one needs to do to optimize the program. However,
 sometimes the cause of the hotspot is actually a single line in the function,
