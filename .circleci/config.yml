@@ -13,6 +13,9 @@
 #     https://circleci.com/docs/2.0/skip-build/#steps-to-enable-auto-cancel-for-pipelines-triggered-by-pushes-to-github-or-the-api
 #     https://app.circleci.com/settings/project/github/pyutils/line_profiler/advanced?return-to=https%3A%2F%2Fapp.circleci.com%2Fpipelines%2Fgithub%2Fpyutils%2FPYPKG
 
+
+# Note: Main CI is now in github actions
+
 version: 2
 workflows:
   version: 2
@@ -22,7 +25,6 @@ workflows:
       - test_full/cp38-cp38-manylinux2010
       - test_full/cp37-cp37m-manylinux2010
       - test_full/cp36-cp36m-manylinux2010
-      - test_full/cp35-cp35m-manylinux1
 
 
 jobs:
@@ -60,6 +62,7 @@ jobs:
             . venv/bin/activate
             MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
+            # TODO: move to cibuildwheel instead
             _INSIDE_DOCKER=YES REPO_ROOT="." MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_manylinux_build.sh
       - persist_to_workspace:
           root: .
@@ -127,15 +130,6 @@ jobs:
       - image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/repo-full-cp36
 
-  test_full/cp35-cp35m-manylinux1:
-    <<: *test_full_template
-    environment:
-      - PYTHON_EXE: /opt/python/cp35-cp35m/bin/python
-      - MB_PYTHON_TAG=cp35-cp35m
-    docker:
-      - image: quay.io/pypa/manylinux1_x86_64:latest
-    working_directory: ~/repo-full-cp35
- 
 
 __scratch_work__:
     docker:

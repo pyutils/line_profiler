@@ -1,11 +1,15 @@
 """
-mkinit ~/code/line_profiler/line_profiler/__init__.py --relative
-mkinit ~/code/line_profiler/line_profiler/__init__.py --relative -w
+The line_profiler modula for doing line-by-line profiling of functions
 """
-
 __submodules__ = [
     'line_profiler',
 ]
+
+__autogen__ = """
+mkinit ./line_profiler/__init__.py --relative
+mkinit ./line_profiler/__init__.py --relative -w
+"""
+
 
 from .line_profiler import __version__
 

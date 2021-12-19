@@ -342,7 +342,6 @@ if [[ "$DO_TAG" == "True" ]]; then
     git tag $TAG_NAME -m "tarball tag $VERSION"
     git push --tags $DEPLOY_REMOTE
     echo "Should also do a: git push $DEPLOY_REMOTE main:release"
-    echo "For github should draft a new release: https://github.com/PyUtils/line_profiler/releases/new"
 else
     echo "Not tagging"
 fi

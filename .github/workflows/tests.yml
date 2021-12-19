@@ -86,9 +86,6 @@ jobs:
             cibw_skip: ""
           - os: ubuntu-latest
             arch: aarch64
-            cibw_build: cp35-*
-          - os: ubuntu-latest
-            arch: aarch64
             cibw_build: cp36-*
           - os: ubuntu-latest
             arch: aarch64
@@ -99,6 +96,9 @@ jobs:
           - os: ubuntu-latest
             arch: aarch64
             cibw_build: cp39-*
+          - os: ubuntu-latest
+            arch: aarch64
+            cibw_build: cp310-*
 
 
     steps:
@@ -126,7 +126,7 @@ jobs:
 
     # See: https://github.com/pypa/cibuildwheel/blob/main/action.yml
     - name: Build wheels
-      uses: pypa/cibuildwheel@v1.12.0
+      uses: pypa/cibuildwheel@v2.3.1
       with:
         output-dir: wheelhouse
       # to supply options, put them in 'env', like:
@@ -163,7 +163,7 @@ jobs:
         find . -name coverage.xml
 
     - name: Codecov Upload
-      uses: codecov/codecov-action@v1
+      uses: codecov/codecov-action@v2.1.0
       with:
         file: ./tests/coverage.xml
 

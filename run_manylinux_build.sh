@@ -38,9 +38,6 @@ MB_PYTHON_TAG=cp38-cp38 ./run_manylinux_build.sh
 MB_PYTHON_TAG=cp37-cp37m ./run_manylinux_build.sh
 MB_PYTHON_TAG=cp36-cp36m ./run_manylinux_build.sh
 MB_PYTHON_TAG=cp35-cp35m ./run_manylinux_build.sh
-MB_PYTHON_TAG=cp27-cp27m ./run_manylinux_build.sh
-
-# MB_PYTHON_TAG=cp27-cp27mu ./run_nmultibuild.sh
 
 docker pull quay.io/erotemic/manylinux-opencv:manylinux1_i686-opencv4.1.0-py3.6
 docker pull quay.io/pypa/manylinux2010_x86_64:latest
@@ -51,7 +48,7 @@ docker pull quay.io/pypa/manylinux2010_x86_64:latest
 #DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/erotemic/manylinux-for:x86_64-opencv4.1.0-v2"}
 DOCKER_IMAGE=${DOCKER_IMAGE:="quay.io/pypa/manylinux2010_x86_64:latest"}
 # Valid multibuild python versions are:
-# cp27-cp27m  cp27-cp27mu  cp34-cp34m  cp35-cp35m  cp36-cp36m  cp37-cp37m, cp38-cp38m
+# cp36-cp36m  cp37-cp37m, cp38-cp38m
 MB_PYTHON_TAG=${MB_PYTHON_TAG:=$(python -c "import setup; print(setup.native_mb_python_tag())")}
 NAME=${NAME:=$(python -c "import setup; print(setup.NAME)")}
 VERSION=${VERSION:=$(python -c "import setup; print(setup.VERSION)")}

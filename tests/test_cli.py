@@ -10,11 +10,12 @@ def test_cli():
         https://github.com/pyutils/line_profiler/issues/9
 
     CommandLine:
-        xdoctest -m ~/code/line_profiler/tests/test_cli.py test_cli
+        xdoctest -m ./tests/test_cli.py test_cli
     """
+    import ubelt as ub
+    import tempfile
 
     # Create a dummy source file
-    import ubelt as ub
     code = ub.codeblock(
         '''
         @profile
@@ -28,20 +29,18 @@ def test_cli():
         if __name__ == '__main__':
             my_inefficient_function()
         ''')
-    import tempfile
     tmp_dpath = tempfile.mkdtemp()
     tmp_src_fpath = join(tmp_dpath, 'foo.py')
     ub.writeto(tmp_src_fpath, code)
 
     # Run kernprof on it
-    info = ub.cmd('kernprof -l {}'.format(tmp_src_fpath), verbose=3,
-                  cwd=tmp_dpath)
+    info = ub.cmd(f'kernprof -l {tmp_src_fpath}', verbose=3, cwd=tmp_dpath)
     assert info['ret'] == 0
 
     tmp_lprof_fpath = join(tmp_dpath, 'foo.py.lprof')
     tmp_lprof_fpath
 
-    info = ub.cmd('{} -m line_profiler {}'.format(executable,tmp_lprof_fpath),
+    info = ub.cmd(f'{executable} -m line_profiler {tmp_lprof_fpath}',
                   cwd=tmp_dpath, verbose=3)
     assert info['ret'] == 0
     # Check for some patterns that should be in the output
@@ -54,8 +53,8 @@ def test_version_agreement():
     Ensure that line_profiler and kernprof have the same version info
     """
     import ubelt as ub
-    info1 = ub.cmd('{} -m line_profiler --version'.format(executable))
-    info2 = ub.cmd('{} -m kernprof --version'.format(executable))
+    info1 = ub.cmd(f'{executable} -m line_profiler --version')
+    info2 = ub.cmd(f'{executable} -m kernprof --version')
 
     # Strip local version suffixes
     version1 = info1['out'].strip().split('+')[0]
