@@ -60,10 +60,10 @@ jobs:
           name: build_wheel
           command: |
             . venv/bin/activate
-            MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+            #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
-            # TODO: move to cibuildwheel instead
-            _INSIDE_DOCKER=YES REPO_ROOT="." MB_PYTHON_TAG=$MB_PYTHON_TAG ./run_manylinux_build.sh
+            export CIBW_BUILD="${MB_PYTHON_TAG}-*"
+            cibuildwheel --platform=linux --arch=auto
       - persist_to_workspace:
           root: .
           paths:
@@ -73,7 +73,7 @@ jobs:
           command: |
             . venv/bin/activate
             # pip install --upgrade pip
-            MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
+            #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
             pip install ${BDIST_WHEEL_PATH}[all]
@@ -98,7 +98,7 @@ jobs:
     <<: *test_full_template
     environment:
       - PYTHON_EXE: /opt/python/cp39-cp39/bin/python
-      - MB_PYTHON_TAG=cp39-cp39
+      - MB_PYTHON_TAG=cp39
     docker:
       - image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/repo-full-cp39
@@ -107,7 +107,7 @@ jobs:
     <<: *test_full_template
     environment:
       - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
-      - MB_PYTHON_TAG=cp38-cp38
+      - MB_PYTHON_TAG=cp38
     docker:
       - image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/repo-full-cp38
@@ -116,7 +116,7 @@ jobs:
     <<: *test_full_template
     environment:
       - PYTHON_EXE: /opt/python/cp37-cp37m/bin/python
-      - MB_PYTHON_TAG=cp37-cp37m
+      - MB_PYTHON_TAG=cp37
     docker:
       - image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/repo-full-cp37
@@ -125,7 +125,7 @@ jobs:
     <<: *test_full_template
     environment:
       - PYTHON_EXE: /opt/python/cp36-cp36m/bin/python
-      - MB_PYTHON_TAG=cp36-cp36m
+      - MB_PYTHON_TAG=cp36
     docker:
       - image: quay.io/pypa/manylinux2010_x86_64:latest
     working_directory: ~/repo-full-cp36
