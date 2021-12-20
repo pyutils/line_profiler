@@ -63,6 +63,7 @@ jobs:
             #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             export CIBW_BUILD="${MB_PYTHON_TAG}-*"
+            pip install cibuildwheel
             cibuildwheel --platform=linux --arch=auto
       - persist_to_workspace:
           root: .
