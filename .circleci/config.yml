@@ -64,6 +64,7 @@ jobs:
             #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             export CIBW_BUILD="${MB_PYTHON_TAG}-*"
+            docker info
             pip install cibuildwheel
             cibuildwheel --platform=linux --arch=auto
       - persist_to_workspace:
@@ -102,7 +103,7 @@ jobs:
       - PYTHON_EXE: /opt/python/cp39-cp39/bin/python
       - MB_PYTHON_TAG=cp39
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      - image: circleci/python:3.9
     working_directory: ~/repo-full-cp39
   
   test_full/cp38-cp38-manylinux2010:
@@ -111,7 +112,7 @@ jobs:
       - PYTHON_EXE: /opt/python/cp38-cp38/bin/python
       - MB_PYTHON_TAG=cp38
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      - image: circleci/python:3.8
     working_directory: ~/repo-full-cp38
   
   test_full/cp37-cp37m-manylinux2010:
@@ -120,7 +121,7 @@ jobs:
       - PYTHON_EXE: /opt/python/cp37-cp37m/bin/python
       - MB_PYTHON_TAG=cp37
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      - image: circleci/python:3.7
     working_directory: ~/repo-full-cp37
 
   test_full/cp36-cp36m-manylinux2010:
@@ -129,7 +130,7 @@ jobs:
       - PYTHON_EXE: /opt/python/cp36-cp36m/bin/python
       - MB_PYTHON_TAG=cp36
     docker:
-      - image: quay.io/pypa/manylinux2010_x86_64:latest
+      - image: circleci/python:3.6
     working_directory: ~/repo-full-cp36
 
 
