@@ -62,11 +62,11 @@ jobs:
             export CIBW_BUILD="${MB_PYTHON_TAG}-*"
             docker info
             pip install cibuildwheel
-            cibuildwheel --platform=linux --arch=auto
+            cibuildwheel --platform=linux --arch=native
       - persist_to_workspace:
           root: .
           paths:
-              - dist
+              - wheelhouse
       - run:
           name: install_wheel
           command: |
@@ -74,7 +74,7 @@ jobs:
             # pip install --upgrade pip
             #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
-            BDIST_WHEEL_PATH=$(ls dist/*-$VERSION-$MB_PYTHON_TAG*.whl)
+            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
             pip install ${BDIST_WHEEL_PATH}[all]
       - run:
           name: run_tests
