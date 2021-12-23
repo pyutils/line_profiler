@@ -74,7 +74,7 @@ jobs:
             #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             # Hack in the arch
-            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*_x86_64.whl)
+            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*manylinux*_x86_64.whl)
             echo "BDIST_WHEEL_PATH=${BDIST_WHEEL_PATH}"
             pip install ${BDIST_WHEEL_PATH}[all]
       - run:
