@@ -74,7 +74,8 @@ jobs:
             # pip install --upgrade pip
             #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
-            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*.whl)
+            # Hack in the arch
+            BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*_x86_64.whl)
             pip install ${BDIST_WHEEL_PATH}[all]
       - run:
           name: run_tests
