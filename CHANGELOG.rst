@@ -4,6 +4,7 @@ Changes
 3.4.0
 ~~~~~
 * Drop support for Python <= 3.5.x
+* FIX: #104 issue with new IPython kernels 
 
 3.3.1
 ~~~~~
