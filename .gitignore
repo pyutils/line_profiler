@@ -22,3 +22,4 @@ index.html
 .coverage
 tests/coverage.xml
 tests/htmlcov
+wheelhouse

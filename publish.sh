@@ -380,7 +380,6 @@ else
         NAME='$NAME'
         TWINE_USERNAME='$TWINE_USERNAME'
         GPG_KEYID = '$GPG_KEYID'
-        MB_PYTHON_TAG = '$MB_PYTHON_TAG'
 
         To do live run set DO_UPLOAD=1 and ensure deploy and current branch are the same
 
