@@ -258,6 +258,15 @@ through pyprof2calltree_ to run on kcachegrind_ and compatible apps.
 .. _pyprof2calltree: http://pypi.python.org/pypi/pyprof2calltree/
 .. _SnakeViz: https://github.com/jiffyclub/snakeviz/
 
+
+Other related tools:
+
+* A Qt based GUI: qt_profiler_gui_. 
+* A PyCharm plugin pycharm_plugin_. 
+
+.. _qt_profiler_gui: https://github.com/Nodd/lineprofilergui
+.. _pycharm_plugin: https://plugins.jetbrains.com/plugin/16536-line-profiler
+
 Frequently Asked Questions
 ==========================
 
