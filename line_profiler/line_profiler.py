@@ -155,6 +155,8 @@ class LineProfiler(CLineProfiler):
         return nfuncsadded
 
 
+# This could be in the ipython_extension submodule,
+# but it doesn't depend on the IPython module so it's easier to just let it stay here.
 def is_ipython_kernel_cell(filename):
     """ Return True if a filename corresponds to a Jupyter Notebook cell
     """

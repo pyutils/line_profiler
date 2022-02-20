@@ -3,6 +3,7 @@ The line_profiler modula for doing line-by-line profiling of functions
 """
 __submodules__ = [
     'line_profiler',
+    'ipython_extension',
 ]
 
 __autogen__ = """
@@ -13,10 +14,16 @@ mkinit ./line_profiler/__init__.py --relative -w
 
 from .line_profiler import __version__
 
-from .line_profiler import (LineProfiler, LineProfilerMagics,
-                            load_ipython_extension, load_stats, main,
+from .line_profiler import (LineProfiler, load_stats, main,
                             show_func, show_text,)
 
-__all__ = ['LineProfiler', 'LineProfilerMagics', 'line_profiler',
-           'load_ipython_extension', 'load_stats', 'main', 'show_func',
+__all__ = ['LineProfiler', 'line_profiler',
+           'load_stats', 'main', 'show_func',
            'show_text', '__version__']
+
+try:
+    from .ipython_extension import (LineProfilerMagics, load_ipython_extension,)
+
+    __all__ += ['LineProfilerMagics', 'load_ipython_extension']
+except ImportError:
+    pass
