@@ -251,21 +251,35 @@ command::
 
     $ python -m pstats script_to_profile.py.prof
 
-Such files may also be viewed with graphical tools like SnakeViz_ and converted
-through pyprof2calltree_ to run on kcachegrind_ and compatible apps.
 
-.. _kcachegrind: http://kcachegrind.sourceforge.net/html/Home.html
+Such files may also be viewed with graphical tools. A list of 3rd party tools
+built on ``cProfile`` or ``line_profiler`` are as follows:
+
+* `pyprof2calltree <pyprof2calltree_>`_: converts profiling data to a format
+  that can be visualized using kcachegrind_ (linux only), wincachegrind_
+  (windows only, unmaintained), or  qcachegrind_. 
+
+* `Line Profiler GUI <qt_profiler_gui_>`_: Qt GUI for line_profiler. 
+
+* `SnakeViz <SnakeViz_>`_: A web viewer for Python profiling data.
+
+* `SnakeRunner <SnakeRunner_>`_: A fork of RunSnakeRun_, ported to Python 3.
+
+* `Pycharm plugin <pycharm_line_profiler_plugin_>`_: A PyCharm plugin for line_profiler.
+
+* `Spyder plugin <spyder_line_profiler_plugin_>`_: A plugin to run line_profiler from within the Spyder IDE.
+
+
+.. _qcachegrind: https://sourceforge.net/projects/qcachegrindwin/
+.. _kcachegrind: https://kcachegrind.github.io/html/Home.html
+.. _wincachegrind: https://github.com/ceefour/wincachegrind
 .. _pyprof2calltree: http://pypi.python.org/pypi/pyprof2calltree/
 .. _SnakeViz: https://github.com/jiffyclub/snakeviz/
-
-
-Other related tools:
-
-* A Qt based GUI: qt_profiler_gui_. 
-* A PyCharm plugin pycharm_plugin_. 
-
+.. _SnakeRunner: https://github.com/venthur/snakerunner
+.. _RunSnakeRun: https://pypi.org/project/RunSnakeRun/
 .. _qt_profiler_gui: https://github.com/Nodd/lineprofilergui
-.. _pycharm_plugin: https://plugins.jetbrains.com/plugin/16536-line-profiler
+.. _pycharm_line_profiler_plugin: https://plugins.jetbrains.com/plugin/16536-line-profiler
+.. _spyder_line_profiler_plugin: https://github.com/spyder-ide/spyder-line-profiler
 
 Frequently Asked Questions
 ==========================
