@@ -14,16 +14,17 @@ mkinit ./line_profiler/__init__.py --relative -w
 
 from .line_profiler import __version__
 
-from .line_profiler import (LineProfiler, load_stats, main,
+from .line_profiler import (LineProfiler,
+                            load_ipython_extension, load_stats, main,
                             show_func, show_text,)
 
 __all__ = ['LineProfiler', 'line_profiler',
-           'load_stats', 'main', 'show_func',
+           'load_ipython_extension', 'load_stats', 'main', 'show_func',
            'show_text', '__version__']
 
 try:
-    from .ipython_extension import (LineProfilerMagics, load_ipython_extension,)
+    from .ipython_extension import (LineProfilerMagics, ,)
 
-    __all__ += ['LineProfilerMagics', 'load_ipython_extension']
+    __all__ += ['LineProfilerMagics']
 except ImportError:
     pass
