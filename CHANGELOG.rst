@@ -3,6 +3,7 @@ Changes
 
 3.5.0
 ~~~~~
+* FIX: Fixes max of an empty sequence error #118
 
 3.4.0
 ~~~~~
