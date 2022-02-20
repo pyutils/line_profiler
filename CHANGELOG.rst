@@ -3,6 +3,7 @@ Changes
 
 3.5.0
 ~~~~~
+* FIX: #109 kernprof fails to write to stdout if stdout was replaced
 
 3.4.0
 ~~~~~
