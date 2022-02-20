@@ -5,6 +5,8 @@ from IPython.core.page import page
 from IPython.utils.ipstruct import Struct
 from IPython.core.error import UsageError
 
+from .line_profiler import LineProfiler
+
 
 @magics_class
 class LineProfilerMagics(Magics):
