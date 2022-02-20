@@ -211,6 +211,7 @@ def main(args=None):
     # kernprof.py's.
     sys.path.insert(0, os.path.dirname(script_file))
 
+    original_stdout = sys.stdout
     try:
         try:
             execfile_ = execfile
@@ -226,11 +227,11 @@ def main(args=None):
         print('Wrote profile results to %s' % options.outfile)
         if options.view:
             if isinstance(prof, ContextualProfile):
-                prof.print_stats(stream=sys.stdout)
+                prof.print_stats(stream=original_stdout)
             else:
                 prof.print_stats(output_unit=options.unit,
                                  stripzeros=options.skip_zero,
-                                 stream=sys.stdout)
+                                 stream=original_stdout)
 
 
 if __name__ == '__main__':
