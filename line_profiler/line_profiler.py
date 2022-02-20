@@ -22,7 +22,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '3.4.0'
+__version__ = '3.5.0'
 
 
 def is_coroutine(f):
