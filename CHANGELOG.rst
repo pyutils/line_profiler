@@ -1,6 +1,9 @@
 Changes
 =======
 
+3.5.0
+~~~~~
+
 3.4.0
 ~~~~~
 * Drop support for Python <= 3.5.x
