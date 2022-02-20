@@ -23,7 +23,7 @@ __all__ = ['LineProfiler', 'line_profiler',
            'show_text', '__version__']
 
 try:
-    from .ipython_extension import (LineProfilerMagics, ,)
+    from .ipython_extension import LineProfilerMagics
 
     __all__ += ['LineProfilerMagics']
 except ImportError:
