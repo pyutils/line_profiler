@@ -19,6 +19,13 @@ except ImportError as ex:
 __version__ = '3.5.0'
 
 
+def load_ipython_extension(ip):
+    """ API for IPython to recognize this module as an IPython extension.
+    """
+    from .ipython_extension import LineProfilerMagics
+    ip.register_magics(LineProfilerMagics)
+
+
 def is_coroutine(f):
     return False
 
