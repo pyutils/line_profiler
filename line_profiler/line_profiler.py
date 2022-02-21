@@ -203,13 +203,17 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         stream.write('that you ran the profiler from?\n')
         stream.write("Continuing without the function's contents.\n")
         # Fake empty lines so we can see the timings, if not the code.
-        nlines = max(linenos) - min(min(linenos), start_lineno) + 1
+        nlines = 1 if not linenos else max(linenos) - min(min(linenos), start_lineno) + 1
         sublines = [''] * nlines
     for lineno, nhits, time in timings:
+        if total_time == 0:  # Happens rarely on empty function
+            percent = ''
+        else:
+            percent = '%5.1f' % (100 * time / total_time)
         d[lineno] = (nhits,
                      '%5.1f' % (time * scalar),
                      '%5.1f' % (float(time) * scalar / nhits),
-                     '%5.1f' % (100 * time / total_time) )
+                     percent)
     linenos = range(start_lineno, start_lineno + len(sublines))
     empty = ('', '', '', '')
     header = template % ('Line #', 'Hits', 'Time', 'Per Hit', '% Time',
