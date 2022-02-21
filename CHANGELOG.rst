@@ -3,6 +3,7 @@ Changes
 
 3.5.0
 ~~~~~
+* FIX: #109 kernprof fails to write to stdout if stdout was replaced
 * FIX: Fixes max of an empty sequence error #118
 * FIX: #100 Exception raise ZeroDivisionError
 
