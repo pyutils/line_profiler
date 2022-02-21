@@ -9,12 +9,6 @@ import sys
 from argparse import ArgumentError, ArgumentParser
 
 try:
-    from ipython_extension import load_ipython_extension
-except ImportError:
-    def load_ipython_extension(ip):
-        raise ImportError("Module IPython not found")
-
-try:
     from ._line_profiler import LineProfiler as CLineProfiler
 except ImportError as ex:
     raise ImportError(
