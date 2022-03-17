@@ -5,6 +5,7 @@ Changes
 ~~~~~
 * FIX: #109 kernprof fails to write to stdout if stdout was replaced
 * FIX: Fixes max of an empty sequence error #118
+* Make IPython optional
 * FIX: #100 Exception raise ZeroDivisionError
 
 3.4.0
