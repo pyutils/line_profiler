@@ -12,6 +12,7 @@
 
 build/
 dist/
+venv/
 _skbuild
 _line_profiler.c
 line_profiler.egg-info/
@@ -23,3 +24,4 @@ index.html
 tests/coverage.xml
 tests/htmlcov
 wheelhouse
+

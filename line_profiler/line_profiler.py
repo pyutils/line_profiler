@@ -8,6 +8,7 @@ import os
 import sys
 from io import StringIO
 from argparse import ArgumentError, ArgumentParser
+import webbrowser
 
 from IPython.core.magic import (Magics, magics_class, line_magic)
 from IPython.core.page import page
@@ -30,6 +31,25 @@ def is_coroutine(f):
 
 
 CO_GENERATOR = 0x0020
+
+
+class WebRender:
+    """ Write records stats and displayed web report.
+    """
+
+    content: str = ""
+
+    def write(self, value):
+        """ Write records stats.
+        """
+        self.content += value
+
+    def render(self):
+        """ Render web report in browser default.
+        """
+        with tempfile.NamedTemporaryFile(mode="w+t", suffix=".html", delete=False) as f:
+            f.write(f"<html><pre>{self.content}</pre></html>")
+        webbrowser.open(f"file://{f.name}")
 
 
 def is_generator(f):
@@ -415,9 +435,17 @@ def main():
         help='Hide functions which have not been called',
     )
     parser.add_argument('profile_output', help='*.lprof file created by kernprof')
+    parser.add_argument("-w", "--web", action="store_true", help='Render web report')
 
     args = parser.parse_args()
     lstats = load_stats(args.profile_output)
+
+    if args.web is True:
+        web = WebRender()
+        show_text(lstats.timings, lstats.unit, output_unit=args.unit, stream=web, stripzeros=args.skip_zero)
+        web.render()
+        return
+
     show_text(lstats.timings, lstats.unit, output_unit=args.unit, stripzeros=args.skip_zero)
 
 
