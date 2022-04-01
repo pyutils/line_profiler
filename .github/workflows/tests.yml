@@ -13,9 +13,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python 3.8
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v3
       with:
         python-version: 3.8
     - name: Install dependencies
@@ -34,9 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     #needs: [lint]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python 3.8
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v3
       with:
         python-version: 3.8
     - name: Upgrade pip 
@@ -103,7 +103,7 @@ jobs:
 
     steps:
     - name: Checkout source
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     # Configure compilers for Windows 64bit.
     - name: Enable MSVC 64bit
@@ -144,7 +144,7 @@ jobs:
 
     - name: Set up Python 3.8 to combine coverage Linux
       if: runner.os == 'Linux'
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v3
       with:
         python-version: 3.8
 
@@ -177,11 +177,12 @@ jobs:
     # Publish on the real PyPI
     name: Uploading to PyPi
     runs-on: ubuntu-latest
+    # TODO: change to only happen on release tags, not any tag
     if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags')
     needs: [build_and_test_wheels, build_and_test_sdist]
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Download wheels and sdist
         uses: actions/download-artifact@v2
@@ -237,12 +238,12 @@ jobs:
     # Publish on the test PyPI
     name: Uploading to Test PyPi
     runs-on: ubuntu-latest
-    #if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/heads/main') || startsWith(github.event.ref, 'refs/heads/master'))
-    if: github.event_name == 'push' 
+    if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/heads/main') || startsWith(github.event.ref, 'refs/heads/master'))
+    #if: github.event_name == 'push' 
     needs: [build_and_test_wheels, build_and_test_sdist]
     steps:
       - name: Checkout source
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Download wheels and sdist
         uses: actions/download-artifact@v2

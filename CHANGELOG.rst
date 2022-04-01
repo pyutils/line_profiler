@@ -1,13 +1,21 @@
 Changes
 =======
 
+3.5.1
+~~~~~
+* FIX: Fixes profiling of async functions
+
 3.5.0
 ~~~~~
+* FIX: #109 kernprof fails to write to stdout if stdout was replaced
+* FIX: Fixes max of an empty sequence error #118
+* Make IPython optional
+* FIX: #100 Exception raise ZeroDivisionError
 
 3.4.0
 ~~~~~
 * Drop support for Python <= 3.5.x
-* FIX: #104 issue with new IPython kernels 
+* FIX: #104 issue with new IPython kernels
 
 3.3.1
 ~~~~~
@@ -21,7 +29,7 @@ Changes
 3.2.6
 ~~~~~
 * FIX: Update MANIFEST.in to package pyproj.toml and missing pyx file
-* CHANGE: Removed version experimental augmentation. 
+* CHANGE: Removed version experimental augmentation.
 
 3.2.5
 ~~~~~
@@ -43,7 +51,7 @@ Changes
 
 3.2.0
 ~~~~~
-* Dropped 2.7 support, manylinux docker images no longer support 2.7 
+* Dropped 2.7 support, manylinux docker images no longer support 2.7
 * ENH: Add command line option to specify time unit and skip displaying
   functions which have not been profiled.
 * ENH: Unified versions of line_profiler and kernprof: kernprof version is now
@@ -113,4 +121,3 @@ Changes
 ~~~~~
 
 * Initial release.
-
