@@ -16,7 +16,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '3.5.0'
+__version__ = '3.5.1'
 
 
 def load_ipython_extension(ip):
@@ -27,7 +27,7 @@ def load_ipython_extension(ip):
 
 
 def is_coroutine(f):
-    return False
+    return inspect.iscoroutinefunction(f)
 
 
 CO_GENERATOR = 0x0020
@@ -55,6 +55,22 @@ class LineProfiler(CLineProfiler):
             wrapper = self.wrap_generator(func)
         else:
             wrapper = self.wrap_function(func)
+        return wrapper
+
+    def wrap_coroutine(self, func):
+        """
+        Wrap a Python 3.5 coroutine to profile it.
+        """
+
+        @functools.wraps(func)
+        async def wrapper(*args, **kwds):
+            self.enable_by_count()
+            try:
+                result = await func(*args, **kwds)
+            finally:
+                self.disable_by_count()
+            return result
+
         return wrapper
 
     def wrap_generator(self, func):
