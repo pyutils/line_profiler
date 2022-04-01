@@ -259,6 +259,7 @@ if __name__ == '__main__':
         install_requires=parse_requirements('requirements/runtime.txt'),
         extras_require={
             'all': parse_requirements('requirements.txt'),
+            'ipython': parse_requirements('requirements/ipython.txt'),
             'tests': parse_requirements('requirements/tests.txt'),
             'build': parse_requirements('requirements/build.txt'),
         },

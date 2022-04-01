@@ -1,10 +1,15 @@
 Changes
 =======
 
+3.5.1
+~~~~~
+* FIX: #19 line profiler now works on async functions again
+
 3.5.0
 ~~~~~
 * FIX: #109 kernprof fails to write to stdout if stdout was replaced
 * FIX: Fixes max of an empty sequence error #118
+* Make IPython optional
 * FIX: #100 Exception raise ZeroDivisionError
 
 3.4.0

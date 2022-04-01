@@ -33,6 +33,10 @@ Releases of `line_profiler` can be installed using pip::
 
     $ pip install line_profiler
 
+Installation while ensuring a compatible IPython version can also be installed using pip::
+
+    $ pip install line_profiler[ipython]
+
 Source releases and any binaries can be downloaded from the PyPI link.
 
     http://pypi.python.org/pypi/line_profiler
