@@ -273,6 +273,7 @@ built on ``cProfile`` or ``line_profiler`` are as follows:
 
 * `Spyder plugin <spyder_line_profiler_plugin_>`_: A plugin to run line_profiler from within the Spyder IDE.
 
+* `pprof <web_profiler_ui_>`_: A render web report for ``line_profiler``.
 
 .. _qcachegrind: https://sourceforge.net/projects/qcachegrindwin/
 .. _kcachegrind: https://kcachegrind.github.io/html/Home.html
@@ -284,6 +285,7 @@ built on ``cProfile`` or ``line_profiler`` are as follows:
 .. _qt_profiler_gui: https://github.com/Nodd/lineprofilergui
 .. _pycharm_line_profiler_plugin: https://plugins.jetbrains.com/plugin/16536-line-profiler
 .. _spyder_line_profiler_plugin: https://github.com/spyder-ide/spyder-line-profiler
+.. _web_profiler_ui: https://github.com/mirecl/pprof
 
 Frequently Asked Questions
 ==========================
