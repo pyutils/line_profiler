@@ -63,7 +63,7 @@ jobs:
         python run_tests.py
 
     - name: Upload sdist artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: wheels
         path: ./dist/*.tar.gz
@@ -168,7 +168,7 @@ jobs:
         file: ./tests/coverage.xml
 
     - name: Upload wheels artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: wheels
         path: ./wheelhouse/*.whl
