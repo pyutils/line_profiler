@@ -30,14 +30,9 @@ hpTimerUnit(void)
                 return 0.000001;  /* unlikely */
 }
 
-#else  /* !MS_WINDOWS */
+#elif (defined(PYOS_OS2) && defined(PYCC_GCC))
 
-#if (defined(PYOS_OS2) && defined(PYCC_GCC))
 #include <sys/time.h>
-#else
-#include <sys/resource.h>
-#include <sys/times.h>
-#endif
 
 PY_LONG_LONG
 hpTimer(void)
@@ -56,5 +51,25 @@ hpTimerUnit(void)
         return 0.000001;
 }
 
-#endif  /* MS_WINDOWS */
+#else
 
+#include <sys/resource.h>
+#include <sys/times.h>
+
+PY_LONG_LONG
+hpTimer(void)
+{
+        struct timespec ts;
+        PY_LONG_LONG ret;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        ret = ts.tv_sec * 1000000000 + ts.tv_nsec;
+        return ret;
+}
+
+double
+hpTimerUnit(void)
+{
+        return 0.000000001;
+}
+
+#endif
