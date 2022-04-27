@@ -15,23 +15,31 @@ class Timer:
 def test_async_profile():
     import asyncio
     import time
+    import sys
     from line_profiler import LineProfiler
 
     n = 100
     m = 0.01
+
+    def async_run(future):
+        if sys.version_info[0:2] >= (3, 7):
+            asyncio.run(future)
+        else:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(asyncio.wait([future]))
 
     async def async_function():
         for idx in range(n):
             await asyncio.sleep(m)
 
     with Timer() as t:
-        asyncio.run(async_function())
+        async_run(async_function())
     time1 = t.elapsed
 
     profile = LineProfiler()
     profiled_async_function = profile(async_function)
     with Timer() as t:
-        asyncio.run(profiled_async_function())
+        async_run(profiled_async_function())
     time2 = t.elapsed
     profile.print_stats()
 
