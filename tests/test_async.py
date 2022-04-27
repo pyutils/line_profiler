@@ -17,7 +17,7 @@ def test_async_profile():
     import time
     from line_profiler import LineProfiler
 
-    n = 10
+    n = 100
     m = 0.01
 
     async def async_function():
@@ -36,23 +36,16 @@ def test_async_profile():
     profile.print_stats()
 
     ideal_time = n * m
-    print(f'ideal_time={ideal_time}')
-    print(f'time1={time1}')
-    print(f'time2={time2}')
-
     max_time = max(time2, time1)
     min_time = min(time2, time1)
     ratio = max_time / min_time
     error = abs(max_time - ideal_time)
-    print(f'{error=}')
-    print(f'{ratio=}')
     assert ratio < 1.5, 'profiled function should run about as fast'
     assert error < (ideal_time * 0.5), 'should be somewhat close to the ideal time'
 
     lstats = profile.get_stats()
     unit = lstats.unit
     stats = lstats.timings
-    print(f'{unit=}')
 
     profiled_items = sorted(stats.items())
     assert len(profiled_items) == 1
@@ -60,6 +53,13 @@ def test_async_profile():
         total_time = 0.0
         for lineno, nhits, time_ in timings:
             total_time += time_
+    print(f'async ideal_time={ideal_time}')
+    print(f'async time1={time1}')
+    print(f'async time2={time2}')
+    print(f'async unit={unit}')
+    print(f'async error={error}')
+    print(f'async ratio={ratio}')
+    print(f'async total_time={total_time}')
 
     # --- similar test with sync
 
@@ -79,23 +79,18 @@ def test_async_profile():
     profile.print_stats()
 
     ideal_time = n * m
-    print(f'ideal_time={ideal_time}')
-    print(f'time1={time1}')
-    print(f'time2={time2}')
 
     max_time = max(time2, time1)
     min_time = min(time2, time1)
     ratio = max_time / min_time
     error = abs(max_time - ideal_time)
-    print(f'{error=}')
-    print(f'{ratio=}')
+
     assert ratio < 1.5, 'profiled function should run about as fast'
     assert error < (ideal_time * 0.5), 'should be somewhat close to the ideal time'
 
     lstats = profile.get_stats()
     unit = lstats.unit
     stats = lstats.timings
-    print(f'{unit=}')
 
     profiled_items = sorted(stats.items())
     assert len(profiled_items) == 1
@@ -103,6 +98,13 @@ def test_async_profile():
         total_time = 0.0
         for lineno, nhits, time_ in timings:
             total_time += time_
+    print(f'sync ideal_time={ideal_time}')
+    print(f'sync time1={time1}')
+    print(f'sync time2={time2}')
+    print(f'sync unit={unit}')
+    print(f'sync error={error}')
+    print(f'sync ratio={ratio}')
+    print(f'sync total_time={total_time}')
 
 
 if __name__ == '__main__':
