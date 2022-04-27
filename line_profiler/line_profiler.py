@@ -267,6 +267,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
                   output_unit=output_unit, stream=stream,
                   stripzeros=stripzeros)
 
+
 def load_stats(filename):
     """ Utility function to load a pickled LineStats object from a given
     filename.

@@ -1,7 +1,7 @@
 line_profiler and kernprof
 --------------------------
 
-|Pypi| |Downloads| |CircleCI| |ActionsTest| |Codecov|
+|Pypi| |Downloads| |CircleCI| |ActionsTest| |Codecov| |License|
 
 
 NOTICE: This is the official `line_profiler` repository. The most recent
@@ -428,3 +428,10 @@ See `CHANGELOG`_.
    :target: https://pypistats.org/packages/line_profiler
 .. |ActionsTest| image:: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml/badge.svg
    :target: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml
+.. |License| image:: https://img.shields.io/pypi/l/line_profiler
+   :target: https://github.com/pyutils/line_profiler/blob/main/LICENSE.txt
+
+.. "https://pypi.org/project/pprof/"
+.. Can we get this automatically?
+.. https://img.shields.io/badge/python-3.6%20%7C%203.7%20%7C%203.8%20%7C%203.9-blue?logoColor=white&logo=python
+.. https://img.shields.io/badge/OS-win%20%7C%20mac%20%7C%20linux-green
