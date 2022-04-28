@@ -18,101 +18,83 @@ def test_async_profile():
     import sys
     from line_profiler import LineProfiler
 
-    n = 100
-    m = 0.01
+    num_iters = 100
+    sleep_time = 0.01
 
     def async_run(future):
+        # For Python 3.6
         if sys.version_info[0:2] >= (3, 7):
             asyncio.run(future)
         else:
             loop = asyncio.get_event_loop()
             loop.run_until_complete(asyncio.wait([future]))
 
-    async def async_function():
-        for idx in range(n):
-            await asyncio.sleep(m)
+    def report_results(prefix, timer_raw, timer_prof):
+        time2 = async_timer_raw.elapsed
+        profile.print_stats()
 
-    with Timer() as t:
+        time1 = timer_raw.elapsed
+        time2 = timer_prof.elapsed
+
+        ideal_time = num_iters * sleep_time
+        max_time = max(time2, time1)
+        min_time = min(time2, time1)
+        ratio = max_time / min_time
+        error = abs(max_time - ideal_time)
+
+        lstats = profile.get_stats()
+        unit = lstats.unit
+        stats = lstats.timings
+
+        profiled_items = sorted(stats.items())
+        for (fn, lineno, name), timings in profiled_items:
+            total_time = 0.0
+            for lineno, nhits, time_ in timings:
+                total_time += time_
+
+        print(f'{prefix} ideal_time={ideal_time}')
+        print(f'{prefix} time1={time1}')
+        print(f'{prefix} time2={time2}')
+        print(f'{prefix} unit={unit}')
+        print(f'{prefix} error={error}')
+        print(f'{prefix} ratio={ratio}')
+        print(f'{prefix} total_time={total_time}')
+
+        assert ratio < 2.0, 'profiled function should run about as fast'
+        assert error < (ideal_time * 0.5), 'should be somewhat close to the ideal time'
+        assert len(profiled_items) == 1
+
+    # Async version of the function
+    async def async_function():
+        for idx in range(num_iters):
+            await asyncio.sleep(sleep_time)
+
+    # Sync version of the function
+    def sync_function():
+        for idx in range(num_iters):
+            time.sleep(sleep_time)
+
+    # --- test async version
+    with Timer() as async_timer_raw:
         async_run(async_function())
-    time1 = t.elapsed
 
     profile = LineProfiler()
     profiled_async_function = profile(async_function)
-    with Timer() as t:
+    with Timer() as async_timer_prof:
         async_run(profiled_async_function())
-    time2 = t.elapsed
-    profile.print_stats()
 
-    ideal_time = n * m
-    max_time = max(time2, time1)
-    min_time = min(time2, time1)
-    ratio = max_time / min_time
-    error = abs(max_time - ideal_time)
-    assert ratio < 1.5, 'profiled function should run about as fast'
-    assert error < (ideal_time * 0.5), 'should be somewhat close to the ideal time'
+    # --- test sync version
 
-    lstats = profile.get_stats()
-    unit = lstats.unit
-    stats = lstats.timings
-
-    profiled_items = sorted(stats.items())
-    assert len(profiled_items) == 1
-    for (fn, lineno, name), timings in profiled_items:
-        total_time = 0.0
-        for lineno, nhits, time_ in timings:
-            total_time += time_
-    print(f'async ideal_time={ideal_time}')
-    print(f'async time1={time1}')
-    print(f'async time2={time2}')
-    print(f'async unit={unit}')
-    print(f'async error={error}')
-    print(f'async ratio={ratio}')
-    print(f'async total_time={total_time}')
-
-    # --- similar test with sync
-
-    def sync_function():
-        for idx in range(n):
-            time.sleep(m)
-
-    with Timer() as t:
+    with Timer() as sync_timer_raw:
         sync_function()
-    time1 = t.elapsed
 
     profile = LineProfiler()
     profiled_sync_function = profile(sync_function)
-    with Timer() as t:
+    with Timer() as sync_timer_prof:
         profiled_sync_function()
-    time2 = t.elapsed
-    profile.print_stats()
 
-    ideal_time = n * m
-
-    max_time = max(time2, time1)
-    min_time = min(time2, time1)
-    ratio = max_time / min_time
-    error = abs(max_time - ideal_time)
-
-    assert ratio < 1.5, 'profiled function should run about as fast'
-    assert error < (ideal_time * 0.5), 'should be somewhat close to the ideal time'
-
-    lstats = profile.get_stats()
-    unit = lstats.unit
-    stats = lstats.timings
-
-    profiled_items = sorted(stats.items())
-    assert len(profiled_items) == 1
-    for (fn, lineno, name), timings in profiled_items:
-        total_time = 0.0
-        for lineno, nhits, time_ in timings:
-            total_time += time_
-    print(f'sync ideal_time={ideal_time}')
-    print(f'sync time1={time1}')
-    print(f'sync time2={time2}')
-    print(f'sync unit={unit}')
-    print(f'sync error={error}')
-    print(f'sync ratio={ratio}')
-    print(f'sync total_time={total_time}')
+    report_results('sync', sync_timer_raw, sync_timer_prof)
+    report_results('async', async_timer_raw, async_timer_prof)
 
 
 if __name__ == '__main__':
