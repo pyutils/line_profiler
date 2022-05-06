@@ -120,7 +120,7 @@ jobs:
     # Emulate aarch64 ppc64le s390x under linux
     - name: Set up QEMU
       if: runner.os == 'Linux' && matrix.arch != 'auto'
-      uses: docker/setup-qemu-action@v1
+      uses: docker/setup-qemu-action@v2
       with:
         platforms: all
 
