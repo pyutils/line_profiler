@@ -87,6 +87,11 @@ Usage:
     TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/" 
 '''
 
+DEBUG=${DEBUG:=''}
+if [[ "${DEBUG}" != "" ]]; then
+    set -x
+fi
+
 check_variable(){
     KEY=$1
     HIDE=$2
@@ -161,29 +166,44 @@ TWINE_USERNAME=${TWINE_USERNAME:=""}
 TWINE_PASSWORD=${TWINE_PASSWORD:=""}
 
 TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="auto"}
-if [ "$TWINE_REPOSITORY_URL" == "auto" ]; then
-    if [[ "$(cat .git/HEAD)" != "ref: refs/heads/release" ]]; then 
-        # If we are not on release, then default to the test pypi upload repo
-        TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
+if [[ "${TWINE_REPOSITORY_URL}" == "auto" ]]; then
+    #if [[ "$(cat .git/HEAD)" != "ref: refs/heads/release" ]]; then 
+    #    # If we are not on release, then default to the test pypi upload repo
+    #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
+    #else
+    if [[ "$DEBUG" != "" ]]; then
+        TWINE_REPOSITORY_URL="https://upload.pypi.org/legacy/"
     else
-        TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://upload.pypi.org/legacy/"}
+        TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/"
     fi
 fi
 
 GPG_EXECUTABLE=${GPG_EXECUTABLE:="auto"}
-if [ "$GPG_EXECUTABLE" == "auto" ]; then
+if [[ "$GPG_EXECUTABLE" == "auto" ]]; then
     if [[ "$(which gpg2)" != "" ]]; then
-        GPG_EXECUTABLE=${GPG_EXECUTABLE:=gpg2}
+        GPG_EXECUTABLE="gpg2"
     else
-        GPG_EXECUTABLE=${GPG_EXECUTABLE:=gpg}
+        GPG_EXECUTABLE="gpg"
     fi
 fi
 
 GPG_KEYID=${GPG_KEYID:="auto"}
 if [[ "$GPG_KEYID" == "auto" ]]; then
-    GPG_KEYID=${GPG_KEYID:=$(git config --local user.signingkey)}
-    GPG_KEYID=${GPG_KEYID:=$(git config --global user.signingkey)}
+    GPG_KEYID=$(git config --local user.signingkey)
+    if [[ "$GPG_KEYID" == "" ]]; then
+        GPG_KEYID=$(git config --global user.signingkey)
+    fi
 fi
+
+
+MODE=${MODE:=all}
+if [[ "$MODE" == "all" ]]; then
+    MODE_LIST=("${DEFAULT_MODE_LIST[@]}")
+else
+    MODE_LIST=("$MODE")
+fi
+MODE_LIST_STR=$(printf '"%s" ' "${MODE_LIST[@]}")
+#echo "MODE_LIST_STR = $MODE_LIST_STR"
 
 
 ####
@@ -204,6 +224,7 @@ DO_UPLOAD=${DO_UPLOAD}
 DO_TAG=${DO_TAG}
 DO_GPG=${DO_GPG}
 DO_BUILD=${DO_BUILD}
+MODE_LIST_STR=${MODE_LIST_STR}
 "
 
 
@@ -274,22 +295,11 @@ if [[ "$WAS_INTERACTION" == "True" ]]; then
     DO_TAG=${DO_TAG}
     DO_GPG=${DO_GPG}
     DO_BUILD=${DO_BUILD}
+    MODE_LIST_STR='${MODE_LIST_STR}'
     "
     # shellcheck disable=SC2162
-    read -p "Look good? Ready? Enter any text to continue" ANS
+    read -p "Look good? Ready to build? Enter any text to continue" ANS
 fi
-
-
-
-MODE=${MODE:=all}
-
-if [[ "$MODE" == "all" ]]; then
-    MODE_LIST=("${DEFAULT_MODE_LIST[@]}")
-else
-    MODE_LIST=("$MODE")
-fi
-
-MODE_LIST_STR=$(printf '"%s" ' "${MODE_LIST[@]}")
 
 
 
@@ -312,7 +322,7 @@ if [ "$DO_BUILD" == "True" ]; then
             WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.whl)
         elif [[ "$_MODE" == "bdist" ]]; then
             echo "Assume wheel has already been built"
-            WHEEL_PATH=$(ls "wheelhouse/$NAME-$VERSION-"*.whl)
+            WHEEL_PATH=$(ls "wheelhouse/$NAME-$VERSION-"*.whl || echo "")
         else
             echo "bad mode"
             exit 1
@@ -335,13 +345,19 @@ do
     echo "_MODE = $_MODE"
     if [[ "$_MODE" == "sdist" ]]; then
         WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.tar.gz)
-        WHEEL_PATHS+=("$WHEEL_PATH")
+        if [[ "$WHEEL_PATH" != "" ]]; then
+            WHEEL_PATHS+=("$WHEEL_PATH")
+        fi
     elif [[ "$_MODE" == "native" ]]; then
         WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.whl)
-        WHEEL_PATHS+=("$WHEEL_PATH")
+        if [[ "$WHEEL_PATH" != "" ]]; then
+            WHEEL_PATHS+=("$WHEEL_PATH")
+        fi
     elif [[ "$_MODE" == "bdist" ]]; then
         WHEEL_PATH=$(ls "wheelhouse/$NAME-$VERSION-"*.whl)
-        WHEEL_PATHS+=("$WHEEL_PATH")
+        if [[ "$WHEEL_PATH" != "" ]]; then
+            WHEEL_PATHS+=("$WHEEL_PATH")
+        fi
     else
         echo "bad mode"
         exit 1
