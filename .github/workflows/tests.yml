@@ -126,7 +126,7 @@ jobs:
 
     # See: https://github.com/pypa/cibuildwheel/blob/main/action.yml
     - name: Build wheels
-      uses: pypa/cibuildwheel@2.6.1
+      uses: pypa/cibuildwheel@2.7.0
       with:
         output-dir: wheelhouse
       # to supply options, put them in 'env', like:
