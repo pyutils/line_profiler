@@ -9,7 +9,7 @@ from argparse import ArgumentError, ArgumentParser
 
 # NOTE: This version needs to be manually maintained with the line_profiler
 # __version__ for now.
-__version__ = '3.5.1'
+__version__ = '3.5.2'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.

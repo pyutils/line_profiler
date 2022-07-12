@@ -16,7 +16,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '3.5.1'
+__version__ = '3.5.2'
 
 
 def load_ipython_extension(ip):
@@ -266,6 +266,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
         show_func(fn, lineno, name, stats[fn, lineno, name], unit,
                   output_unit=output_unit, stream=stream,
                   stripzeros=stripzeros)
+
 
 def load_stats(filename):
     """ Utility function to load a pickled LineStats object from a given

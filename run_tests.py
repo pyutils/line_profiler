@@ -31,7 +31,7 @@ def replace_docker_path(path, runner_project_dir):
     return pattern.sub(runner_project_dir, path)
 
 
-def update_coverag_file(coverage_path, runner_project_dir):
+def update_coverage_file(coverage_path, runner_project_dir):
     """
     Since the paths inside of docker vary from the runner paths,
     the paths in the .coverage file need to be adjusted to combine them,
@@ -70,7 +70,7 @@ def copy_coverage_cibuildwheel_docker(runner_project_dir):
     """
     coverage_path = '/project/tests/.coverage'
     if os.path.isfile(coverage_path):
-        update_coverag_file(coverage_path, runner_project_dir)
+        update_coverage_file(coverage_path, runner_project_dir)
         env_hash = hash((sys.version, os.environ.get('AUDITWHEEL_PLAT', '')))
         os.makedirs('/output', exist_ok=True)
         os.rename(coverage_path, '/output/.coverage.{}'.format(env_hash))
@@ -82,10 +82,6 @@ if __name__ == '__main__':
     test_dir = join(repo_dir, 'tests')
     print('cwd = {!r}'.format(cwd))
 
-    if is_cibuildwheel():
-        # rename kernprof.py to kernprof.py.tmp
-        temp_rename_kernprof(repo_dir)
-
     import pytest
 
     # Prefer testing the installed version, but fallback to testing the
@@ -95,34 +91,34 @@ if __name__ == '__main__':
     except ImportError:
         print('running this test script requires ubelt')
         raise
-    # Statically check if ``line_profiler`` is installed outside of the repo.
+    package_name = 'line_profiler'
+    # Statically check if ``package_name`` is installed outside of the repo.
     # To do this, we make a copy of PYTHONPATH, remove the repodir, and use
-    # ubelt to check to see if ``line_profiler`` can be resolved to a path.
+    # ubelt to check to see if ``package_name`` can be resolved to a path.
     temp_path = list(map(abspath, sys.path))
     if repo_dir in temp_path:
         temp_path.remove(repo_dir)
-    modpath = ub.modname_to_modpath('line_profiler', sys_path=temp_path)
+    modpath = ub.modname_to_modpath(package_name, sys_path=temp_path)
     if modpath is not None:
         # If it does, then import it. This should cause the installed version
         # to be used on further imports even if the repo_dir is in the path.
-        print('Using installed version of line_profiler')
+        print(f'Using installed version of {package_name}')
         module = ub.import_module_from_path(modpath, index=0)
         print('Installed module = {!r}'.format(module))
     else:
-        print('No installed version of line_profiler found')
+        print(f'No installed version of {package_name} found')
 
     try:
         print('Changing dirs to test_dir={!r}'.format(test_dir))
         os.chdir(test_dir)
 
-        package_name = 'line_profiler'
         pytest_args = [
             '--cov-config', '../pyproject.toml',
             '--cov-report', 'html',
             '--cov-report', 'term',
             '--cov-report', 'xml',
             '--cov=' + package_name,
-            '--cov=' + 'kernprof',
+            modpath, '.'
         ]
         if is_cibuildwheel():
             pytest_args.append('--cov-append')
@@ -132,8 +128,6 @@ if __name__ == '__main__':
     finally:
         os.chdir(cwd)
         if is_cibuildwheel():
-            # restore kernprof.py from kernprof.py.tmp
-            temp_rename_kernprof(repo_dir)
             # for CIBW under linux
-            copy_coverage_cibuildwheel_docker('/home/runner/work/line_profiler/line_profiler')
+            copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
         print('Restoring cwd = {!r}'.format(cwd))

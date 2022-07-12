@@ -57,10 +57,9 @@ Args:
         Path to the GPG executable. 
         Defaults to "auto", which chooses "gpg2" if it exists, otherwise "gpg".
 
-    DEFAULT_MODE_LIST (str) :
-        TODO
-        comma separated list of "modes", which can be sdist, bdist, universal,
-        or native
+    MODE (str):
+        Can be pure, binary, or all. Defaults to pure unless a CMakeLists.txt
+        exists in which case it defaults to binary.
 
 Requirements:
      twine >= 1.13.0
@@ -75,7 +74,8 @@ Notes:
 
     Based on template in
 
-    ~/misc/templates/PYPKG/publish.sh
+    # github.com/Erotemic/xcookie/
+    ~/code/xcookie/publish.sh
 
 Usage:
     load_secrets
@@ -130,14 +130,6 @@ DEPLOY_REMOTE=${DEPLOY_REMOTE:=origin}
 NAME=${NAME:=$(python -c "import setup; print(setup.NAME)")}
 VERSION=$(python -c "import setup; print(setup.VERSION)")
 
-# TODO: parameterize
-# The default should change depending on the application
-#DEFAULT_MODE_LIST=${DEFAULT_MODE_LIST:="auto"}
-#DEFAULT_MODE_LIST=("sdist" "bdist")
-#DEFAULT_MODE_LIST=("sdist" "native")
-#DEFAULT_MODE_LIST=("sdist" "native")
-DEFAULT_MODE_LIST=("sdist" "bdist")
-
 check_variable DEPLOY_REMOTE
 
 ARG_1=$1
@@ -165,17 +157,26 @@ DO_TAG=$(normalize_boolean "$DO_TAG")
 TWINE_USERNAME=${TWINE_USERNAME:=""}
 TWINE_PASSWORD=${TWINE_PASSWORD:=""}
 
+DEFAULT_TEST_TWINE_REPO_URL="https://test.pypi.org/legacy/"
+DEFAULT_LIVE_TWINE_REPO_URL="https://upload.pypi.org/legacy/"
+
 TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="auto"}
 if [[ "${TWINE_REPOSITORY_URL}" == "auto" ]]; then
     #if [[ "$(cat .git/HEAD)" != "ref: refs/heads/release" ]]; then 
     #    # If we are not on release, then default to the test pypi upload repo
     #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
     #else
-    if [[ "$DEBUG" != "" ]]; then
-        TWINE_REPOSITORY_URL="https://upload.pypi.org/legacy/"
+    if [[ "$DEBUG" == "" ]]; then
+        TWINE_REPOSITORY_URL="live"
     else
-        TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/"
+        TWINE_REPOSITORY_URL="test"
     fi
+fi
+
+if [[ "${TWINE_REPOSITORY_URL}" == "live" ]]; then
+    TWINE_REPOSITORY_URL=$DEFAULT_LIVE_TWINE_REPO_URL
+elif [[ "${TWINE_REPOSITORY_URL}" == "test" ]]; then
+    TWINE_REPOSITORY_URL=$DEFAULT_TEST_TWINE_REPO_URL
 fi
 
 GPG_EXECUTABLE=${GPG_EXECUTABLE:="auto"}
@@ -196,9 +197,22 @@ if [[ "$GPG_KEYID" == "auto" ]]; then
 fi
 
 
-MODE=${MODE:=all}
+if [ -f CMakeLists.txt ] ; then
+    DEFAULT_MODE="binary"
+else
+    DEFAULT_MODE="pure"
+fi
+
+
+# TODO: parameterize
+# The default should change depending on the application
+MODE=${MODE:=$DEFAULT_MODE}
 if [[ "$MODE" == "all" ]]; then
-    MODE_LIST=("${DEFAULT_MODE_LIST[@]}")
+    MODE_LIST=("sdist" "native" "bdist")
+elif [[ "$MODE" == "pure" ]]; then
+    MODE_LIST=("sdist" "native")
+elif [[ "$MODE" == "binary" ]]; then
+    MODE_LIST=("sdist" "bdist")
 else
     MODE_LIST=("$MODE")
 fi
@@ -316,18 +330,14 @@ if [ "$DO_BUILD" == "True" ]; then
         echo "_MODE = $_MODE"
         if [[ "$_MODE" == "sdist" ]]; then
             python setup.py sdist || { echo 'failed to build sdist wheel' ; exit 1; }
-            WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.tar.gz)
         elif [[ "$_MODE" == "native" ]]; then
             python setup.py bdist_wheel || { echo 'failed to build native wheel' ; exit 1; }
-            WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.whl)
         elif [[ "$_MODE" == "bdist" ]]; then
             echo "Assume wheel has already been built"
-            WHEEL_PATH=$(ls "wheelhouse/$NAME-$VERSION-"*.whl || echo "")
         else
-            echo "bad mode"
+            echo "ERROR: bad mode"
             exit 1
         fi
-        echo "WHEEL_PATH = $WHEEL_PATH"
     done
 
     echo "
@@ -339,38 +349,69 @@ else
 fi
 
 
+ls_array(){
+    __doc__='
+    Read the results of a glob pattern into an array
+
+    Args:
+        arr_name
+        glob_pattern
+
+    Example:
+        arr_name="myarray"
+        glob_pattern="*"
+        pass
+    '
+    local arr_name="$1"
+    local glob_pattern="$2"
+    shopt -s nullglob
+    # shellcheck disable=SC2206
+    array=($glob_pattern)
+    shopt -u nullglob # Turn off nullglob to make sure it doesn't interfere with anything later
+    # FIXME; for some reason this doesnt always work properly
+    # Copy the array into the dynamically named variable
+    # shellcheck disable=SC2086
+    readarray -t $arr_name < <(printf '%s\n' "${array[@]}")
+}
+
+
 WHEEL_PATHS=()
 for _MODE in "${MODE_LIST[@]}"
 do
-    echo "_MODE = $_MODE"
     if [[ "$_MODE" == "sdist" ]]; then
-        WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.tar.gz)
-        if [[ "$WHEEL_PATH" != "" ]]; then
-            WHEEL_PATHS+=("$WHEEL_PATH")
-        fi
+        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.tar.gz"
     elif [[ "$_MODE" == "native" ]]; then
-        WHEEL_PATH=$(ls "dist/$NAME-$VERSION"*.whl)
-        if [[ "$WHEEL_PATH" != "" ]]; then
-            WHEEL_PATHS+=("$WHEEL_PATH")
-        fi
+        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.whl"
     elif [[ "$_MODE" == "bdist" ]]; then
-        WHEEL_PATH=$(ls "wheelhouse/$NAME-$VERSION-"*.whl)
-        if [[ "$WHEEL_PATH" != "" ]]; then
-            WHEEL_PATHS+=("$WHEEL_PATH")
-        fi
+        ls_array "_NEW_WHEEL_PATHS" "wheelhouse/${NAME}-${VERSION}-*.whl"
     else
-        echo "bad mode"
+        echo "ERROR: bad mode"
         exit 1
     fi
-    echo "WHEEL_PATH = $WHEEL_PATH"
+    # hacky CONCAT because for some reason ls_array will return 
+    # something that looks empty but has one empty element
+    for new_item in "${_NEW_WHEEL_PATHS[@]}"
+    do
+        if [[ "$new_item" != "" ]]; then
+            WHEEL_PATHS+=("$new_item")
+        fi
+    done
 done
 
+# Dedup the paths
+readarray -t WHEEL_PATHS < <(printf '%s\n' "${WHEEL_PATHS[@]}" | sort -u)
+
 WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_PATHS[@]}")
+echo "WHEEL_PATHS_STR = $WHEEL_PATHS_STR"
 
 echo "
+
+GLOBED
+------
 MODE=$MODE
 VERSION='$VERSION'
 WHEEL_PATHS='$WHEEL_PATHS_STR'
+
 "
 
 
@@ -459,7 +500,6 @@ else
         NAME='$NAME'
         TWINE_USERNAME='$TWINE_USERNAME'
         GPG_KEYID = '$GPG_KEYID'
-        MB_PYTHON_TAG = '$MB_PYTHON_TAG'
 
         To do live run set DO_UPLOAD=1 and ensure deploy and current branch are the same
 

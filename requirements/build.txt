@@ -1,4 +1,4 @@
-Cython
-scikit-build
-cmake
-ninja
+Cython >= 0.29.24
+scikit-build >= >=0.11.1
+cmake >= 3.21.2
+ninja >= 1.10.2
