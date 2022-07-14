@@ -250,6 +250,9 @@ def main(args=None):
     # kernprof.py's.
     sys.path.insert(0, os.path.dirname(script_file))
 
+
+    if options.output_interval:
+        rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     original_stdout = sys.stdout
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
