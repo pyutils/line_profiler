@@ -4,13 +4,15 @@ line_profiler and kernprof
 |Pypi| |Downloads| |CircleCI| |GithubActions| |Codecov|
 
 
-NOTICE: This is the official `line_profiler` repository. The most recent
+NOTICE: This is **not** the official `line_profiler` repository. The most recent
 version of `line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi
-points to this repo. The the original 
-`line_profiler <https://github.com/rkern/line_profiler/>`_ package by  
-`@rkern <https://github.com/rkern/>`_ is currently unmaintained. This fork
-seeks to simply maintain the original code so it continues to work in new
-versions of Python.
+points to the repo this was forked from. This fork makes a few ABI changes for
+the sake of massively decreased overhead. You can install this fork with
+```bash
+pip install git+https://github.com/Theelx/line_profiler.git
+```
+Eventually this fork may be uploaded to PyPi, or upstreamed to pyutils, but not
+for now.
 
 ----
 
@@ -31,19 +33,15 @@ Installation
 
 Releases of `line_profiler` can be installed using pip::
 
-    $ pip install line_profiler
+    $ pip install git+https://github.com/Theelx/line_profiler.git
 
 Installation while ensuring a compatible IPython version can also be installed using pip::
 
-    $ pip install line_profiler[ipython]
-
-Source releases and any binaries can be downloaded from the PyPI link.
-
-    http://pypi.python.org/pypi/line_profiler
+    $pip install git+https://github.com/Theelx/line_profiler.git[ipython]
 
 To check out the development sources, you can use Git_::
 
-    $ git clone https://github.com/pyutils/line_profiler.git
+    $ git clone https://github.com/Theelx/line_profiler.git
 
 You may also download source tarballs of any snapshot from that URL.
 
