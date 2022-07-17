@@ -15,18 +15,18 @@ def _choose_build_method():
 
     if LINE_PROFILER_BUILD_METHOD == 'auto':
         try:
-            import skbuild  # NOQA
-            import cmake  # NOQA
-            import ninja  # NOQA
+            import Cython  # NOQA
         except ImportError:
             try:
-                import Cython  # NOQA
+                import skbuild  # NOQA
+                import cmake  # NOQA
+                import ninja  # NOQA
             except ImportError:
                 LINE_PROFILER_BUILD_METHOD = 'setuptools'
             else:
-                LINE_PROFILER_BUILD_METHOD = 'cython'
+                LINE_PROFILER_BUILD_METHOD = 'scikit-build'
         else:
-            LINE_PROFILER_BUILD_METHOD = 'scikit-build'
+            LINE_PROFILER_BUILD_METHOD = 'cython'
 
     return LINE_PROFILER_BUILD_METHOD
 

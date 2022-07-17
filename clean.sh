@@ -14,6 +14,9 @@ rm -rf wheelhouse
 rm -rf pip-wheel-metadata
 rm -rf htmlcov
 rm -rf tests/htmlcov
+rm -rf CMakeCache.txt
+rm -rf CMakeTmp
+rm -rf CMakeFiles
 
 
 if [ -f "distutils.errors" ]; then

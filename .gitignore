@@ -18,6 +18,9 @@ line_profiler.egg-info/
 MANIFEST
 pypi-site-docs.zip
 index.html
+CMake*
+!line_profiler/CMakeLists.txt
+Makefile
 
 .coverage
 tests/coverage.xml

@@ -9,7 +9,7 @@ import sys
 from argparse import ArgumentError, ArgumentParser
 
 try:
-    from ._line_profiler import LineProfiler as CLineProfiler
+    from _line_profiler import LineProfiler as CLineProfiler
 except ImportError as ex:
     raise ImportError(
         'The line_profiler._line_profiler c-extension is not importable. '
