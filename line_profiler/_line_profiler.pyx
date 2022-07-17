@@ -93,8 +93,8 @@ class LineStats(object):
 cdef class LineProfiler:
     """ Time the execution of lines of Python code.
     """
-    cdef unordered_map[int64, unordered_map[int64, LineTime]] code_map
-    cdef unordered_map[int64, LastTime] last_time
+    cdef unordered_map[int64, unordered_map[int64, LineTime]] c_code_map
+    cdef unordered_map[int64, LastTime] c_last_time
     cdef public list functions
     cdef public dict pycode_map, code_hash_map
     cdef public double timer_unit
@@ -131,13 +131,13 @@ cdef class LineProfiler:
         for offset, byte in enumerate(code.co_code):
             code_hash = hash((code.co_code)) ^ PyCode_Addr2Line(<PyCodeObject*>code, offset)
             
-            if not self.code_map.count(code_hash):
+            if not self.c_code_map.count(code_hash):
                 self.pycode_map[code] = {}
                 try:
                     self.code_hash_map[code].append(code_hash)
                 except KeyError:
                     self.code_hash_map[code] = [code_hash]
-                self.code_map[code_hash]
+                self.c_code_map[code_hash]
             self.functions.append(func)
 
     def enable_by_count(self):
@@ -164,9 +164,17 @@ cdef class LineProfiler:
 
     def enable(self):
         PyEval_SetTrace(python_trace_callback, self)
+        
+    @property
+    cpdef inline dict code_map(self):
+        return <dict>self.c_code_map
+        
+    @property
+    cpdef inline dict last_time(self):
+        return <dict>self.c_last_time
 
     cpdef disable(self):
-        self.last_time.clear()
+        self.c_last_time.clear()
         unset_trace()
 
     cpdef get_stats(self):
@@ -176,7 +184,7 @@ cdef class LineProfiler:
         
         stats = {}
         for code in self.pycode_map:
-            cmap = self.code_map
+            cmap = self.c_code_map
             entries = []
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
@@ -185,9 +193,8 @@ cdef class LineProfiler:
             stats[key].sort()
         return LineStats(stats, self.timer_unit)
 
-#@cython.boundscheck(False)
-#@cython.wraparound(False)
-#@cython.cdivision(True)
+@cython.boundscheck(False)
+@cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
     PyObject *arg):
     """ The PyEval_SetTrace() callback.
@@ -201,34 +208,32 @@ cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
     cdef int64 code_hash
     cdef uint64 block_hash
     cdef unordered_map[int64, LineTime] line_entries
-    cdef unordered_map[int64, LastTime] last_time
-    cdef unordered_map[int64, LastTime].iterator it
 
     self = <LineProfiler>self_
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         block_hash = hash((<object>py_frame.f_code.co_code))
         code_hash = block_hash ^ py_frame.f_lineno
-        if self.code_map.count(code_hash):
+        if self.c_code_map.count(code_hash):
             time = hpTimer()
-            if self.last_time.count(block_hash):
-                old = self.last_time[block_hash]
-                line_entries = self.code_map[code_hash]
+            if self.c_last_time.count(block_hash):
+                old = self.c_last_time[block_hash]
+                line_entries = self.c_code_map[code_hash]
                 key = old.f_lineno
                 if not line_entries.count(key):
-                    self.code_map[code_hash][key] = LineTime(code_hash, old.f_lineno, 0, 0)
-                self.code_map[code_hash][key].nhits += 1
-                self.code_map[code_hash][key].total_time += time - old.time
+                    self.c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
+                self.c_code_map[code_hash][key].nhits += 1
+                self.c_code_map[code_hash][key].total_time += time - old.time
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self.last_time[block_hash] = LastTime(hpTimer(), py_frame.f_lineno)
+                self.c_last_time[block_hash] = LastTime(hpTimer(), py_frame.f_lineno)
             else:
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                if self.last_time.count(block_hash):
-                    self.last_time.erase(self.last_time.find(block_hash))
+                if self.c_last_time.count(block_hash):
+                    self.c_last_time.erase(self.c_last_time.find(block_hash))
 
     return 0
 
