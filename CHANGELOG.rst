@@ -1,6 +1,13 @@
 Changes
 =======
 
+4.0.0
+~~~~~
+* ENH: Profiling overhead is now drastically smaller, thanks to reimplementing 99% of the tracing callback in C++. You can expect to see reductions of about 1 microsecond per line hit, resulting in a speedup of up to 4x for codebases with many lines of Python that only do a little work per line.
+* CHANGE: Cython's native cythonize function is now used to compile the project, instead of scikit-build's convoluted process.
+* CHANGE: Due to optimizations done while reimplementing the callback in C++, the profiler's code_map and last_time attributes now are indexed by a hash of the code block's bytecode and its line number. Any code that directly reads (and processes) or edits the code_map and/or last_time attributes will likely break.
+* CHANGE: Because of the optimizations to the code_map and last_time attributes, if there are identical functions (meaning they have identical bytecode when compiled) which start on the same line of two different files, kernprof will not be able to distinguish the two lines. This can be fixed by adding a cheap instruction to one of the functions, such as `x = 1`, which makes the bytecode non-identical, or by making sure none of the line numbers of the function overlap with any identical function in another file. 
+
 3.5.2
 ~~~~~
 * FIX: filepath test in is_ipython_kernel_cell for Windows #161
