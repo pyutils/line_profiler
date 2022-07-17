@@ -96,13 +96,12 @@ cdef class LineProfiler:
     cdef unordered_map[int64, unordered_map[int64, LineTime]] c_code_map
     cdef unordered_map[int64, LastTime] c_last_time
     cdef public list functions
-    cdef public dict pycode_map, code_hash_map
+    cdef public dict code_hash_map
     cdef public double timer_unit
     cdef public long enable_count
 
     def __init__(self, *functions):
         self.functions = []
-        self.pycode_map = {}
         self.code_hash_map = {}
         self.timer_unit = hpTimerUnit()
         self.enable_count = 0
@@ -132,7 +131,6 @@ cdef class LineProfiler:
             code_hash = hash((code.co_code)) ^ PyCode_Addr2Line(<PyCodeObject*>code, offset)
             
             if not self.c_code_map.count(code_hash):
-                self.pycode_map[code] = {}
                 try:
                     self.code_hash_map[code].append(code_hash)
                 except KeyError:
@@ -166,11 +164,11 @@ cdef class LineProfiler:
         PyEval_SetTrace(python_trace_callback, self)
         
     @property
-    cpdef inline dict code_map(self):
+    def code_map(self):
         return <dict>self.c_code_map
         
     @property
-    cpdef inline dict last_time(self):
+    def last_time(self):
         return <dict>self.c_last_time
 
     cpdef disable(self):
@@ -183,7 +181,7 @@ cdef class LineProfiler:
         cdef dict cmap
         
         stats = {}
-        for code in self.pycode_map:
+        for code in self.code_hash_map:
             cmap = self.c_code_map
             entries = []
             for entry in self.code_hash_map[code]:

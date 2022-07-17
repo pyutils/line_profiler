@@ -9,6 +9,7 @@
 *.so
 *.o
 *.a
+*.cpp
 
 build/
 dist/
