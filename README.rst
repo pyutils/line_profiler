@@ -8,9 +8,7 @@ NOTICE: This is **not** the official `line_profiler` repository. The most recent
 version of `line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi
 points to the repo this was forked from. This fork makes a few ABI changes for
 the sake of massively decreased overhead. You can install this fork with
-```bash
-pip install git+https://github.com/Theelx/line_profiler.git
-```
+``pip install git+https://github.com/Theelx/line_profiler.git``
 Eventually this fork may be uploaded to PyPi, or upstreamed to pyutils, but not
 for now.
 
@@ -37,7 +35,7 @@ Releases of `line_profiler` can be installed using pip::
 
 Installation while ensuring a compatible IPython version can also be installed using pip::
 
-    $pip install git+https://github.com/Theelx/line_profiler.git[ipython]
+    $ pip install git+https://github.com/Theelx/line_profiler.git[ipython]
 
 To check out the development sources, you can use Git_::
 
