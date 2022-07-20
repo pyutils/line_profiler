@@ -1,4 +1,6 @@
 from python25 cimport PyFrameObject, PyObject, PyStringObject
+from sys import byteorder
+#from types import CodeType
 cimport cython
 
 from libcpp.unordered_map cimport unordered_map
@@ -96,13 +98,14 @@ cdef class LineProfiler:
     cdef unordered_map[int64, unordered_map[int64, LineTime]] c_code_map
     cdef unordered_map[int64, LastTime] c_last_time
     cdef public list functions
-    cdef public dict code_hash_map
+    cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
     cdef public long enable_count
 
     def __init__(self, *functions):
         self.functions = []
         self.code_hash_map = {}
+        self.dupes_map = {}
         self.timer_unit = hpTimerUnit()
         self.enable_count = 0
         for func in functions:
@@ -125,11 +128,34 @@ cdef class LineProfiler:
             warnings.warn("Could not extract a code object for the object %r" % (func,))
             return
 
+        if code.co_code in self.dupes_map:
+            #print(code.co_code)
+            self.dupes_map[code.co_code] += [code]
+            # code hash already exists, so there must be a duplicate function. add no-op
+            co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
+            CodeType = type(code)
+            
+            if hasattr(code, 'replace'):
+                # python 3.8+
+                code = func.__code__.replace(co_code=co_code)
+            else:
+                # python <3.8
+                co = code
+                code = CodeType(co.co_argcount, co.co_kwonlyargcount,
+                                co.co_nlocals, co.co_stacksize, co.co_flags,
+                                co_code, co.co_consts, co.co_names,
+                                co.co_varnames, co.co_filename, co.co_name,
+                                co.co_firstlineno, co.co_lnotab, co.co_freevars,
+                                co.co_cellvars)
+            func.__code__ = code
+        else:
+            self.dupes_map[code.co_code] = [code]
         # TODO: Since each line can be many bytecodes, this is kinda inefficient
         # See if this can be sped up by not needing to iterate over every byte
+        #print(func.__name__, code.co_code, (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code])), (len(self.dupes_map[code.co_code])))
         for offset, byte in enumerate(code.co_code):
             code_hash = hash((code.co_code)) ^ PyCode_Addr2Line(<PyCodeObject*>code, offset)
-            
+            #print(code_hash)
             if not self.c_code_map.count(code_hash):
                 try:
                     self.code_hash_map[code].append(code_hash)
@@ -187,6 +213,7 @@ cdef class LineProfiler:
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
             key = label(code)
+            #print(code, self.code_hash_map[code], entries, 1, 2, 3)
             stats[key] = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
             stats[key].sort()
         return LineStats(stats, self.timer_unit)
@@ -212,6 +239,7 @@ cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         block_hash = hash((<object>py_frame.f_code.co_code))
         code_hash = block_hash ^ py_frame.f_lineno
+        #print(code_hash, <object>py_frame.f_code.co_code, <object>py_frame.f_code.co_name, 1)
         if self.c_code_map.count(code_hash):
             time = hpTimer()
             if self.c_last_time.count(block_hash):
