@@ -5,6 +5,7 @@ cimport cython
 
 from libcpp.unordered_map cimport unordered_map
 
+# long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
@@ -53,7 +54,6 @@ cdef extern from "unset_trace.c":
     void unset_trace()
 
 cdef struct LineTime:
-    # long long int is at least 64 bites assuming c99
     int64 code
     int lineno
     PY_LONG_LONG total_time
@@ -210,7 +210,6 @@ cdef class LineProfiler:
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
             key = label(code)
-            #print(code, self.code_hash_map[code], entries, 1, 2, 3)
             stats[key] = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
             stats[key].sort()
         return LineStats(stats, self.timer_unit)
