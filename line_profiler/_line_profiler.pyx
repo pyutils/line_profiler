@@ -1,6 +1,5 @@
 from python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
-#from types import CodeType
 cimport cython
 
 from libcpp.unordered_map cimport unordered_map
@@ -235,7 +234,6 @@ cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         block_hash = hash((<object>py_frame.f_code.co_code))
         code_hash = block_hash ^ py_frame.f_lineno
-        #print(code_hash, <object>py_frame.f_code.co_code, <object>py_frame.f_code.co_name, 1)
         if self.c_code_map.count(code_hash):
             time = hpTimer()
             if self.c_last_time.count(block_hash):
