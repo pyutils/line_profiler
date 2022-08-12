@@ -129,7 +129,6 @@ cdef class LineProfiler:
             return
 
         if code.co_code in self.dupes_map:
-            #print(code.co_code)
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
@@ -152,10 +151,8 @@ cdef class LineProfiler:
             self.dupes_map[code.co_code] = [code]
         # TODO: Since each line can be many bytecodes, this is kinda inefficient
         # See if this can be sped up by not needing to iterate over every byte
-        #print(func.__name__, code.co_code, (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code])), (len(self.dupes_map[code.co_code])))
         for offset, byte in enumerate(code.co_code):
             code_hash = hash((code.co_code)) ^ PyCode_Addr2Line(<PyCodeObject*>code, offset)
-            #print(code_hash)
             if not self.c_code_map.count(code_hash):
                 try:
                     self.code_hash_map[code].append(code_hash)
@@ -254,12 +251,11 @@ cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
                 self.c_last_time[block_hash] = LastTime(hpTimer(), py_frame.f_lineno)
-            else:
+            elif self.c_last_time.count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                if self.c_last_time.count(block_hash):
-                    self.c_last_time.erase(self.c_last_time.find(block_hash))
+                self.c_last_time.erase(self.c_last_time.find(block_hash))
 
     return 0
 
