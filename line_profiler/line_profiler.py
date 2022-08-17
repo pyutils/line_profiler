@@ -179,8 +179,8 @@ def is_ipython_kernel_cell(filename):
     """
     return (
         filename.startswith('<ipython-input-') or
-        filename.startswith(tempfile.gettempdir() + '/ipykernel_') or
-        filename.startswith(tempfile.gettempdir() + '/xpython_')
+        filename.startswith(os.path.join(tempfile.gettempdir(), 'ipykernel_')) or
+        filename.startswith(os.path.join(tempfile.gettempdir(), 'xpython_'))
     )
 
 
