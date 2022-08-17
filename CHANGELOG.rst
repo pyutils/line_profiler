@@ -1,6 +1,10 @@
 Changes
 =======
 
+3.5.2
+~~~~~
+* FIX: filepath test in is_ipython_kernel_cell for Windows #161
+
 3.5.1
 ~~~~~
 * FIX: #19 line profiler now works on async functions again
