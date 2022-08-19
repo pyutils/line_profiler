@@ -16,6 +16,7 @@ cdef extern from "Python.h":
     ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
     cdef bint PyCFunction_Check(object obj)
+    cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
     cdef void PyEval_SetProfile(Py_tracefunc func, object arg)
     cdef void PyEval_SetTrace(Py_tracefunc func, object arg)
@@ -41,9 +42,6 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_CALL
     cdef int PyTrace_C_EXCEPTION
     cdef int PyTrace_C_RETURN
-
-cdef extern from "code.h":
-    cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
