@@ -1,6 +1,8 @@
 from python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
 cimport cython
+from cpython.version cimport PY_VERSION_HEX
+from libc.stdint cimport int64_t
 
 from libcpp.unordered_map cimport unordered_map
 
@@ -10,9 +12,36 @@ ctypedef long long int int64
 
 # FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
+    """
+    inline PyObject* get_frame_code(PyFrameObject* frame) {
+        #if PY_VERSION_HEX < 0x030B0000
+            Py_INCREF(frame->f_code->co_code);
+            return frame->f_code->co_code;
+        #else
+            PyCodeObject* code = PyFrame_GetCode(frame);
+            PyObject* ret = PyCode_GetCode(code);
+            Py_DECREF(code);
+            return ret;
+        #endif
+    }
+    """
+    cdef object get_frame_code(PyFrameObject* frame)
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
 cdef extern from "Python.h":
+    """
+    
+    #if PY_VERSION_HEX >= 0x030b00a6
+      #ifndef Py_BUILD_CORE
+        #define Py_BUILD_CORE 1
+      #endif
+      #include "internal/pycore_frame.h"
+      #include "cpython/code.h"
+      #include "pyframe.h"
+    #endif
+    """
+    
+    ctypedef struct PyFrameObject
     ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
     cdef bint PyCFunction_Check(object obj)
@@ -214,7 +243,7 @@ cdef class LineProfiler:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
-    PyObject *arg):
+PyObject *arg):
     """ The PyEval_SetTrace() callback.
     """
     cdef LineProfiler self
@@ -224,13 +253,13 @@ cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
     cdef int key
     cdef PY_LONG_LONG time
     cdef int64 code_hash
-    cdef uint64 block_hash
+    cdef int64 block_hash
     cdef unordered_map[int64, LineTime] line_entries
 
     self = <LineProfiler>self_
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
-        block_hash = hash((<object>py_frame.f_code.co_code))
+        block_hash = hash(get_frame_code(py_frame))
         code_hash = block_hash ^ py_frame.f_lineno
         if self.c_code_map.count(code_hash):
             time = hpTimer()

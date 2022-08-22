@@ -211,33 +211,10 @@ if __name__ == '__main__':
         import skbuild  # NOQA
         setup = skbuild.setup
     elif LINE_PROFILER_BUILD_METHOD == 'cython':
-        from setuptools.extension import Extension
+        # no need to try importing cython because an import
+        # was already attempted in _choose_build_method
+        setupkw.update(dict(ext_modules=run_cythonize()))
         setup = setuptools.setup
-        try:
-            from Cython.Build import cythonize
-            from Cython.Distutils import build_ext
-            cmdclass = dict(build_ext=build_ext)
-            cythonize('line_profiler/_line_profiler.pyx')
-            line_profiler_source = 'line_profiler/_line_profiler.c'
-        except ImportError:
-            cmdclass = {}
-            line_profiler_source = 'line_profiler/_line_profiler.c'
-            if not os.path.exists(line_profiler_source):
-                raise Exception(
-                    """
-                    You need Cython to build the line_profiler from a git checkout,
-                    or alternatively use a release tarball from PyPI to build it
-                    without Cython.""")
-            else:
-                warnings.warn("Could not import Cython. "
-                              "Using the available pre-generated C file.")
-        setupkw['ext_modules'] = [
-            Extension(
-                'line_profiler._line_profiler',
-                sources=[line_profiler_source, 'line_profiler/timers.c', 'line_profiler/unset_trace.c'],
-                depends=['line_profiler/python25.pxd'],
-            ),
-        ]
     else:
         raise Exception('Unknown build method')
 

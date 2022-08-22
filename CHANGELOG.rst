@@ -3,7 +3,8 @@ Changes
 
 4.0.0
 ~~~~~
-* ENH: Profiling overhead is now drastically smaller, thanks to reimplementing almost all of the tracing callback in C++. You can expect to see reductions of about 1 microsecond per line hit, resulting in a speedup of up to 4x for codebases with many lines of Python that only do a little work per line.
+* ENH: Profiling overhead is now drastically smaller, thanks to reimplementing almost all of the tracing callback in C++. You can expect to see reductions of between 0.3 and 1 microseconds per line hit, resulting in a speedup of up to 4x for codebases with many lines of Python that only do a little work per line.
+* ENH: Python 3.11 is now supported.
 * CHANGE: Cython's native cythonize function is now used to compile the project, instead of scikit-build's convoluted process.
 * CHANGE: Due to optimizations done while reimplementing the callback in C++, the profiler's code_map and last_time attributes now are indexed by a hash of the code block's bytecode and its line number. Any code that directly reads (and processes) or edits the code_map and/or last_time attributes will likely break.
 
