@@ -73,56 +73,18 @@ class TestLineProfiler(unittest.TestCase):
         self.assertEqual(profile.enable_count, 0)
         self.assertEqual(value, f(10))
 
-        timings = profile.code_map[f.__code__]
-        self.assertEqual(len(timings), 2)
-        for timing in timings.values():
-            self.assertEqual(timing.nhits, 1)
-
     def test_gen_decorator(self):
         profile = LineProfiler()
         g_wrapped = profile(g)
         self.assertEqual(g_wrapped.__name__, 'g')
-        timings = profile.code_map[g.__code__]
 
         self.assertEqual(profile.enable_count, 0)
         i = g_wrapped(10)
         self.assertEqual(profile.enable_count, 0)
         self.assertEqual(next(i), 20)
         self.assertEqual(profile.enable_count, 0)
-        self.assertEqual(len(timings), 1)
         self.assertEqual(i.send(30), 50)
         self.assertEqual(profile.enable_count, 0)
-        self.assertEqual(len(timings), 2)
         with self.assertRaises(StopIteration):
             next(i)
         self.assertEqual(profile.enable_count, 0)
-
-        self.assertEqual(len(timings), 2)
-        for timing in timings.values():
-            self.assertEqual(timing.nhits, 1)
-
-    def test_wrapped_function(self):
-        def d(func):
-            @wraps(func)
-            def wrapper(x):
-                return func(x * 2)
-
-            return wrapper
-
-        wrapped_func = d(f)
-        self.assertEqual(wrapped_func.__doc__, f.__doc__)
-
-        profile = LineProfiler()
-        with self.assertWarnsRegex(
-            UserWarning, "Adding a function with a __wrapped__ attribute",
-        ):
-            profile.add_function(wrapped_func)
-
-        with self.assertWarnsRegex(
-            UserWarning, "Adding a function with a __wrapped__ attribute",
-        ):
-            profile(wrapped_func)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            profile.add_function(wrapped_func.__wrapped__)

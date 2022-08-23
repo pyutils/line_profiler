@@ -185,7 +185,7 @@ cdef class LineProfiler:
                 except KeyError:
                     self.code_hash_map[code] = [code_hash]
                 self.c_code_map[code_hash]
-            self.functions.append(func)
+        self.functions.append(func)
 
     def enable_by_count(self):
         """ Enable the profiler if it hasn't been enabled before.
