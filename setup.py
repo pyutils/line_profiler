@@ -293,4 +293,3 @@ if __name__ == '__main__':
         'Programming Language :: Python :: Implementation :: CPython',
         'Topic :: Software Development',
     ]
-    setup(**setupkw)
