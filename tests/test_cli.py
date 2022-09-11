@@ -31,7 +31,8 @@ def test_cli():
         ''')
     tmp_dpath = tempfile.mkdtemp()
     tmp_src_fpath = join(tmp_dpath, 'foo.py')
-    ub.writeto(tmp_src_fpath, code)
+    with open(tmp_src_fpath, 'w') as file:
+        file.write(code)
 
     # Run kernprof on it
     info = ub.cmd(f'kernprof -l {tmp_src_fpath}', verbose=3, cwd=tmp_dpath)
