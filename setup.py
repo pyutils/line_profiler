@@ -1,8 +1,29 @@
 #!/usr/bin/env python
 from os.path import exists
 import sys
-import setuptools  # NOQA
-from setuptools import find_packages
+import os
+import warnings
+import setuptools
+
+
+def _choose_build_method():
+    DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
+    LINE_PROFILER_BUILD_METHOD = os.environ.get("LINE_PROFILER_BUILD_METHOD", "auto").lower()
+
+    if DISABLE_C_EXTENSIONS in {"true", "on", "yes", "1"}:
+        LINE_PROFILER_BUILD_METHOD = 'setuptools'
+
+    if LINE_PROFILER_BUILD_METHOD == 'auto':
+        try:
+            import skbuild  # NOQA
+            import cmake  # NOQA
+            import ninja  # NOQA
+        except ImportError:
+            LINE_PROFILER_BUILD_METHOD = 'cython'
+        else:
+            LINE_PROFILER_BUILD_METHOD = 'scikit-build'
+
+    return LINE_PROFILER_BUILD_METHOD
 
 
 def parse_version(fpath):
@@ -214,14 +235,46 @@ NAME = 'line_profiler'
 
 
 if __name__ == '__main__':
-    if '--universal' in sys.argv:
-        # Dont use scikit-build for universal wheels
-        # if 'develop' in sys.argv:
-        sys.argv.remove('--universal')
-        from setuptools import setup  # NOQA
+    setupkw = {}
+
+    LINE_PROFILER_BUILD_METHOD = _choose_build_method()
+    if LINE_PROFILER_BUILD_METHOD == 'setuptools':
+        setup = setuptools.setup
+    elif LINE_PROFILER_BUILD_METHOD == 'scikit-build':
+        import skbuild  # NOQA
+        setup = skbuild.setup
+    elif LINE_PROFILER_BUILD_METHOD == 'cython':
+        from setuptools.extension import Extension
+        setup = setuptools.setup
+        try:
+            from Cython.Build import cythonize
+            from Cython.Distutils import build_ext
+            cmdclass = dict(build_ext=build_ext)
+            cythonize('line_profiler/_line_profiler.pyx')
+            line_profiler_source = 'line_profiler/_line_profiler.c'
+        except ImportError:
+            cmdclass = {}
+            line_profiler_source = 'line_profiler/_line_profiler.c'
+            if not os.path.exists(line_profiler_source):
+                raise Exception(
+                    """
+                    You need Cython to build the line_profiler from a git checkout,
+                    or alternatively use a release tarball from PyPI to build it
+                    without Cython.""")
+            else:
+                warnings.warn("Could not import Cython. "
+                              "Using the available pre-generated C file.")
+        setupkw['ext_modules'] = [
+            Extension(
+                'line_profiler._line_profiler',
+                sources=[line_profiler_source, 'line_profiler/timers.c', 'line_profiler/unset_trace.c'],
+                depends=['line_profiler/python25.pxd'],
+            ),
+        ]
     else:
-        from skbuild import setup
-    setupkw = dict(
+        raise Exception('Unknown build method')
+
+    setupkw.update(dict(
         name=NAME,
         version=VERSION,
         author='Robert Kern',
@@ -249,7 +302,7 @@ if __name__ == '__main__':
             'Topic :: Software Development',
         ],
         # py_modules=find_packages(),
-        packages=list(find_packages()),
+        packages=list(setuptools.find_packages()),
         py_modules=['kernprof', 'line_profiler'],
         entry_points={
             'console_scripts': [
@@ -263,5 +316,5 @@ if __name__ == '__main__':
             'tests': parse_requirements('requirements/tests.txt'),
             'build': parse_requirements('requirements/build.txt'),
         },
-    )
+    ))
     setup(**setupkw)

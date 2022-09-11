@@ -13,6 +13,7 @@ rm -rf mb_work
 rm -rf wheelhouse
 rm -rf pip-wheel-metadata
 rm -rf htmlcov
+rm -rf tests/htmlcov
 
 
 if [ -f "distutils.errors" ]; then
