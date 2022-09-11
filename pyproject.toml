@@ -1,11 +1,11 @@
 [build-system]
 requires = [ 
     "setuptools>=41.0.1",
+    "wheel>=0.29.0 ",
     "scikit-build>=0.11.1",
     "ninja>=1.10.2",
     "cmake>=3.21.2",
-    #"Cython>=0.29.24",
-    "Cython>=3.0.0a11",
+    "Cython>=0.29.24",
 ]
 build-backend = "setuptools.build_meta"
 

@@ -1,6 +1,7 @@
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 
 
+# FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 

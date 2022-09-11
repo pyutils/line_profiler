@@ -1,5 +1,4 @@
-#Cython >= 0.29.24
-Cython >= 3.0.0a11
+Cython >= 0.29.24
 scikit-build >= >=0.11.1
 cmake >= 3.21.2
 ninja >= 1.10.2
