@@ -30,7 +30,7 @@ cdef extern from "frameobject.h":
 
 cdef extern from "Python.h":
     """
-    
+    // CPython 3.11 broke some stuff by moving PyFrameObject :(
     #if PY_VERSION_HEX >= 0x030b00a6
       #ifndef Py_BUILD_CORE
         #define Py_BUILD_CORE 1
@@ -224,7 +224,7 @@ cdef class LineProfiler:
         self.c_last_time.clear()
         unset_trace()
 
-    cpdef get_stats(self):
+    def get_stats(self):
         """ Return a LineStats object containing the timings.
         """
         cdef dict cmap
