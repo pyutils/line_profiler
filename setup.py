@@ -19,7 +19,12 @@ def _choose_build_method():
             import cmake  # NOQA
             import ninja  # NOQA
         except ImportError:
-            LINE_PROFILER_BUILD_METHOD = 'cython'
+            try:
+                import Cython  # NOQA
+            except ImportError:
+                LINE_PROFILER_BUILD_METHOD = 'setuptools'
+            else:
+                LINE_PROFILER_BUILD_METHOD = 'cython'
         else:
             LINE_PROFILER_BUILD_METHOD = 'scikit-build'
 
@@ -30,26 +35,38 @@ def parse_version(fpath):
     """
     Statically parse the version number from a python file
     """
+    value = static_parse("__version__", fpath)
+    return value
+
+
+def static_parse(varname, fpath):
+    """
+    Statically parse the a constant variable from a python file
+    """
     import ast
+
     if not exists(fpath):
-        raise ValueError('fpath={!r} does not exist'.format(fpath))
-    with open(fpath, 'r') as file_:
+        raise ValueError("fpath={!r} does not exist".format(fpath))
+    with open(fpath, "r") as file_:
         sourcecode = file_.read()
     pt = ast.parse(sourcecode)
-    class Finished(Exception):
-        pass
-    class VersionVisitor(ast.NodeVisitor):
+
+    class StaticVisitor(ast.NodeVisitor):
         def visit_Assign(self, node):
             for target in node.targets:
-                if getattr(target, 'id', None) == '__version__':
-                    self.version = node.value.s
-                    raise Finished
-    visitor = VersionVisitor()
+                if getattr(target, "id", None) == varname:
+                    self.static_value = node.value.s
+
+    visitor = StaticVisitor()
+    visitor.visit(pt)
     try:
-        visitor.visit(pt)
-    except Finished:
-        pass
-    return visitor.version
+        value = visitor.static_value
+    except AttributeError:
+        import warnings
+
+        value = "Unknown {}".format(varname)
+        warnings.warn(value)
+    return value
 
 
 def parse_description():
@@ -61,162 +78,113 @@ def parse_description():
         python -c "import setup; print(setup.parse_description())"
     """
     from os.path import dirname, join, exists
-    readme_fpath = join(dirname(__file__), 'README.rst')
+
+    readme_fpath = join(dirname(__file__), "README.rst")
     # This breaks on pip install, so check that it exists.
     if exists(readme_fpath):
-        with open(readme_fpath, 'r') as f:
+        with open(readme_fpath, "r") as f:
             text = f.read()
         return text
-    return ''
+    return ""
 
 
-def parse_requirements(fname='requirements.txt', with_version=True):
+def parse_requirements(fname="requirements.txt", versions=False):
     """
     Parse the package dependencies listed in a requirements file but strips
     specific versioning information.
 
     Args:
         fname (str): path to requirements file
-        with_version (bool, default=True): if true include version specs
+        versions (bool | str, default=False):
+            If true include version specs.
+            If strict, then pin to the minimum version.
 
     Returns:
         List[str]: list of requirements items
-
-    References:
-        https://pip.pypa.io/en/stable/reference/pip_install/#requirement-specifiers
-        https://www.python.org/dev/peps/pep-0440/#version-specifiers
-
-    CommandLine:
-        python -c "import setup; print(setup.parse_requirements())"
-        python -c "import setup; print(chr(10).join(setup.parse_requirements(with_version=True)))"
     """
-    from os.path import exists
+    from os.path import exists, dirname, join
     import re
+
     require_fpath = fname
 
-    def parse_line(line):
+    def parse_line(line, dpath=""):
         """
         Parse information from a line in a requirements text file
 
-        Ignore:
-            line = 'foobar >=1.0, <= 2.1'
+        line = 'git+https://a.com/somedep@sometag#egg=SomeDep'
+        line = '-e git+https://a.com/somedep@sometag#egg=SomeDep'
         """
-        if line.startswith('-r '):
+        # Remove inline comments
+        comment_pos = line.find(" #")
+        if comment_pos > -1:
+            line = line[:comment_pos]
+
+        if line.startswith("-r "):
             # Allow specifying requirements in other files
-            target = line.split(' ')[1]
+            target = join(dpath, line.split(" ")[1])
             for info in parse_require_file(target):
                 yield info
         else:
-            info = {'line': line}
-            if line.startswith('-e '):
-                info['package'] = line.split('#egg=')[1]
+            # See: https://www.python.org/dev/peps/pep-0508/
+            info = {"line": line}
+            if line.startswith("-e "):
+                info["package"] = line.split("#egg=")[1]
             else:
+                if ";" in line:
+                    pkgpart, platpart = line.split(";")
+                    # Handle platform specific dependencies
+                    # setuptools.readthedocs.io/en/latest/setuptools.html
+                    # #declaring-platform-specific-dependencies
+                    plat_deps = platpart.strip()
+                    info["platform_deps"] = plat_deps
+                else:
+                    pkgpart = line
+                    platpart = None
+
                 # Remove versioning from the package
-                cmp_ops = ['>=', '>', '<=', '<', '!=', '~=', '==', '===']
-                pat = '(' + '|'.join(cmp_ops) + ')'
-                parts = re.split(pat, line, maxsplit=1)
+                pat = "(" + "|".join([">=", "==", ">"]) + ")"
+                parts = re.split(pat, pkgpart, maxsplit=1)
                 parts = [p.strip() for p in parts]
 
-                info['package'] = parts[0]
+                info["package"] = parts[0]
                 if len(parts) > 1:
-                    op1, rest = parts[1:]
-                    if ';' in rest:
-                        # Handle platform specific dependencies
-                        # http://setuptools.readthedocs.io/en/latest/setuptools.html#declaring-platform-specific-dependencies
-                        version_rest, platform_deps = map(str.strip, rest.split(';'))
-                        info['platform_deps'] = platform_deps
-                    else:
-                        version_rest = rest  # NOQA
-                    # Multiple version requirments may be specified
-                    version = []
-                    version_text = op1 + version_rest
-                    for clause in version_text.split(','):
-                        cparts = [p.strip() for p in re.split(pat, clause)]
-                        cparts = [p for p in cparts if p]
-                        version.append(cparts)
-                    info['version'] = version
+                    op, rest = parts[1:]
+                    version = rest  # NOQA
+                    info["version"] = (op, version)
             yield info
 
     def parse_require_file(fpath):
-        with open(fpath, 'r') as f:
+        dpath = dirname(fpath)
+        with open(fpath, "r") as f:
             for line in f.readlines():
                 line = line.strip()
-                if line and not line.startswith('#'):
-                    for info in parse_line(line):
+                if line and not line.startswith("#"):
+                    for info in parse_line(line, dpath=dpath):
                         yield info
 
     def gen_packages_items():
         if exists(require_fpath):
             for info in parse_require_file(require_fpath):
-                parts = [info['package']]
-                if 'version' in info:
-                    # FIXME: add mode that lets you exclude minimum reqs
-                    clauses = []
-                    for clause in info['version']:
-                        op, arg = clause
-                        if with_version:
-                            clauses.append(op + arg)
-                    version_part = ','.join(clauses)
-                    parts.append(version_part)
-                if not sys.version.startswith('3.4'):
+                parts = [info["package"]]
+                if versions and "version" in info:
+                    if versions == "strict":
+                        # In strict mode, we pin to the minimum version
+                        if info["version"]:
+                            # Only replace the first >= instance
+                            verstr = "".join(info["version"]).replace(">=", "==", 1)
+                            parts.append(verstr)
+                    else:
+                        parts.extend(info["version"])
+                if not sys.version.startswith("3.4"):
                     # apparently package_deps are broken in 3.4
-                    platform_deps = info.get('platform_deps')
-                    if platform_deps is not None:
-                        parts.append(';' + platform_deps)
-                item = ''.join(parts)
+                    plat_deps = info.get("platform_deps")
+                    if plat_deps is not None:
+                        parts.append(";" + plat_deps)
+                item = "".join(parts)
                 yield item
 
     packages = list(gen_packages_items())
     return packages
-
-
-def native_mb_python_tag(plat_impl=None, version_info=None):
-    """
-    Get the correct manylinux python version tag for this interpreter
-
-    Example:
-        >>> print(native_mb_python_tag())
-        >>> print(native_mb_python_tag('PyPy', (2, 7)))
-        >>> print(native_mb_python_tag('CPython', (3, 8)))
-    """
-    if plat_impl is None:
-        import platform
-        plat_impl = platform.python_implementation()
-
-    if version_info is None:
-        import sys
-        version_info = sys.version_info
-
-    major, minor = version_info[0:2]
-    if minor > 9:
-        ver = '{}_{}'.format(major, minor)
-    else:
-        ver = '{}{}'.format(major, minor)
-
-    if plat_impl == 'CPython':
-        # TODO: get if cp27m or cp27mu
-        impl = 'cp'
-        if ver == '27':
-            IS_27_BUILT_WITH_UNICODE = True  # how to determine this?
-            if IS_27_BUILT_WITH_UNICODE:
-                abi = 'mu'
-            else:
-                abi = 'm'
-        else:
-            if sys.version_info[:2] >= (3, 8):
-                # bpo-36707: 3.8 dropped the m flag
-                abi = ''
-            else:
-                abi = 'm'
-        mb_tag = '{impl}{ver}-{impl}{ver}{abi}'.format(**locals())
-    elif plat_impl == 'PyPy':
-        abi = ''
-        impl = 'pypy'
-        ver = '{}{}'.format(major, minor)
-        mb_tag = '{impl}-{ver}'.format(**locals())
-    else:
-        raise NotImplementedError(plat_impl)
-    return mb_tag
 
 
 long_description = """\
@@ -230,7 +198,6 @@ function-level profiling tools in the Python standard library.
 """
 
 VERSION = parse_version('line_profiler/line_profiler.py')
-MB_PYTHON_TAG = native_mb_python_tag()
 NAME = 'line_profiler'
 
 
@@ -274,47 +241,50 @@ if __name__ == '__main__':
     else:
         raise Exception('Unknown build method')
 
-    setupkw.update(dict(
-        name=NAME,
-        version=VERSION,
-        author='Robert Kern',
-        author_email='robert.kern@enthought.com',
-        description='Line-by-line profiler.',
-        long_description=long_description,
-        long_description_content_type='text/x-rst',
-        url='https://github.com/pyutils/line_profiler',
-        license='BSD',
-        license_files=['LICENSE.txt', 'LICENSE_Python.txt'],
-        keywords=['timing', 'timer', 'profiling', 'profiler', 'line_profiler'],
-        classifiers=[
-            'Development Status :: 5 - Production/Stable',
-            'Intended Audience :: Developers',
-            'License :: OSI Approved :: BSD License',
-            'Operating System :: OS Independent',
-            'Programming Language :: C',
-            'Programming Language :: Python',
-            'Programming Language :: Python :: 3.6',
-            'Programming Language :: Python :: 3.7',
-            'Programming Language :: Python :: 3.8',
-            'Programming Language :: Python :: 3.9',
-            'Programming Language :: Python :: 3.10',
-            'Programming Language :: Python :: Implementation :: CPython',
-            'Topic :: Software Development',
+    setupkw["install_requires"] = parse_requirements("requirements/runtime.txt")
+    setupkw["extras_require"] = {
+        "all": parse_requirements("requirements.txt"),
+        "tests": parse_requirements("requirements/tests.txt"),
+        "ipython": parse_requirements('requirements/ipython.txt'),
+        'build': parse_requirements('requirements/build.txt'),
+        "runtime-strict": parse_requirements("requirements/runtime.txt", versions="strict"),
+        "all-strict": parse_requirements("requirements.txt", versions="strict"),
+        "tests-strict": parse_requirements("requirements/tests.txt", versions="strict"),
+        "ipython-strict": parse_requirements('requirements/ipython.txt', versions="strict"),
+        'build-strict': parse_requirements('requirements/build.txt', versions="strict"),
+    }
+    setupkw['entry_points'] = {
+        'console_scripts': [
+            'kernprof=kernprof:main',
         ],
-        # py_modules=find_packages(),
-        packages=list(setuptools.find_packages()),
-        py_modules=['kernprof', 'line_profiler'],
-        entry_points={
-            'console_scripts': [
-                'kernprof=kernprof:main',
-            ],
-        },
-        install_requires=parse_requirements('requirements/runtime.txt'),
-        extras_require={
-            'all': parse_requirements('requirements.txt'),
-            'ipython': parse_requirements('requirements/ipython.txt'),
-            'tests': parse_requirements('requirements/tests.txt'),
-            'build': parse_requirements('requirements/build.txt'),
-        },
-    ))
+    }
+    setupkw["name"] = NAME
+    setupkw["version"] = VERSION
+    setupkw["author"] = "Robert Kern"
+    setupkw["author_email"] = "robert.kern@enthought.com"
+    setupkw['url'] = 'https://github.com/pyutils/line_profiler'
+    setupkw["description"] = "Line-by-line profiler"
+    setupkw["long_description"] = long_description
+    setupkw["long_description_content_type"] = "text/x-rst"
+    setupkw["license"] = "BSD"
+    setupkw["packages"] = list(setuptools.find_packages())
+    setupkw["py_modules"] = ['kernprof', 'line_profiler']
+    setupkw["python_requires"] = ">=3.6"
+    setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
+    setupkw['keywords'] = ['timing', 'timer', 'profiling', 'profiler', 'line_profiler']
+    setupkw["classifiers"] = [
+        'Development Status :: 5 - Production/Stable',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: BSD License',
+        'Operating System :: OS Independent',
+        'Programming Language :: C',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: Implementation :: CPython',
+        'Topic :: Software Development',
+    ]
     setup(**setupkw)

@@ -57,7 +57,6 @@ jobs:
           name: build_wheel
           command: |
             . venv/bin/activate
-            #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             export CIBW_BUILD="${MB_PYTHON_TAG}-*"
             docker info
@@ -71,7 +70,6 @@ jobs:
           name: install_wheel
           command: |
             . venv/bin/activate
-            #MB_PYTHON_TAG=$(python -c "import setup; print(setup.MB_PYTHON_TAG)") 
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             # Hack in the arch
             BDIST_WHEEL_PATH=$(ls wheelhouse/*-$VERSION-$MB_PYTHON_TAG*manylinux*_x86_64.whl)
