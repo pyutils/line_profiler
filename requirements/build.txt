@@ -1,1 +1,4 @@
-Cython
+Cython >= 3.0.0a11
+scikit-build >= >=0.11.1
+cmake >= 3.21.2
+ninja >= 1.10.2

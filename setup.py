@@ -5,6 +5,35 @@ import os
 import warnings
 import setuptools
 
+# pep 517 setup breaks this
+# so we disable pep 517 in pyproject.toml
+from comp import run_cythonize
+
+
+def _choose_build_method():
+    DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
+    LINE_PROFILER_BUILD_METHOD = os.environ.get("LINE_PROFILER_BUILD_METHOD", "auto").lower()
+
+    if DISABLE_C_EXTENSIONS in {"true", "on", "yes", "1"}:
+        LINE_PROFILER_BUILD_METHOD = 'setuptools'
+
+    if LINE_PROFILER_BUILD_METHOD == 'auto':
+        try:
+            import Cython  # NOQA
+        except ImportError:
+            try:
+                import skbuild  # NOQA
+                import cmake  # NOQA
+                import ninja  # NOQA
+            except ImportError:
+                LINE_PROFILER_BUILD_METHOD = 'setuptools'
+            else:
+                LINE_PROFILER_BUILD_METHOD = 'scikit-build'
+        else:
+            LINE_PROFILER_BUILD_METHOD = 'cython'
+
+    return LINE_PROFILER_BUILD_METHOD
+
 
 def _choose_build_method():
     DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
