@@ -8,7 +8,7 @@ from Cython.Build import cythonize
 def run_cythonize(force=False):
     return cythonize(
             Extension(
-                name="_line_profiler",
+                name="line_profiler._line_profiler",
                 sources=[f"line_profiler/_line_profiler.pyx", "line_profiler/timers.c", "line_profiler/unset_trace.c"],
                 language="c++",
                 define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
