@@ -78,7 +78,6 @@ jobs:
         pwd
         ls -al
         python -m pip install -r requirements/ipython.txt
-        true
         # Run in a sandboxed directory
         WORKSPACE_DNAME="testsrcdir_full_${CI_PYTHON_VERSION}_${GITHUB_RUN_ID}_${RUNNER_OS}"
         mkdir -p $WORKSPACE_DNAME
@@ -122,11 +121,6 @@ jobs:
       if: matrix.os == 'windows-latest' && matrix.cibw_skip == '*-win_amd64'
       with:
         arch: x86
-    - name: Install Xcode
-      uses: maxim-lobanov/setup-xcode@v1
-      if: matrix.os == 'macOS-latest'
-      with:
-        xcode-version: latest-stable
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v2
       if: runner.os == 'Linux' && matrix.arch != 'auto'

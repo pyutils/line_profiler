@@ -405,13 +405,9 @@ WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_PATHS[@]}")
 echo "WHEEL_PATHS_STR = $WHEEL_PATHS_STR"
 
 echo "
-
-GLOBED
-------
 MODE=$MODE
 VERSION='$VERSION'
 WHEEL_PATHS='$WHEEL_PATHS_STR'
-
 "
 
 

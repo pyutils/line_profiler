@@ -19,7 +19,12 @@ def _choose_build_method():
             import cmake  # NOQA
             import ninja  # NOQA
         except ImportError:
-            LINE_PROFILER_BUILD_METHOD = 'cython'
+            try:
+                import Cython  # NOQA
+            except ImportError:
+                LINE_PROFILER_BUILD_METHOD = 'setuptools'
+            else:
+                LINE_PROFILER_BUILD_METHOD = 'cython'
         else:
             LINE_PROFILER_BUILD_METHOD = 'scikit-build'
 
