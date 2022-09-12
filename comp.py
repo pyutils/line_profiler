@@ -14,6 +14,7 @@ def run_cythonize(force=False):
                 define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
             ),
             compiler_directives={"language_level": 3, "infer_types": True, "linetrace": (True if os.getenv("DEV") == "true" else False)},
+            include_path=["line_profiler/python25.pxd"],
             force=force,
             nthreads=multiprocessing.cpu_count(),
         )

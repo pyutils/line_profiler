@@ -1,4 +1,4 @@
-from python25 cimport PyFrameObject, PyObject, PyStringObject
+from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
 cimport cython
 from cpython.version cimport PY_VERSION_HEX
