@@ -89,6 +89,17 @@ cdef struct LastTime:
     PY_LONG_LONG time
     int f_lineno
 
+cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
+    """
+    Compute the hash used to store each line timing in an unordered_map.
+    This is fairly simple, and could use some improvement since linenum
+    isn't technically random, however it seems to be good enough and
+    fast enough for any practical purposes.
+    """
+    # linenum doesn't need to be int64 but it's really a temporary value
+    # so it doesn't matter
+    return block_hash ^ linenum
+
 def label(code):
     """ Return a (filename, first_lineno, func_name) tuple for a given code
     object.
@@ -178,7 +189,7 @@ cdef class LineProfiler:
         # TODO: Since each line can be many bytecodes, this is kinda inefficient
         # See if this can be sped up by not needing to iterate over every byte
         for offset, byte in enumerate(code.co_code):
-            code_hash = hash((code.co_code)) ^ PyCode_Addr2Line(<PyCodeObject*>code, offset)
+            code_hash = compute_line_hash(hash((code.co_code)), PyCode_Addr2Line(<PyCodeObject*>code, offset))
             if not self.c_code_map.count(code_hash):
                 try:
                     self.code_hash_map[code].append(code_hash)
@@ -260,7 +271,7 @@ PyObject *arg):
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         block_hash = hash(get_frame_code(py_frame))
-        code_hash = block_hash ^ py_frame.f_lineno
+        code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
         if self.c_code_map.count(code_hash):
             time = hpTimer()
             if self.c_last_time.count(block_hash):
