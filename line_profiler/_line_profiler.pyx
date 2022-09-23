@@ -123,6 +123,13 @@ cdef class LineProfiler:
     def add_function(self, func):
         """ Record line profiling information for the given Python function.
         """
+        if hasattr(func, "__wrapped__"):
+            import warnings
+            warnings.warn(
+                "Adding a function with a __wrapped__ attribute. You may want "
+                "to profile the wrapped function by adding %s.__wrapped__ "
+                "instead." % (func.__name__,)
+            )
         try:
             code = func.__code__
         except AttributeError:
