@@ -5,6 +5,7 @@ Changes
 ~~~~~
 * FIX: filepath test in is_ipython_kernel_cell for Windows #161
 * ADD: setup.py now checks LINE_PROFILER_BUILD_METHOD to determine how to build binaries
+* ADD: LineProfiler.add_function warns if an added function has a __wrapped__ attribute
 
 3.5.1
 ~~~~~

@@ -1,9 +1,12 @@
 import unittest
+import warnings
+from functools import wraps
 
 from line_profiler import LineProfiler
 
 
 def f(x):
+    """A docstring."""
     y = x + 10
     return y
 
@@ -97,3 +100,29 @@ class TestLineProfiler(unittest.TestCase):
         self.assertEqual(len(timings), 2)
         for timing in timings.values():
             self.assertEqual(timing.nhits, 1)
+
+    def test_wrapped_function(self):
+        def d(func):
+            @wraps(func)
+            def wrapper(x):
+                return func(x * 2)
+
+            return wrapper
+
+        wrapped_func = d(f)
+        self.assertEqual(wrapped_func.__doc__, f.__doc__)
+
+        profile = LineProfiler()
+        with self.assertWarnsRegex(
+            UserWarning, "Adding a function with a __wrapped__ attribute",
+        ):
+            profile.add_function(wrapped_func)
+
+        with self.assertWarnsRegex(
+            UserWarning, "Adding a function with a __wrapped__ attribute",
+        ):
+            profile(wrapped_func)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            profile.add_function(wrapped_func.__wrapped__)
