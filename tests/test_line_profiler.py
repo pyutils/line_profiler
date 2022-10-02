@@ -1,7 +1,4 @@
-import unittest
-import warnings
-from functools import wraps
-
+import pytest
 from line_profiler import LineProfiler
 
 
@@ -16,75 +13,76 @@ def g(x):
     yield y + 20
 
 
-class TestLineProfiler(unittest.TestCase):
+def test_init():
+    lp = LineProfiler()
+    assert lp.functions == []
+    assert lp.code_map == {}
+    lp = LineProfiler(f)
+    assert lp.functions == [f]
+    assert lp.code_map == {f.__code__: {}}
+    lp = LineProfiler(f, g)
+    assert lp.functions == [f, g]
+    assert lp.code_map ==  {
+        f.__code__: {},
+        g.__code__: {},
+    }
 
-    def test_init(self):
-        lp = LineProfiler()
-        self.assertEqual(lp.functions, [])
-        self.assertEqual(lp.code_map, {})
-        lp = LineProfiler(f)
-        self.assertEqual(lp.functions, [f])
-        self.assertEqual(lp.code_map, {f.__code__: {}})
-        lp = LineProfiler(f, g)
-        self.assertEqual(lp.functions, [f, g])
-        self.assertEqual(lp.code_map, {
-            f.__code__: {},
-            g.__code__: {},
-        })
 
-    def test_enable_disable(self):
-        lp = LineProfiler()
-        self.assertEqual(lp.enable_count, 0)
-        lp.enable_by_count()
-        self.assertEqual(lp.enable_count, 1)
-        lp.enable_by_count()
-        self.assertEqual(lp.enable_count, 2)
-        lp.disable_by_count()
-        self.assertEqual(lp.enable_count, 1)
-        lp.disable_by_count()
-        self.assertEqual(lp.enable_count, 0)
-        self.assertEqual(lp.last_time, {})
-        lp.disable_by_count()
-        self.assertEqual(lp.enable_count, 0)
+def test_enable_disable():
+    lp = LineProfiler()
+    assert lp.enable_count == 0
+    lp.enable_by_count()
+    assert lp.enable_count == 1
+    lp.enable_by_count()
+    assert lp.enable_count == 2
+    lp.disable_by_count()
+    assert lp.enable_count == 1
+    lp.disable_by_count()
+    assert lp.enable_count == 0
+    assert lp.last_time == {}
+    lp.disable_by_count()
+    assert lp.enable_count == 0
 
+    with lp:
+        assert lp.enable_count == 1
         with lp:
-            self.assertEqual(lp.enable_count, 1)
-            with lp:
-                self.assertEqual(lp.enable_count, 2)
-            self.assertEqual(lp.enable_count, 1)
-        self.assertEqual(lp.enable_count, 0)
-        self.assertEqual(lp.last_time, {})
+            assert lp.enable_count == 2
+        assert lp.enable_count == 1
+    assert lp.enable_count == 0
+    assert lp.last_time == {}
 
-        with self.assertRaises(RuntimeError):
-            self.assertEqual(lp.enable_count, 0)
-            with lp:
-                self.assertEqual(lp.enable_count, 1)
-                raise RuntimeError()
-        self.assertEqual(lp.enable_count, 0)
-        self.assertEqual(lp.last_time, {})
+    with pytest.raises(RuntimeError):
+        assert lp.enable_count == 0
+        with lp:
+            assert lp.enable_count == 1
+            raise RuntimeError()
+    assert lp.enable_count == 0
+    assert lp.last_time == {}
 
-    def test_function_decorator(self):
-        profile = LineProfiler()
-        f_wrapped = profile(f)
-        self.assertEqual(f_wrapped.__name__, 'f')
 
-        self.assertEqual(profile.enable_count, 0)
-        value = f_wrapped(10)
-        self.assertEqual(profile.enable_count, 0)
-        self.assertEqual(value, f(10))
+def test_function_decorator():
+    profile = LineProfiler()
+    f_wrapped = profile(f)
+    assert f_wrapped.__name__ == 'f'
 
-    def test_gen_decorator(self):
-        profile = LineProfiler()
-        g_wrapped = profile(g)
-        self.assertEqual(g_wrapped.__name__, 'g')
+    assert profile.enable_count == 0
+    value = f_wrapped(10)
+    assert profile.enable_count == 0
+    assert value == f(10)
 
-        self.assertEqual(profile.enable_count, 0)
-        i = g_wrapped(10)
-        self.assertEqual(profile.enable_count, 0)
-        self.assertEqual(next(i), 20)
-        self.assertEqual(profile.enable_count, 0)
-        self.assertEqual(i.send(30), 50)
-        self.assertEqual(profile.enable_count, 0)
-        with self.assertRaises(StopIteration):
-            next(i)
-        self.assertEqual(profile.enable_count, 0)
+
+def test_gen_decorator():
+    profile = LineProfiler()
+    g_wrapped = profile(g)
+    assert g_wrapped.__name__ == 'g'
+
+    assert profile.enable_count == 0
+    i = g_wrapped(10)
+    assert profile.enable_count == 0
+    assert next(i) == 20
+    assert profile.enable_count == 0
+    assert i.send(30) == 50
+    assert profile.enable_count == 0
+    with pytest.raises(StopIteration):
+        next(i)
+    assert profile.enable_count == 0
