@@ -112,6 +112,26 @@ def label(code):
     else:
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
+
+cpdef _code_replace(code, co_code):
+    """
+    Implements CodeType.replace for Python < 3.8
+    """
+    if hasattr(code, 'replace'):
+        # python 3.8+
+        code = func.__code__.replace(co_code=co_code)
+    else:
+        # python <3.8
+        co = code
+        code = CodeType(co.co_argcount, co.co_kwonlyargcount,
+                        co.co_nlocals, co.co_stacksize, co.co_flags,
+                        co_code, co.co_consts, co.co_names,
+                        co.co_varnames, co.co_filename, co.co_name,
+                        co.co_firstlineno, co.co_lnotab, co.co_freevars,
+                        co.co_cellvars)
+    return code
+
+
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
     """ Object to encapsulate line-profile statistics.
@@ -129,6 +149,7 @@ class LineStats(object):
     def __init__(self, timings, unit):
         self.timings = timings
         self.unit = unit
+
 
 cdef class LineProfiler:
     """ 
@@ -191,19 +212,7 @@ cdef class LineProfiler:
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
             CodeType = type(code)
-            
-            if hasattr(code, 'replace'):
-                # python 3.8+
-                code = func.__code__.replace(co_code=co_code)
-            else:
-                # python <3.8
-                co = code
-                code = CodeType(co.co_argcount, co.co_kwonlyargcount,
-                                co.co_nlocals, co.co_stacksize, co.co_flags,
-                                co_code, co.co_consts, co.co_names,
-                                co.co_varnames, co.co_filename, co.co_name,
-                                co.co_firstlineno, co.co_lnotab, co.co_freevars,
-                                co.co_cellvars)
+            code = _code_replace(code, co_code=co_code)
             func.__code__ = code
         else:
             self.dupes_map[code.co_code] = [code]
