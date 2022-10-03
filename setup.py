@@ -35,31 +35,6 @@ def _choose_build_method():
     return LINE_PROFILER_BUILD_METHOD
 
 
-def _choose_build_method():
-    DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
-    LINE_PROFILER_BUILD_METHOD = os.environ.get("LINE_PROFILER_BUILD_METHOD", "auto").lower()
-
-    if DISABLE_C_EXTENSIONS in {"true", "on", "yes", "1"}:
-        LINE_PROFILER_BUILD_METHOD = 'setuptools'
-
-    if LINE_PROFILER_BUILD_METHOD == 'auto':
-        try:
-            import Cython  # NOQA
-        except ImportError:
-            try:
-                import skbuild  # NOQA
-                import cmake  # NOQA
-                import ninja  # NOQA
-            except ImportError:
-                LINE_PROFILER_BUILD_METHOD = 'setuptools'
-            else:
-                LINE_PROFILER_BUILD_METHOD = 'scikit-build'
-        else:
-            LINE_PROFILER_BUILD_METHOD = 'cython'
-
-    return LINE_PROFILER_BUILD_METHOD
-
-
 def parse_version(fpath):
     """
     Statically parse the version number from a python file
@@ -91,8 +66,6 @@ def static_parse(varname, fpath):
     try:
         value = visitor.static_value
     except AttributeError:
-        import warnings
-
         value = "Unknown {}".format(varname)
         warnings.warn(value)
     return value
