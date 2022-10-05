@@ -6,6 +6,7 @@ from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
 from libcpp.unordered_map cimport unordered_map
+import threading
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
@@ -175,18 +176,19 @@ cdef class LineProfiler:
         >>> self.print_stats()
     """
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
-    cdef unordered_map[int64, LastTime] _c_last_time
+    # Mapping between thread-id and map of LastTime
+    cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
-    cdef public long enable_count
+    cdef public object threaddata
 
     def __init__(self, *functions):
         self.functions = []
         self.code_hash_map = {}
         self.dupes_map = {}
         self.timer_unit = hpTimerUnit()
-        self.enable_count = 0
+        self.threaddata = threading.local()
 
         for func in functions:
             self.add_function(func)
@@ -229,6 +231,14 @@ cdef class LineProfiler:
 
         self.functions.append(func)
 
+    property enable_count:
+        def __get__(self):
+            if not hasattr(self.threaddata, 'enable_count'):
+                self.threaddata.enable_count = 0
+            return self.threaddata.enable_count
+        def __set__(self, value):
+            self.threaddata.enable_count = value
+
     def enable_by_count(self):
         """ Enable the profiler if it hasn't been enabled before.
         """
@@ -263,7 +273,7 @@ cdef class LineProfiler:
         
     @property
     def c_last_time(self):
-        return <dict>self._c_last_time
+        return (<dict>self._c_last_time)[threading.get_ident()]
 
     @property
     def code_map(self):
@@ -292,7 +302,7 @@ cdef class LineProfiler:
         line_profiler 4.0 no longer directly maintains last_time, but this will
         construct something similar for backwards compatibility.
         """
-        c_last_time = self.c_last_time
+        c_last_time = (<dict>self._c_last_time)[threading.get_ident()]
         code_hash_map = self.code_hash_map
         py_last_time = {}
         for code, code_hashes in code_hash_map.items():
@@ -303,7 +313,7 @@ cdef class LineProfiler:
 
 
     cpdef disable(self):
-        self._c_last_time.clear()
+        self._c_last_time[threading.get_ident()].clear()
         unset_trace()
 
     def get_stats(self):
@@ -344,9 +354,10 @@ PyObject *arg):
         block_hash = hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
         if self._c_code_map.count(code_hash):
+            ident = threading.get_ident()
             time = hpTimer()
-            if self._c_last_time.count(block_hash):
-                old = self._c_last_time[block_hash]
+            if self._c_last_time[ident].count(block_hash):
+                old = self._c_last_time[ident][block_hash]
                 line_entries = self._c_code_map[code_hash]
                 key = old.f_lineno
                 if not line_entries.count(key):
@@ -356,12 +367,12 @@ PyObject *arg):
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self._c_last_time[block_hash] = LastTime(py_frame.f_lineno, hpTimer())
-            elif self._c_last_time.count(block_hash):
+                self._c_last_time[ident][block_hash] = LastTime(py_frame.f_lineno, hpTimer())
+            elif self._c_last_time[ident].count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                self._c_last_time.erase(self._c_last_time.find(block_hash))
+                self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
     return 0
 
