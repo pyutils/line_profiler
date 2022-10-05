@@ -328,8 +328,21 @@ cdef class LineProfiler:
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
             key = label(code)
-            stats[key] = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
-            stats[key].sort()
+
+            entries = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
+            # If there are multiple entries for a line, this will sort them by increasing # hits
+            entries.sort()
+
+            # NOTE: v4.x may produce more than one entry per line. For example:
+            #   1:  for x in range(10):
+            #   2:      pass
+            #  will produce a 1-hit entry on line 1, and 10-hit entries on lines 1 and 2
+            #  This doesn't affect `print_stats`, because it uses the last entry for a given line (line number is
+            #  used a dict key so earlier entries are overwritten), but to keep compatability with other tools,
+            #  let's only keep the last entry for each line
+            # Remove all but the last entry for each line
+            entries = list({e[0]: e for e in entries}.values())
+            stats[key] = entries
         return LineStats(stats, self.timer_unit)
 
 @cython.boundscheck(False)
