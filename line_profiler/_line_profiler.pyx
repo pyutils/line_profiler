@@ -354,8 +354,8 @@ PyObject *arg):
         block_hash = hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
         if self._c_code_map.count(code_hash):
-            ident = threading.get_ident()
             time = hpTimer()
+            ident = threading.get_ident()
             if self._c_last_time[ident].count(block_hash):
                 old = self._c_last_time[ident][block_hash]
                 line_entries = self._c_code_map[code_hash]
