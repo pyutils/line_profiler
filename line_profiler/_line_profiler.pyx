@@ -113,7 +113,7 @@ def label(code):
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
-cpdef _code_replace(code, co_code):
+cpdef _code_replace(func, code, co_code):
     """
     Implements CodeType.replace for Python < 3.8
     """
@@ -212,7 +212,7 @@ cdef class LineProfiler:
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
             CodeType = type(code)
-            code = _code_replace(code, co_code=co_code)
+            code = _code_replace(func, code, co_code=co_code)
             func.__code__ = code
         else:
             self.dupes_map[code.co_code] = [code]
