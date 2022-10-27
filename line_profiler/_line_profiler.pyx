@@ -1,13 +1,42 @@
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 
 
-# FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
+    """
+    inline PyObject* get_frame_code(PyFrameObject* frame) {
+        #if PY_VERSION_HEX < 0x030B0000
+            Py_INCREF(frame->f_code->co_code);
+            return frame->f_code->co_code;
+        #else
+            PyCodeObject* code = PyFrame_GetCode(frame);
+            PyObject* ret = PyCode_GetCode(code);
+            Py_DECREF(code);
+            return ret;
+        #endif
+    }
+    """
+    cdef object get_frame_code(PyFrameObject* frame)
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
+
 cdef extern from "Python.h":
+    """
+    // CPython 3.11 broke some stuff by moving PyFrameObject :(
+    #if PY_VERSION_HEX >= 0x030b00a6
+      #ifndef Py_BUILD_CORE
+        #define Py_BUILD_CORE 1
+      #endif
+      #include "internal/pycore_frame.h"
+      #include "cpython/code.h"
+      #include "pyframe.h"
+    #endif
+    """
+    
+    ctypedef struct PyFrameObject
+    ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
     cdef bint PyCFunction_Check(object obj)
+    cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
     cdef void PyEval_SetProfile(Py_tracefunc func, object arg)
     cdef void PyEval_SetTrace(Py_tracefunc func, object arg)
@@ -33,6 +62,7 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_CALL
     cdef int PyTrace_C_EXCEPTION
     cdef int PyTrace_C_RETURN
+
 
 cdef extern from "timers.h":
     PY_LONG_LONG hpTimer()
