@@ -1,3 +1,4 @@
+#cython: language_level=3
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
 cimport cython
@@ -86,8 +87,8 @@ cdef struct LineTime:
     long nhits
     
 cdef struct LastTime:
-    PY_LONG_LONG time
     int f_lineno
+    PY_LONG_LONG time
 
 cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     """
@@ -111,6 +112,26 @@ def label(code):
     else:
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
+
+cpdef _code_replace(func, code, co_code):
+    """
+    Implements CodeType.replace for Python < 3.8
+    """
+    if hasattr(code, 'replace'):
+        # python 3.8+
+        code = func.__code__.replace(co_code=co_code)
+    else:
+        # python <3.8
+        co = code
+        code = CodeType(co.co_argcount, co.co_kwonlyargcount,
+                        co.co_nlocals, co.co_stacksize, co.co_flags,
+                        co_code, co.co_consts, co.co_names,
+                        co.co_varnames, co.co_filename, co.co_name,
+                        co.co_firstlineno, co.co_lnotab, co.co_freevars,
+                        co.co_cellvars)
+    return code
+
+
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
     """ Object to encapsulate line-profile statistics.
@@ -129,11 +150,31 @@ class LineStats(object):
         self.timings = timings
         self.unit = unit
 
+
 cdef class LineProfiler:
-    """ Time the execution of lines of Python code.
+    """ 
+    Time the execution of lines of Python code.
+
+    Example:
+        >>> import copy
+        >>> import line_profiler
+        >>> # Create a LineProfiler instance
+        >>> self = line_profiler.LineProfiler()
+        >>> # Wrap a function
+        >>> copy_fn = self(copy.copy)
+        >>> # Call the function
+        >>> copy_fn(self)
+        >>> # Inspect internal properties
+        >>> self.functions
+        >>> self.c_last_time
+        >>> self.c_code_map
+        >>> self.code_map
+        >>> self.last_time
+        >>> # Print stats
+        >>> self.print_stats()
     """
-    cdef unordered_map[int64, unordered_map[int64, LineTime]] c_code_map
-    cdef unordered_map[int64, LastTime] c_last_time
+    cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
+    cdef unordered_map[int64, LastTime] _c_last_time
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
@@ -145,6 +186,7 @@ cdef class LineProfiler:
         self.dupes_map = {}
         self.timer_unit = hpTimerUnit()
         self.enable_count = 0
+
         for func in functions:
             self.add_function(func)
 
@@ -170,19 +212,7 @@ cdef class LineProfiler:
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
             CodeType = type(code)
-            
-            if hasattr(code, 'replace'):
-                # python 3.8+
-                code = func.__code__.replace(co_code=co_code)
-            else:
-                # python <3.8
-                co = code
-                code = CodeType(co.co_argcount, co.co_kwonlyargcount,
-                                co.co_nlocals, co.co_stacksize, co.co_flags,
-                                co_code, co.co_consts, co.co_names,
-                                co.co_varnames, co.co_filename, co.co_name,
-                                co.co_firstlineno, co.co_lnotab, co.co_freevars,
-                                co.co_cellvars)
+            code = _code_replace(func, code, co_code=co_code)
             func.__code__ = code
         else:
             self.dupes_map[code.co_code] = [code]
@@ -190,12 +220,13 @@ cdef class LineProfiler:
         # See if this can be sped up by not needing to iterate over every byte
         for offset, byte in enumerate(code.co_code):
             code_hash = compute_line_hash(hash((code.co_code)), PyCode_Addr2Line(<PyCodeObject*>code, offset))
-            if not self.c_code_map.count(code_hash):
+            if not self._c_code_map.count(code_hash):
                 try:
                     self.code_hash_map[code].append(code_hash)
                 except KeyError:
                     self.code_hash_map[code] = [code_hash]
-                self.c_code_map[code_hash]
+                self._c_code_map[code_hash]
+
         self.functions.append(func)
 
     def enable_by_count(self):
@@ -224,15 +255,55 @@ cdef class LineProfiler:
         PyEval_SetTrace(python_trace_callback, self)
         
     @property
-    def code_map(self):
-        return <dict>self.c_code_map
+    def c_code_map(self):
+        """
+        A Python view of the internal C lookup table.
+        """
+        return <dict>self._c_code_map
         
     @property
+    def c_last_time(self):
+        return <dict>self._c_last_time
+
+    @property
+    def code_map(self):
+        """
+        line_profiler 4.0 no longer directly maintains code_map, but this will
+        construct something similar for backwards compatibility.
+        """
+        c_code_map = self.c_code_map
+        code_hash_map = self.code_hash_map
+        py_code_map = {}
+        for code, code_hashes in code_hash_map.items():
+            py_code_map.setdefault(code, {})
+            for code_hash in code_hashes:
+                c_entries = c_code_map[code_hash]
+                py_entries = {}
+                for key, c_entry in c_entries.items():
+                    py_entry = c_entry.copy()
+                    py_entry['code'] = code
+                    py_entries[key] = py_entry
+                py_code_map[code].update(py_entries)
+        return py_code_map
+
+    @property
     def last_time(self):
-        return <dict>self.c_last_time
+        """
+        line_profiler 4.0 no longer directly maintains last_time, but this will
+        construct something similar for backwards compatibility.
+        """
+        c_last_time = self.c_last_time
+        code_hash_map = self.code_hash_map
+        py_last_time = {}
+        for code, code_hashes in code_hash_map.items():
+            for code_hash in code_hashes:
+                if code_hash in c_last_time:
+                    py_last_time[code] = c_last_time[code_hash]
+        return py_last_time
+
 
     cpdef disable(self):
-        self.c_last_time.clear()
+        self._c_last_time.clear()
         unset_trace()
 
     def get_stats(self):
@@ -242,7 +313,7 @@ cdef class LineProfiler:
         
         stats = {}
         for code in self.code_hash_map:
-            cmap = self.c_code_map
+            cmap = self._c_code_map
             entries = []
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
@@ -272,25 +343,25 @@ PyObject *arg):
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         block_hash = hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
-        if self.c_code_map.count(code_hash):
+        if self._c_code_map.count(code_hash):
             time = hpTimer()
-            if self.c_last_time.count(block_hash):
-                old = self.c_last_time[block_hash]
-                line_entries = self.c_code_map[code_hash]
+            if self._c_last_time.count(block_hash):
+                old = self._c_last_time[block_hash]
+                line_entries = self._c_code_map[code_hash]
                 key = old.f_lineno
                 if not line_entries.count(key):
-                    self.c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
-                self.c_code_map[code_hash][key].nhits += 1
-                self.c_code_map[code_hash][key].total_time += time - old.time
+                    self._c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
+                self._c_code_map[code_hash][key].nhits += 1
+                self._c_code_map[code_hash][key].total_time += time - old.time
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self.c_last_time[block_hash] = LastTime(hpTimer(), py_frame.f_lineno)
-            elif self.c_last_time.count(block_hash):
+                self._c_last_time[block_hash] = LastTime(py_frame.f_lineno, hpTimer())
+            elif self._c_last_time.count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                self.c_last_time.erase(self.c_last_time.find(block_hash))
+                self._c_last_time.erase(self._c_last_time.find(block_hash))
 
     return 0
 
