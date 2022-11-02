@@ -4,6 +4,7 @@ from sys import byteorder
 cimport cython
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
+from types import CodeType
 
 from libcpp.unordered_map cimport unordered_map
 
@@ -119,7 +120,7 @@ cpdef _code_replace(code, co_code):
     """
     if hasattr(code, 'replace'):
         # python 3.8+
-        code = func.__code__.replace(co_code=co_code)
+        code = code.replace(co_code=co_code)
     else:
         # python <3.8
         co = code
@@ -211,7 +212,6 @@ cdef class LineProfiler:
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
-            CodeType = type(code)
             code = _code_replace(code, co_code=co_code)
             func.__code__ = code
         else:
