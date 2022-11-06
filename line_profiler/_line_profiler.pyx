@@ -365,6 +365,7 @@ PyObject *arg):
     self = <LineProfiler>self_
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
+        # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
         block_hash = hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
         if self._c_code_map.count(code_hash):
