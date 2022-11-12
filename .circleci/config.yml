@@ -35,7 +35,7 @@ jobs:
 
   .common_template: &common_template
     docker:
-      - image: circleci/python
+      - image: cimg/python
     steps:
       - checkout
 
@@ -60,7 +60,7 @@ jobs:
             VERSION=$(python -c "import setup; print(setup.VERSION)") 
             export CIBW_BUILD="${MB_PYTHON_TAG}-*"
             docker info
-            pip install cibuildwheel
+            pip install -r requirements/build.txt
             cibuildwheel --platform=linux --arch=native
       - persist_to_workspace:
           root: .
@@ -97,7 +97,7 @@ jobs:
     environment:
       - MB_PYTHON_TAG=cp39
     docker:
-      - image: circleci/python:3.9
+      - image: cimg/python:3.9
     working_directory: ~/repo-full-cp39
   
   test_full/cp38-cp38-manylinux2010:
@@ -105,7 +105,7 @@ jobs:
     environment:
       - MB_PYTHON_TAG=cp38
     docker:
-      - image: circleci/python:3.8
+      - image: cimg/python:3.8
     working_directory: ~/repo-full-cp38
   
   test_full/cp37-cp37m-manylinux2010:
@@ -113,7 +113,7 @@ jobs:
     environment:
       - MB_PYTHON_TAG=cp37
     docker:
-      - image: circleci/python:3.7
+      - image: cimg/python:3.7
     working_directory: ~/repo-full-cp37
 
   test_full/cp36-cp36m-manylinux2010:
@@ -121,7 +121,7 @@ jobs:
     environment:
       - MB_PYTHON_TAG=cp36
     docker:
-      - image: circleci/python:3.6
+      - image: cimg/python:3.6
     working_directory: ~/repo-full-cp36
 
 

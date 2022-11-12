@@ -5,10 +5,6 @@ import os
 import warnings
 import setuptools
 
-# pep 517 setup breaks this
-# so we disable pep 517 in pyproject.toml
-from comp import run_cythonize
-
 
 def _choose_build_method():
     DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
@@ -26,10 +22,13 @@ def _choose_build_method():
                 import cmake  # NOQA
                 import ninja  # NOQA
             except ImportError:
+                # The main fallback disables c-extensions
                 LINE_PROFILER_BUILD_METHOD = 'setuptools'
             else:
+                # This should never be hit
                 LINE_PROFILER_BUILD_METHOD = 'scikit-build'
         else:
+            # Use plain cython by default
             LINE_PROFILER_BUILD_METHOD = 'cython'
 
     return LINE_PROFILER_BUILD_METHOD
@@ -215,6 +214,24 @@ if __name__ == '__main__':
     elif LINE_PROFILER_BUILD_METHOD == 'cython':
         # no need to try importing cython because an import
         # was already attempted in _choose_build_method
+        import multiprocessing
+        from setuptools import Extension
+        from Cython.Build import cythonize
+
+        def run_cythonize(force=False):
+            return cythonize(
+                Extension(
+                    name="line_profiler._line_profiler",
+                    sources=["line_profiler/_line_profiler.pyx", "line_profiler/timers.c", "line_profiler/unset_trace.c"],
+                    language="c++",
+                    define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
+                ),
+                compiler_directives={"language_level": 3, "infer_types": True, "linetrace": (True if os.getenv("DEV") == "true" else False)},
+                include_path=["line_profiler/python25.pxd"],
+                force=force,
+                nthreads=multiprocessing.cpu_count(),
+            )
+
         setupkw.update(dict(ext_modules=run_cythonize()))
         setup = setuptools.setup
     else:
