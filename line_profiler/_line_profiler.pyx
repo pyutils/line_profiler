@@ -204,6 +204,8 @@ cdef class LineProfiler:
                 "instead." % (func.__name__,)
             )
         try:
+            if isinstance(func, classmethod):
+                func = func.__func__
             code = func.__code__
         except AttributeError:
             import warnings

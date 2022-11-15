@@ -39,6 +39,8 @@ def is_generator(f):
     isgen = (f.__code__.co_flags & CO_GENERATOR) != 0
     return isgen
 
+def is_classmethod(f):
+    return isinstance(f, classmethod)
 
 class LineProfiler(CLineProfiler):
     """ A profiler that records the execution times of individual lines.
@@ -49,12 +51,28 @@ class LineProfiler(CLineProfiler):
         it on function exit.
         """
         self.add_function(func)
-        if is_coroutine(func):
+        if is_classmethod(func):
+            wrapper = self.wrap_classmethod(func)
+        elif is_coroutine(func):
             wrapper = self.wrap_coroutine(func)
         elif is_generator(func):
             wrapper = self.wrap_generator(func)
         else:
             wrapper = self.wrap_function(func)
+        return wrapper
+
+    def wrap_classmethod(self, func):
+        """
+        Wrap a classmethod to profile it.
+        """
+        @functools.wraps(func)
+        def wrapper(*args, **kwds):
+            self.enable_by_count()
+            try:
+                result = func.__func__(func.__class__, *args, **kwds)
+            finally:
+                self.disable_by_count()
+            return result
         return wrapper
 
     def wrap_coroutine(self, func):
