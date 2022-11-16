@@ -1,5 +1,8 @@
 Changes
 =======
+4.0.1
+~~~~~
+* FIX: Profiling classmethods works again. #183
 
 4.0.0
 ~~~~~
