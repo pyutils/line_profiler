@@ -379,9 +379,9 @@ WHEEL_PATHS=()
 for _MODE in "${MODE_LIST[@]}"
 do
     if [[ "$_MODE" == "sdist" ]]; then
-        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.tar.gz"
+        ls_array "_NEW_WHEEL_PATHS" "wheelhouse/${NAME}-${VERSION}*.tar.gz"
     elif [[ "$_MODE" == "native" ]]; then
-        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.whl"
+        ls_array "_NEW_WHEEL_PATHS" "wheelhouse/${NAME}-${VERSION}*.whl"
     elif [[ "$_MODE" == "bdist" ]]; then
         ls_array "_NEW_WHEEL_PATHS" "wheelhouse/${NAME}-${VERSION}-*.whl"
     else
