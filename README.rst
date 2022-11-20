@@ -26,6 +26,16 @@ They are available under a `BSD license`_.
 .. contents::
 
 
+Quick Start
+===========
+To profile a python script:
+
+* Install line_profiler: ``pip install line_profiler``.
+
+* Decorate function(s) you want to profile with @profile. The decorator will be made automatically available on run.
+
+* Run ``kernprof -lv script_to_profile.py``.
+
 Installation
 ============
 
