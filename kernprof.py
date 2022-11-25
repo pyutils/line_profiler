@@ -26,6 +26,61 @@ except ImportError:
         from profile import Profile
 
 
+import importlib.abc
+import importlib.machinery
+from pathlib import Path
+import sys
+import ast
+
+class AstModImportHook(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    def __init__(self, module_to_monkeypatch):
+        # type: (Dict[str, Callable[[Module], None]) -> None
+        self._modules_to_monkeypatch = {k:None for k in module_to_monkeypatch}
+        self._wl = module_to_monkeypatch
+        self._in_create_module = False
+
+    def find_module(self, fullname, path=None):
+        spec = self.find_spec(fullname, path)
+        if spec is None:
+            return None
+        return spec
+
+    def create_module(self, spec):
+        self._in_create_module = True
+
+        from importlib.util import find_spec, module_from_spec
+        real_spec = importlib.util.find_spec(spec.name)
+
+        real_module = module_from_spec(real_spec)
+
+        self._in_create_module = False
+        return real_module
+
+    def exec_module(self, module):
+        if module.__name__ in self._wl:
+            b = ast.parse(Path(module.__file__).read_text())
+            for it in b.body:
+                if isinstance(it, ast.FunctionDef) and (it.name in self._wl[module.__name__]):
+                    it.decorator_list.append(ast.Name(id='profile', ctx=ast.Load()))
+    
+            bp = ast.fix_missing_locations(b)
+            c = compile(bp, module.__file__, 'exec')
+            exec(c, module.__dict__)
+        sys.modules[module.__name__] = module
+        globals()[module.__name__] = module
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname not in self._modules_to_monkeypatch:
+            return None
+
+        if self._in_create_module:
+            # if we are in the create_module function,
+            # we return the real module (return None)
+            return None
+        spec = importlib.machinery.ModuleSpec(fullname, self)
+        return spec
+
+
 def execfile(filename, globals=None, locals=None):
     """ Python 3.x doesn't have 'execfile' builtin """
     with open(filename, 'rb') as f:
@@ -208,6 +263,7 @@ def main(args=None):
                         'displayed (default: 1e-6)')
     parser.add_argument('-z', '--skip-zero', action='store_true',
                         help="Hide functions which have not been called")
+    parser.add_argument('--profile', action='append')
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
         help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module."
             "Minimum value is 1 (second). Defaults to disabled.")
@@ -216,6 +272,14 @@ def main(args=None):
     parser.add_argument('args', nargs='...', help='Optional script arguments')
 
     options = parser.parse_args(args)
+    data = {}
+    if options.profile:
+        for x in options.profile:
+            mod, obj = x.split(':')
+            data.setdefault(mod, []).append(obj)
+    print('You are using the build version.', data)
+    if data:
+        sys.meta_path.insert(0, AstModImportHook(data))
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
