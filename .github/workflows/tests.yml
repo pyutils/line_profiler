@@ -17,7 +17,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v3
     - name: Set up Python 3.8
-      uses: actions/setup-python@v4.3.0
+      uses: actions/setup-python@v4.3.1
       with:
         python-version: 3.8
     - name: Install dependencies
@@ -40,7 +40,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v3
     - name: Set up Python 3.8
-      uses: actions/setup-python@v4.3.0
+      uses: actions/setup-python@v4.3.1
       with:
         python-version: 3.8
     - name: Upgrade pip
@@ -138,7 +138,7 @@ jobs:
       shell: bash
       run: ls -la wheelhouse
     - name: Set up Python 3.8 to combine coverage Linux
-      uses: actions/setup-python@v4.3.0
+      uses: actions/setup-python@v4.3.1
       if: runner.os == 'Linux'
       with:
         python-version: 3.8
