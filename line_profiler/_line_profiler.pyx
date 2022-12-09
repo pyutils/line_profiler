@@ -114,14 +114,17 @@ def label(code):
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
-cpdef _code_replace(func, code, co_code):
+cpdef _code_replace(func, co_code):
     """
     Implements CodeType.replace for Python < 3.8
     """
-    code = func.__code__
+    try:
+        code = func.__code__
+    except AttributeError:
+        code = func.__func__.__code__
     if hasattr(code, 'replace'):
         # python 3.8+
-        code = func.__code__.replace(co_code=co_code)
+        code = code.replace(co_code=co_code)
     else:
         # python <3.8
         co = code
@@ -204,21 +207,25 @@ cdef class LineProfiler:
                 "instead." % (func.__name__,)
             )
         try:
-            if isinstance(func, classmethod):
-                func = func.__func__
             code = func.__code__
         except AttributeError:
-            import warnings
-            warnings.warn("Could not extract a code object for the object %r" % (func,))
-            return
+            try:
+                code = func.__func__.__code__
+            except AttributeError:
+                import warnings
+                warnings.warn("Could not extract a code object for the object %r" % (func,))
+                return
 
         if code.co_code in self.dupes_map:
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
             co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
             CodeType = type(code)
-            code = _code_replace(func, code, co_code=co_code)
-            func.__code__ = code
+            code = _code_replace(func, co_code=co_code)
+            try:
+                func.__code__ = code
+            except AttributeError as e:
+                func.__func__.__code__ = code
         else:
             self.dupes_map[code.co_code] = [code]
         # TODO: Since each line can be many bytecodes, this is kinda inefficient
