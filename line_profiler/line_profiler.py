@@ -16,7 +16,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '4.0.1'
+__version__ = '4.0.2'
 
 
 def load_ipython_extension(ip):
@@ -39,8 +39,10 @@ def is_generator(f):
     isgen = (f.__code__.co_flags & CO_GENERATOR) != 0
     return isgen
 
+
 def is_classmethod(f):
     return isinstance(f, classmethod)
+
 
 class LineProfiler(CLineProfiler):
     """ A profiler that records the execution times of individual lines.

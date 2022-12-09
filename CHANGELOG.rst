@@ -1,5 +1,10 @@
 Changes
 =======
+
+4.0.2
+~~~~~
+* FIX: AttributeError on certain methods. #191
+
 4.0.1
 ~~~~~
 * FIX: Profiling classmethods works again. #183
