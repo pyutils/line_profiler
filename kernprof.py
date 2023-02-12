@@ -206,7 +206,6 @@ def main(args=None):
     parser.add_argument('-r', '--rich', action='store_true',
                         help='Use rich formatting if viewing output')
     parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-
                         help='Output unit (in seconds) in which the timing info is '
                         'displayed (default: 1e-6)')
     parser.add_argument('-z', '--skip-zero', action='store_true',
@@ -214,6 +213,12 @@ def main(args=None):
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
                         help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module."
                         "Minimum value is 1 (second). Defaults to disabled.")
+    parser.add_argument('-p', '--prof-mod', type=str, default='',
+                        help="list of modules, functions and/or classes to profile specified by their name or path,"
+                        "list is comma separated, adding the current script path profiles full script."
+                        "only works with line_profiler -l, --line-by-line")
+    parser.add_argument('-m', '--prof-imports', action='store_true',
+                        help="profile imports aswell when full script is being profiled, only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')
     parser.add_argument('args', nargs='...', help='Optional script arguments')
@@ -271,7 +276,11 @@ def main(args=None):
         try:
             execfile_ = execfile
             ns = locals()
-            if options.builtin:
+            if options.prof_mod and options.line_by_line:
+                from line_profiler.autoprofile import autoprofile
+                prof_mod = options.prof_mod.split(',')
+                autoprofile.run(script_file, ns, prof_mod=prof_mod, profile_imports=options.prof_imports)
+            elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
