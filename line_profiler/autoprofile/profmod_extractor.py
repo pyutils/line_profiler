@@ -2,8 +2,7 @@ import sys
 import os
 import ast
 
-import ubelt as ub
-from xdoctest.static_analysis import package_modpaths
+from line_profiler.autoprofile.util_import import modname_to_modpath, modpath_to_modname, package_modpaths
 
 
 class ProfmodExtractor:
@@ -18,7 +17,7 @@ class ProfmodExtractor:
 
         modnames_to_profile = []
         for mod in prof_mod:
-            modpath = ub.util_import.modname_to_modpath(mod, sys_path=new_sys_path)
+            modpath = modname_to_modpath(mod, sys_path=new_sys_path)
             if modpath is None:
                 if not os.path.exists(mod):
                     if cls.is_path(mod):
@@ -29,14 +28,14 @@ class ProfmodExtractor:
                 modpath = mod
 
             try:
-                modname = ub.util_import.modpath_to_modname(modpath)
+                modname = modpath_to_modname(modpath)
             except ValueError:
                 continue
             if modname not in modnames_to_profile:
                 modnames_to_profile.append(modname)
 
             for submod_path in package_modpaths(modpath):
-                submod_name = ub.util_import.modpath_to_modname(submod_path)
+                submod_name = modpath_to_modname(submod_path)
                 if submod_name not in modnames_to_profile:
                     modnames_to_profile.append(submod_name)
 
