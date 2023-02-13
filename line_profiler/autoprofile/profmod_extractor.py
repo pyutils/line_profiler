@@ -6,21 +6,26 @@ from line_profiler.autoprofile.util_import import modname_to_modpath, modpath_to
 
 
 class ProfmodExtractor:
+    def __init__(self, tree, script_file, prof_mod):
+        self.tree = tree
+        self.script_file = script_file
+        self.prof_mod = prof_mod
+
     @staticmethod
-    def is_path(text):
-        return '/' in text.replace('\\','/')
+    def _is_path(text):
+        return '/' in text.replace('\\', '/')
 
     @classmethod
     def _get_modnames_to_profile(cls, script_file, prof_mod):
         script_directory = os.path.realpath(os.path.dirname(script_file))
-        new_sys_path = [script_directory]+sys.path
+        new_sys_path = [script_directory] + sys.path
 
         modnames_to_profile = []
         for mod in prof_mod:
             modpath = modname_to_modpath(mod, sys_path=new_sys_path)
             if modpath is None:
                 if not os.path.exists(mod):
-                    if cls.is_path(mod):
+                    if cls._is_path(mod):
                         """mod file does not exist"""
                         continue
                     modnames_to_profile.append(mod)
@@ -43,67 +48,74 @@ class ProfmodExtractor:
 
     @staticmethod
     def _ast_get_imports_from_tree(tree):
-        modules = []
-        modules_alias = []
-        modules_index = []
-        for idx,node in enumerate(tree.body):
+        module_dict_list = []
+        modname_list = []
+        for idx, node in enumerate(tree.body):
             if isinstance(node, ast.Import):
                 for name in node.names:
                     modname = name.name
-                    if modname not in modules:
-                        modules.append(modname)
-                        modules_alias.append(name.asname)
-                        modules_index.append(idx)
+                    if modname not in modname_list:
+                        alias = name.asname
+                        module_dict = {
+                            'name': modname,
+                            'alias': alias,
+                            'tree_index': idx,
+                        }
+                        module_dict_list.append(module_dict)
+                        modname_list.append(modname)
             elif isinstance(node, ast.ImportFrom):
                 for name in node.names:
-                    modname = node.module+'.'+name.name
-                    alias = name.asname or name.name
-                    if modname not in modules:
-                        modules.append(modname)
-                        modules_alias.append(alias)
-                        modules_index.append(idx)
-        return modules, modules_alias, modules_index
+                    modname = node.module + '.' + name.name
+                    if modname not in modname_list:
+                        alias = name.asname or name.name
+                        module_dict = {
+                            'name': modname,
+                            'alias': alias,
+                            'tree_index': idx,
+                        }
+                        module_dict_list.append(module_dict)
+                        modname_list.append(modname)
+        return module_dict_list
 
     @staticmethod
-    def _get_names_to_profile(modnames_to_profile, modules, modules_alias):
-        chosen_indexes = []
-        mod_imports_added = []
-        names_to_profile = []
+    def _get_names_to_profile(modnames_to_profile, module_dict_list):
+        tree_names_to_profile_dict = {}
 
+        modname_added_list = []
         """match prof modules when submodule or function(hence the extra .) imported"""
-        for i,mod_import in enumerate(modules):
-            if mod_import in mod_imports_added:
+        for i, module_dict in enumerate(module_dict_list):
+            modname = module_dict['name']
+            if modname in modname_added_list:
                 continue
-            if mod_import not in modnames_to_profile and mod_import.rsplit('.',1)[0] not in modnames_to_profile:
+            if modname not in modnames_to_profile and modname.rsplit('.', 1)[0] not in modnames_to_profile:
                 continue
-            name = modules_alias[i] or mod_import
-            mod_imports_added.append(mod_import)
-            names_to_profile.append(name)
-            chosen_indexes.append(i)
+            name = module_dict['alias'] or modname
+            modname_added_list.append(modname)
+            tree_names_to_profile_dict[module_dict['tree_index']] = name
 
         # """match prof submodules when parent imported. doesnt work."""
         # for modname in modnames_to_profile:
         #     # parent_name = modname.rsplit('.',1)[0]
-        #     for i,mod_import in enumerate(modules):
-        #         if len(modname) <= len(mod_import) or not modname.startswith(mod_import) or modname[len(mod_import)] != '.':
-        #         # if mod_import != parent_name or modname[len(parent_name)] != '.':
+        #     for i,modname in enumerate(modules):
+        #         if len(modname) <= len(modname) or not modname.startswith(modname) or modname[len(modname)] != '.':
+        #         # if modname != parent_name or modname[len(parent_name)] != '.':
         #             continue
         #         alias = modules_alias[i]
         #         if alias:
-        #             name = alias+modname[len(mod_import):]
+        #             name = alias+modname[len(modname):]
         #         else:
         #             name = modname
-        #         if mod_import not in mod_imports_added:
-        #             mod_imports_added.append(mod_import)
+        #         if modname not in modname_added_list:
+        #             modname_added_list.append(modname)
         #             names_to_profile.append(name)
         #             chosen_indexes.append(i)
         #         break
-        return names_to_profile, chosen_indexes
+        return tree_names_to_profile_dict
 
-    def run(self, script_file, prof_mod, tree):
-        modnames_to_profile = self._get_modnames_to_profile(script_file, prof_mod)
+    def run(self):
+        modnames_to_profile = self._get_modnames_to_profile(self.script_file, self.prof_mod)
 
-        modules, modules_alias, modules_index = self._ast_get_imports_from_tree(tree)
+        module_dict_list = self._ast_get_imports_from_tree(self.tree)
 
-        names_to_profile, chosen_indexes = self._get_names_to_profile(modnames_to_profile, modules, modules_alias)
-        return names_to_profile, chosen_indexes, modules_index
+        tree_names_to_profile_dict = self._get_names_to_profile(modnames_to_profile, module_dict_list)
+        return tree_names_to_profile_dict
