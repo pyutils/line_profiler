@@ -1,5 +1,6 @@
 import inspect
 
+
 def add_imported_function_or_module(self, item):
     if inspect.isfunction(item):
         self.add_function(item)
