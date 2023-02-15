@@ -212,11 +212,12 @@ def main(args=None):
                         help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module."
                         "Minimum value is 1 (second). Defaults to disabled.")
     parser.add_argument('-p', '--prof-mod', type=str, default='',
-                        help="list of modules, functions and/or classes to profile specified by their name or path,"
-                        "list is comma separated, adding the current script path profiles full script."
-                        "only works with line_profiler -l, --line-by-line")
+                        help="List of modules, functions and/or classes to profile specified by their name or path."
+                        "List is comma separated, adding the current script path profiles full script."
+                        "Only works with line_profiler -l, --line-by-line")
     parser.add_argument('-m', '--prof-imports', action='store_true',
-                        help="profile imports aswell when full script is being profiled, only works with line_profiler -l, --line-by-line")
+                        help="Profile imports aswell when full script is being profiled."
+                        "Only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')
     parser.add_argument('args', nargs='...', help='Optional script arguments')
