@@ -221,8 +221,6 @@ if __name__ == "__main__":
 
         def run_cythonize(force=False):
             DEFAULT_FLAGS = [
-                # just for testing
-                "-march='native'",
                 "-flto",
                 "-fno-semantic-interposition",
                 "-pipe",
@@ -253,8 +251,6 @@ if __name__ == "__main__":
                 include_path=[
                     "line_profiler/python25.pxd",
                     "line_profiler/",
-                    "/home/theel/.pyenv/versions/3.9.5/lib/python3.9/site-packages",
-                    "line_profiler/preshed/preshed/"
                 ],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),
