@@ -1,16 +1,27 @@
 #cython: language_level=3
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
+from .phashmap cimport flat_hash_map, parallel_flat_hash_map, parallel_flat_hash_set
+from preshed.maps cimport PreshMap
 from sys import byteorder
 cimport cython
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
+from libcpp.cast cimport reinterpret_cast
 from libcpp.unordered_map cimport unordered_map
-import threading
+from libcpp.utility cimport pair
+from threading import get_ident, local
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
 ctypedef long long int int64
+
+cdef extern from "pythread.h":
+    cdef int PyThread_tss_is_created(Py_tss_t *key)
+    cdef int PyThread_tss_create(Py_tss_t *key)
+    cdef int PyThread_tss_set(Py_tss_t *key, void *value)
+    cdef void* PyThread_tss_get(Py_tss_t *key)
+    cdef struct Py_tss_t
 
 # FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
@@ -178,25 +189,33 @@ cdef class LineProfiler:
         >>> # Print stats
         >>> self.print_stats()
     """
-    cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
-    # Mapping between thread-id and map of LastTime
-    cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
+    cdef parallel_flat_hash_map[int64, flat_hash_map[int64, LineTime]] _c_code_map
+    cdef parallel_flat_hash_map[int64, flat_hash_map[int64, LastTime]] _c_last_time
+    # sadly we can't put a preshmap inside a preshmap
+    # so we can only use it to speed up top-level lookups
+    cdef PreshMap _c_code_map_set, _c_thread_ids
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
-    cdef public object threaddata
+    cdef public object threaddata, get_ident
 
     def __init__(self, *functions):
         self.functions = []
         self.code_hash_map = {}
         self.dupes_map = {}
         self.timer_unit = hpTimerUnit()
-        self.threaddata = threading.local()
+        self.threaddata = local()
+        # bind it to local class for faster lookups
+        self.get_ident = get_ident
+        self._c_thread_ids = PreshMap(initial_size=2)
+        # use these for quick membership tests in the callback
+        self._c_code_map_set = PreshMap(256)
 
         for func in functions:
             self.add_function(func)
 
     cpdef add_function(self, func):
+        cdef uint64 sentinel = 2
         """ Record line profiling information for the given Python function.
         """
         if hasattr(func, "__wrapped__"):
@@ -232,12 +251,13 @@ cdef class LineProfiler:
         # See if this can be sped up by not needing to iterate over every byte
         for offset, byte in enumerate(code.co_code):
             code_hash = compute_line_hash(hash((code.co_code)), PyCode_Addr2Line(<PyCodeObject*>code, offset))
-            if not self._c_code_map.count(code_hash):
+            if not <uint64>code_hash in self._c_code_map_set:
                 try:
                     self.code_hash_map[code].append(code_hash)
                 except KeyError:
                     self.code_hash_map[code] = [code_hash]
                 self._c_code_map[code_hash]
+                self._c_code_map_set.set(<uint64>code_hash, &sentinel)
 
         self.functions.append(func)
 
@@ -279,11 +299,11 @@ cdef class LineProfiler:
         """
         A Python view of the internal C lookup table.
         """
-        return <dict>self._c_code_map
+        return self.convert_pmap_line()
         
     @property
     def c_last_time(self):
-        return (<dict>self._c_last_time)[threading.get_ident()]
+        return self.convert_pmap_last()[self.get_ident()]
 
     @property
     def code_map(self):
@@ -312,7 +332,7 @@ cdef class LineProfiler:
         line_profiler 4.0 no longer directly maintains last_time, but this will
         construct something similar for backwards compatibility.
         """
-        c_last_time = (<dict>self._c_last_time)[threading.get_ident()]
+        c_last_time = self.convert_pmap_last()[self.get_ident()]
         code_hash_map = self.code_hash_map
         py_last_time = {}
         for code, code_hashes in code_hash_map.items():
@@ -323,7 +343,7 @@ cdef class LineProfiler:
 
 
     cpdef disable(self):
-        self._c_last_time[threading.get_ident()].clear()
+        self._c_last_time[self.get_ident()].clear()
         unset_trace()
 
     def get_stats(self):
@@ -333,7 +353,7 @@ cdef class LineProfiler:
         
         stats = {}
         for code in self.code_hash_map:
-            cmap = self._c_code_map
+            cmap = self.convert_pmap_line()
             entries = []
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
@@ -354,6 +374,44 @@ cdef class LineProfiler:
             entries = list({e[0]: e for e in entries}.values())
             stats[key] = entries
         return LineStats(stats, self.timer_unit)
+    
+    # We make two separate functions because fused templates are an even bigger mess without using python
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef dict convert_pmap_last(self_):
+        cdef LineProfiler self
+        cdef unordered_map[int64, unordered_map[int64, LastTime]] temp
+        cdef unordered_map[int64, LastTime] temp2
+        cdef pair[int64, flat_hash_map[int64, LastTime]] kv
+        cdef pair[int64, LastTime] kv2
+        
+        self = <LineProfiler>self_
+
+        for kv in self._c_last_time:
+            temp[kv.first]
+            for kv2 in kv.second:
+                temp2[kv2.first] = kv2.second
+                temp[kv.first] = temp2
+        return <dict>temp
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef dict convert_pmap_line(self_):
+        cdef LineProfiler self
+        cdef unordered_map[int64, unordered_map[int64, LineTime]] temp
+        cdef unordered_map[int64, LineTime] temp2
+        cdef pair[int64, flat_hash_map[int64, LineTime]] kv
+        cdef pair[int64, LineTime] kv2
+        
+        self = <LineProfiler>self_
+
+        for kv in self._c_code_map:
+            temp[kv.first]
+            for kv2 in kv.second:
+                temp2[kv2.first] = kv2.second
+                temp[kv.first] = temp2
+        return <dict>temp
+        
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -367,9 +425,14 @@ PyObject *arg):
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
-    cdef int64 code_hash
-    cdef int64 block_hash
-    cdef unordered_map[int64, LineTime] line_entries
+    cdef int64 code_hash, block_hash
+    cdef flat_hash_map[int64, LineTime] *line_entries
+    cdef flat_hash_map[int64, LastTime] *last_entries
+    cdef Py_tss_t tss_key
+    cdef int *temp
+    # empty key is 0 and deleted key is 1
+    cdef uint64 sentinel = 2, ident
+    cdef PreshMap time_map
 
     self = <LineProfiler>self_
 
@@ -377,26 +440,35 @@ PyObject *arg):
         # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
         block_hash = hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
-        if self._c_code_map.count(code_hash):
+        # we have to use reinterpret_cast because get returns void*
+        if reinterpret_cast[uint64](self._c_code_map_set.get(<uint64>code_hash)):
             time = hpTimer()
-            ident = threading.get_ident()
-            if self._c_last_time[ident].count(block_hash):
-                old = self._c_last_time[ident][block_hash]
-                line_entries = self._c_code_map[code_hash]
+            ident = reinterpret_cast[uint64](PyThread_tss_get(&tss_key))
+            if reinterpret_cast[uint64](self._c_thread_ids.get(ident)):
+                PyThread_tss_set(&tss_key, &ident)
+                self._c_thread_ids.set(ident, &sentinel)
+                # we have a new tss value -- redo ident
+                ident = reinterpret_cast[uint64](PyThread_tss_get(&tss_key))
+            last_entries = &self._c_last_time[ident]
+            # use [0] to get the value from the pointer
+            if last_entries[0].count(block_hash):
+                line_entries = &self._c_code_map[code_hash]
+                old = last_entries[0][block_hash]
                 key = old.f_lineno
-                if not line_entries.count(key):
-                    self._c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
-                self._c_code_map[code_hash][key].nhits += 1
-                self._c_code_map[code_hash][key].total_time += time - old.time
+                if not line_entries[0].count(key):
+                    line_entries[0][key] = LineTime(code_hash, key, 0, 0)
+                    self._c_code_map_set.set(<uint64>code_hash, &ident)
+                line_entries[0][key].nhits += 1
+                line_entries[0][key].total_time += time - old.time
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self._c_last_time[ident][block_hash] = LastTime(py_frame.f_lineno, hpTimer())
-            elif self._c_last_time[ident].count(block_hash):
+                last_entries[0][block_hash] = LastTime(py_frame.f_lineno, hpTimer())
+            elif last_entries[0].count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
+                last_entries[0].erase(last_entries[0].find(block_hash))
 
     return 0
 

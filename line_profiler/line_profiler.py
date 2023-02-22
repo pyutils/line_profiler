@@ -16,7 +16,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '4.0.2'
+__version__ = '4.1.0'
 
 
 def load_ipython_extension(ip):

@@ -13,7 +13,7 @@ from argparse import ArgumentError, ArgumentParser
 
 # NOTE: This version needs to be manually maintained with the line_profiler
 # __version__ for now.
-__version__ = '4.0.2'
+__version__ = '4.1.0'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.

@@ -1,6 +1,10 @@
 Changes
 =======
 
+4.1.0
+~~~~~
+* ENH: Lowered overhead from line_profiler code when profiling by 33-67% by using different data structures.
+
 4.0.2
 ~~~~~
 * FIX: AttributeError on certain methods. #191

@@ -11,9 +11,9 @@ def _choose_build_method():
     LINE_PROFILER_BUILD_METHOD = os.environ.get("LINE_PROFILER_BUILD_METHOD", "auto").lower()
 
     if DISABLE_C_EXTENSIONS in {"true", "on", "yes", "1"}:
-        LINE_PROFILER_BUILD_METHOD = 'setuptools'
+        LINE_PROFILER_BUILD_METHOD = "setuptools"
 
-    if LINE_PROFILER_BUILD_METHOD == 'auto':
+    if LINE_PROFILER_BUILD_METHOD == "auto":
         try:
             import Cython  # NOQA
         except ImportError:
@@ -23,13 +23,13 @@ def _choose_build_method():
                 import ninja  # NOQA
             except ImportError:
                 # The main fallback disables c-extensions
-                LINE_PROFILER_BUILD_METHOD = 'setuptools'
+                LINE_PROFILER_BUILD_METHOD = "setuptools"
             else:
                 # This should never be hit
-                LINE_PROFILER_BUILD_METHOD = 'scikit-build'
+                LINE_PROFILER_BUILD_METHOD = "scikit-build"
         else:
             # Use plain cython by default
-            LINE_PROFILER_BUILD_METHOD = 'cython'
+            LINE_PROFILER_BUILD_METHOD = "cython"
 
     return LINE_PROFILER_BUILD_METHOD
 
@@ -198,20 +198,21 @@ profile Python applications and scripts either with line_profiler or with the
 function-level profiling tools in the Python standard library.
 """
 
-VERSION = parse_version('line_profiler/line_profiler.py')
-NAME = 'line_profiler'
+VERSION = parse_version("line_profiler/line_profiler.py")
+NAME = "line_profiler"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     setupkw = {}
 
     LINE_PROFILER_BUILD_METHOD = _choose_build_method()
-    if LINE_PROFILER_BUILD_METHOD == 'setuptools':
+    if LINE_PROFILER_BUILD_METHOD == "setuptools":
         setup = setuptools.setup
-    elif LINE_PROFILER_BUILD_METHOD == 'scikit-build':
+    elif LINE_PROFILER_BUILD_METHOD == "scikit-build":
         import skbuild  # NOQA
+
         setup = skbuild.setup
-    elif LINE_PROFILER_BUILD_METHOD == 'cython':
+    elif LINE_PROFILER_BUILD_METHOD == "cython":
         # no need to try importing cython because an import
         # was already attempted in _choose_build_method
         import multiprocessing
@@ -219,69 +220,101 @@ if __name__ == '__main__':
         from Cython.Build import cythonize
 
         def run_cythonize(force=False):
+            DEFAULT_FLAGS = [
+                # just for testing
+                "-march='native'",
+                "-flto",
+                "-fno-semantic-interposition",
+                "-pipe",
+            ]
+
+            os.environ["CFLAGS"] = " ".join(DEFAULT_FLAGS)
+
             return cythonize(
-                Extension(
-                    name="line_profiler._line_profiler",
-                    sources=["line_profiler/_line_profiler.pyx", "line_profiler/timers.c", "line_profiler/unset_trace.c"],
-                    language="c++",
-                    define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
-                ),
-                compiler_directives={"language_level": 3, "infer_types": True, "linetrace": (True if os.getenv("DEV") == "true" else False)},
-                include_path=["line_profiler/python25.pxd"],
+                module_list=[
+                    Extension(
+                        name="line_profiler._line_profiler",
+                        sources=[
+                            "line_profiler/_line_profiler.pyx",
+                            "line_profiler/timers.c",
+                            "line_profiler/unset_trace.c",
+                        ],
+                        language="c++",
+                        define_macros=[
+                            ("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))
+                        ],
+                    ),
+                ],
+                compiler_directives={
+                    "language_level": 3,
+                    "infer_types": True,
+                    "linetrace": (True if os.getenv("DEV") == "true" else False),
+                },
+                include_path=[
+                    "line_profiler/python25.pxd",
+                    "line_profiler/",
+                    "/home/theel/.pyenv/versions/3.9.5/lib/python3.9/site-packages",
+                    "line_profiler/preshed/preshed/"
+                ],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),
+                annotate=True,
             )
 
         setupkw.update(dict(ext_modules=run_cythonize()))
         setup = setuptools.setup
     else:
-        raise Exception('Unknown build method')
+        raise Exception("Unknown build method")
 
     setupkw["install_requires"] = parse_requirements("requirements/runtime.txt")
     setupkw["extras_require"] = {
         "all": parse_requirements("requirements.txt"),
         "tests": parse_requirements("requirements/tests.txt"),
-        "ipython": parse_requirements('requirements/ipython.txt'),
-        'build': parse_requirements('requirements/build.txt'),
-        "runtime-strict": parse_requirements("requirements/runtime.txt", versions="strict"),
+        "ipython": parse_requirements("requirements/ipython.txt"),
+        "build": parse_requirements("requirements/build.txt"),
+        "runtime-strict": parse_requirements(
+            "requirements/runtime.txt", versions="strict"
+        ),
         "all-strict": parse_requirements("requirements.txt", versions="strict"),
         "tests-strict": parse_requirements("requirements/tests.txt", versions="strict"),
-        "ipython-strict": parse_requirements('requirements/ipython.txt', versions="strict"),
-        'build-strict': parse_requirements('requirements/build.txt', versions="strict"),
+        "ipython-strict": parse_requirements(
+            "requirements/ipython.txt", versions="strict"
+        ),
+        "build-strict": parse_requirements("requirements/build.txt", versions="strict"),
     }
-    setupkw['entry_points'] = {
-        'console_scripts': [
-            'kernprof=kernprof:main',
+    setupkw["entry_points"] = {
+        "console_scripts": [
+            "kernprof=kernprof:main",
         ],
     }
     setupkw["name"] = NAME
     setupkw["version"] = VERSION
     setupkw["author"] = "Robert Kern"
     setupkw["author_email"] = "robert.kern@enthought.com"
-    setupkw['url'] = 'https://github.com/pyutils/line_profiler'
+    setupkw["url"] = "https://github.com/pyutils/line_profiler"
     setupkw["description"] = "Line-by-line profiler"
     setupkw["long_description"] = long_description
     setupkw["long_description_content_type"] = "text/x-rst"
     setupkw["license"] = "BSD"
     setupkw["packages"] = list(setuptools.find_packages())
-    setupkw["py_modules"] = ['kernprof', 'line_profiler']
+    setupkw["py_modules"] = ["kernprof", "line_profiler"]
     setupkw["python_requires"] = ">=3.6"
-    setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
-    setupkw['keywords'] = ['timing', 'timer', 'profiling', 'profiler', 'line_profiler']
+    setupkw["license_files"] = ["LICENSE.txt", "LICENSE_Python.txt"]
+    setupkw["keywords"] = ["timing", "timer", "profiling", "profiler", "line_profiler"]
     setupkw["classifiers"] = [
-        'Development Status :: 5 - Production/Stable',
-        'Intended Audience :: Developers',
-        'License :: OSI Approved :: BSD License',
-        'Operating System :: OS Independent',
-        'Programming Language :: C',
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-        'Programming Language :: Python :: Implementation :: CPython',
-        'Topic :: Software Development',
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: OS Independent",
+        "Programming Language :: C",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: Implementation :: CPython",
+        "Topic :: Software Development",
     ]
     setup(**setupkw)

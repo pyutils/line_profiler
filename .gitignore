@@ -11,6 +11,15 @@
 *.a
 *.cpp
 
+# ignore benchmarking scripts
+*_benchmarks.py
+*.lprof
+profile*.svg
+# ignore annotated cython
+*.html
+# ignore pyenv
+.python-version
+
 build/
 dist/
 _skbuild
