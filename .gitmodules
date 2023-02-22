@@ -1,6 +1,3 @@
 [submodule "line_profiler/parallel_hashmap"]
 	path = line_profiler/parallel_hashmap
 	url = https://github.com/greg7mdp/parallel-hashmap.git
-[submodule "line_profiler/preshed"]
-	path = line_profiler/preshed
-	url = https://github.com/explosion/preshed.git
