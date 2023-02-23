@@ -231,6 +231,26 @@ if __name__ == "__main__":
             return cythonize(
                 module_list=[
                     Extension(
+                        name="cymem.cymem",
+                        sources=[
+                            "line_profiler/cymem/cymem/cymem.pyx",
+                        ],
+                        language="c++",
+                        define_macros=[
+                            ("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))
+                        ],
+                    ),
+                    Extension(
+                        name="preshed.maps",
+                        sources=[
+                            "line_profiler/preshed/preshed/maps.pyx",
+                        ],
+                        language="c++",
+                        define_macros=[
+                            ("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))
+                        ],
+                    ),
+                    Extension(
                         name="line_profiler._line_profiler",
                         sources=[
                             "line_profiler/_line_profiler.pyx",
@@ -252,6 +272,7 @@ if __name__ == "__main__":
                     "line_profiler/python25.pxd",
                     "line_profiler/",
                     "line_profiler/cymem/",
+                    "line_profiler/preshed/",
                 ],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),
