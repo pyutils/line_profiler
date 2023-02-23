@@ -1,7 +1,7 @@
 #cython: language_level=3
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from .phashmap cimport flat_hash_map, parallel_flat_hash_map, parallel_flat_hash_set
-from preshed.maps cimport PreshMap
+from .preshed.preshed.maps cimport PreshMap
 from sys import byteorder
 cimport cython
 from cpython.version cimport PY_VERSION_HEX
