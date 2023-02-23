@@ -251,6 +251,7 @@ if __name__ == "__main__":
                 include_path=[
                     "line_profiler/python25.pxd",
                     "line_profiler/",
+                    "line_profiler/cymem/",
                 ],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),

@@ -4,3 +4,6 @@
 [submodule "line_profiler/preshed"]
 	path = line_profiler/preshed
 	url = https://github.com/explosion/preshed.git
+[submodule "line_profiler/cymem"]
+	path = line_profiler/cymem
+	url = https://github.com/explosion/cymem.git
