@@ -4,6 +4,7 @@ from .phashmap cimport flat_hash_map, parallel_flat_hash_map, parallel_flat_hash
 from preshed.maps cimport PreshMap
 from sys import byteorder
 cimport cython
+from cpython.object cimport PyObject_Hash
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
@@ -438,7 +439,7 @@ PyObject *arg):
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
-        block_hash = hash(get_frame_code(py_frame))
+        block_hash = PyObject_Hash(get_frame_code(py_frame))
         code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
         # we have to use reinterpret_cast because get returns void*
         if reinterpret_cast[uint64](self._c_code_map_set.get(<uint64>code_hash)):
