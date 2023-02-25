@@ -10,6 +10,8 @@
 *.o
 *.a
 *.cpp
+!timers.cpp
+!unset_trace.cpp
 
 # ignore benchmarking scripts
 *_benchmarks.py

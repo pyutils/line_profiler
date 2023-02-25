@@ -229,9 +229,6 @@ if __name__ == "__main__":
                 "-fno-semantic-interposition",
                 # speeds up compilation at the expense of using more memory
                 "-pipe",
-                "-march='native'",
-                "-fopt-info-vec-optimized",
-                "-fopt-info-vec-missed",
             ]
 
             os.environ["CFLAGS"] = " ".join(DEFAULT_FLAGS)
@@ -264,8 +261,8 @@ if __name__ == "__main__":
                         name="line_profiler._line_profiler",
                         sources=[
                             "line_profiler/_line_profiler.pyx",
-                            "line_profiler/timers.c",
-                            "line_profiler/unset_trace.c",
+                            "line_profiler/timers.cpp",
+                            "line_profiler/unset_trace.cpp",
                         ],
                         language="c++",
                         define_macros=[
