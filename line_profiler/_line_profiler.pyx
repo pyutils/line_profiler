@@ -39,7 +39,7 @@ cdef extern from "frameobject.h":
         #endif
     }
     """
-    cdef object get_frame_code(PyFrameObject* frame)
+    cdef object get_frame_code(PyFrameObject* frame) noexcept
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
 cdef extern from "Python.h":
@@ -87,11 +87,11 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_RETURN
 
 cdef extern from "timers.c":
-    PY_LONG_LONG hpTimer()
-    double hpTimerUnit()
+    PY_LONG_LONG hpTimer() noexcept
+    double hpTimerUnit() noexcept
 
 cdef extern from "unset_trace.c":
-    void unset_trace()
+    void unset_trace() noexcept
 
 cdef struct LineTime:
     int64 code
@@ -103,7 +103,7 @@ cdef struct LastTime:
     int f_lineno
     PY_LONG_LONG time
 
-cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
+cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum) noexcept:
     """
     Compute the hash used to store each line timing in an unordered_map.
     This is fairly simple, and could use some improvement since linenum
@@ -258,6 +258,8 @@ cdef class LineProfiler:
                 except KeyError:
                     self.code_hash_map[code] = [code_hash]
                 self._c_code_map[code_hash]
+                # can hold 128 lines per function before rehashing
+                self._c_code_map[code_hash].reserve(128)
                 self._c_code_map_set.set(<uint64>code_hash, &sentinel)
 
         self.functions.append(func)
@@ -412,12 +414,12 @@ cdef class LineProfiler:
                 temp2[kv2.first] = kv2.second
                 temp[kv.first] = temp2
         return <dict>temp
-        
+
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
-PyObject *arg):
+PyObject *arg) noexcept:
     """ The PyEval_SetTrace() callback.
     """
     cdef LineProfiler self
@@ -433,7 +435,6 @@ PyObject *arg):
     cdef int *temp
     # empty key is 0 and deleted key is 1
     cdef uint64 sentinel = 2, ident
-    cdef PreshMap time_map
 
     self = <LineProfiler>self_
 
@@ -450,21 +451,30 @@ PyObject *arg):
                 self._c_thread_ids.set(ident, &sentinel)
                 # we have a new tss value -- redo ident
                 ident = reinterpret_cast[uint64](PyThread_tss_get(&tss_key))
-            last_entries = &self._c_last_time[ident]
+                # allocate space on the first time, to prevent excessive rehashing
+                self._c_last_time[ident].reserve(256)
+            last_entries = &(self._c_last_time[ident])
+            # tried replacing the remaining instances of map.count() with a preshed map
+            # but that made it slightly slower somehow
             # use [0] to get the value from the pointer
             if last_entries[0].count(block_hash):
+                # this block handles the case where a line has been seen before
                 line_entries = &self._c_code_map[code_hash]
                 old = last_entries[0][block_hash]
                 key = old.f_lineno
+                # count() has been profiled and is faster than .find() and a null pointer comparison
                 if not line_entries[0].count(key):
                     line_entries[0][key] = LineTime(code_hash, key, 0, 0)
                     self._c_code_map_set.set(<uint64>code_hash, &ident)
                 line_entries[0][key].nhits += 1
                 line_entries[0][key].total_time += time - old.time
             if what == PyTrace_LINE:
-                # Get the time again. This way, we don't record much time wasted
-                # in this function.
-                last_entries[0][block_hash] = LastTime(py_frame.f_lineno, hpTimer())
+                # Initialize the last_entries entry for each line
+                # This callback is now fast enough that calculating hpTimer() again
+                # would slow down the callback in the worst-case from 9x overhead to 12x
+                # and on average, 1.5x to 1.8x overhead. Luckily, there is no
+                # measureable timing inaccuracy from reusing the old time value
+                last_entries[0][block_hash] = LastTime(py_frame.f_lineno, time)
             elif last_entries[0].count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we

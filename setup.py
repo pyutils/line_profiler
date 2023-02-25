@@ -221,8 +221,13 @@ if __name__ == "__main__":
 
         def run_cythonize(force=False):
             DEFAULT_FLAGS = [
+                # LTO increases the build time by a bit
+                # but it results in decently faster code
                 "-flto",
+                # helps speed up stuff when including python
+                # by avoiding symbol collision
                 "-fno-semantic-interposition",
+                # speeds up compilation at the expense of using more memory
                 "-pipe",
             ]
 
@@ -266,6 +271,7 @@ if __name__ == "__main__":
                 compiler_directives={
                     "language_level": 3,
                     "infer_types": True,
+                    "legacy_implicit_noexcept": True,
                     "linetrace": (True if os.getenv("DEV") == "true" else False),
                 },
                 include_path=[

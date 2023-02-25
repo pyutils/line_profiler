@@ -54,6 +54,7 @@ cdef extern from "parallel_hashmap/parallel_hashmap/phmap.h" namespace "phmap" n
         iterator erase(iterator)
         iterator find(const T&)
         size_t count(const T&)
+        void reserve(size_t)
         
         size_t size()
         void swap() 
@@ -111,6 +112,7 @@ cdef extern from "parallel_hashmap/parallel_hashmap/phmap.h" namespace "phmap" n
         iterator erase(iterator)
         iterator find(const T&)
         size_t count(const T&)
+        void reserve(size_t)
         
         size_t size()
         void swap() 
@@ -167,6 +169,7 @@ cdef extern from "parallel_hashmap/parallel_hashmap/phmap.h" namespace "phmap" n
         iterator find(const T&)
         size_t count(const T&)
         pair[iterator, bint] insert(const T&) except +
+        void reserve(size_t)
         
         size_t size()
         void swap() 
