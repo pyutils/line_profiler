@@ -229,6 +229,9 @@ if __name__ == "__main__":
                 "-fno-semantic-interposition",
                 # speeds up compilation at the expense of using more memory
                 "-pipe",
+                "-march='native'",
+                "-fopt-info-vec-optimized",
+                "-fopt-info-vec-missed",
             ]
 
             os.environ["CFLAGS"] = " ".join(DEFAULT_FLAGS)

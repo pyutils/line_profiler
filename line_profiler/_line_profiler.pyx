@@ -86,11 +86,11 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_EXCEPTION
     cdef int PyTrace_C_RETURN
 
-cdef extern from "timers.c":
+cdef extern from "timers.cpp":
     PY_LONG_LONG hpTimer() noexcept
     double hpTimerUnit() noexcept
 
-cdef extern from "unset_trace.c":
+cdef extern from "unset_trace.cpp":
     void unset_trace() noexcept
 
 cdef struct LineTime:
