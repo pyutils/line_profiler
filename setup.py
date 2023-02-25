@@ -229,6 +229,8 @@ if __name__ == "__main__":
                 "-fno-semantic-interposition",
                 # speeds up compilation at the expense of using more memory
                 "-pipe",
+                # fixes old macos builds
+                "-std=c++11",
             ]
 
             os.environ["CFLAGS"] = " ".join(DEFAULT_FLAGS)
