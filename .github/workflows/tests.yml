@@ -37,7 +37,7 @@ jobs:
       run: |-
         python -m pip install mypy
         mypy --install-types --non-interactive --cache-dir=.mypy_cache/ --exclude ./line_profiler/parallel_hashmap/ ./line_profiler
-        mypy ./line_profiler
+        mypy --exclude ./line_profiler/parallel_hashmap/ ./line_profiler
   build_and_test_sdist:
     name: Test sdist Python 3.8
     runs-on: ubuntu-latest
@@ -108,7 +108,7 @@ jobs:
         os:
         - windows-latest
         - ubuntu-latest
-        - macOS-latest
+        #- macOS-latest
         cibw_skip:
         - '*-win32'
         arch:
