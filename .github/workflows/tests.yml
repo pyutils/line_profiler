@@ -36,7 +36,7 @@ jobs:
     - name: Typecheck with mypy
       run: |-
         python -m pip install mypy
-        mypy --install-types --non-interactive --cache-dir=.mypy_cache/ ./line_profiler
+        mypy --install-types --non-interactive --cache-dir=.mypy_cache/ --exclude --exclude ./line_profiler/parallel_hashmap/ ./line_profiler
         mypy ./line_profiler
   build_and_test_sdist:
     name: Test sdist Python 3.8
