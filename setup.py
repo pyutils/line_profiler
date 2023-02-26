@@ -233,7 +233,7 @@ if __name__ == "__main__":
 
             os.environ["CFLAGS"] = " ".join(DEFAULT_FLAGS)
             # fix old macos builds
-            os.environ["CXXFLAGS"] = "-std=c++11"
+            os.environ["CXXFLAGS"] = "-std=c++14"
 
             return cythonize(
                 module_list=[
