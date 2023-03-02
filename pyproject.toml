@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=41.0.1", "Cython>=3.0.0a11"]
+requires = ["setuptools>=41.0.1", "Cython==3.0.0a11"]
 build-backend = "setuptools.build_meta"  # comment out to disable pep517
 
 [tool.coverage.run]
