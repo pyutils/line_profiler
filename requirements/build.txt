@@ -1,5 +1,7 @@
 # Cython is the only hard requirement
-Cython>=3.0.0a11
+Cython==3.0.0a11             ; python_version < '4.0'  and python_version >= '3.12'    # Python 3.12+
+Cython>=0.29.24,<=3.0.0a11   ; python_version < '3.12'                                 # Python 3.6 - 3.11
+
 scikit-build>=0.11.1
 cmake>=3.21.2
 ninja>=1.10.2
