@@ -1,6 +1,10 @@
 Changes
 =======
 
+4.0.3
+~~~~
+* FIX: Stop requiring bleeding-edge Cython unless necesasry (for Python 3.12).  #206
+
 4.0.2
 ~~~~~
 * FIX: AttributeError on certain methods. #191
