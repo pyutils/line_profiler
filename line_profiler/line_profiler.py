@@ -212,13 +212,13 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
     Args:
         filename (str): path to the profiled file
-        start_lineno (int):
-        func_name (str):
-        timings (List[Tuple[int, int, float]])
-        unit (float)
-        output_unit (float | None)
+        start_lineno (int): first line number of profiled function
+        func_name (str): name of profiled function
+        timings (List[Tuple[int, int, float]]): measurements for each line
+        unit (float):
+        output_unit (float | None):
         stream (io.TextIO | None): defaults to sys.stdout
-        stripzeros (bool)
+        stripzeros (bool):
 
     Example:
         >>> from line_profiler.line_profiler import *  # NOQA
