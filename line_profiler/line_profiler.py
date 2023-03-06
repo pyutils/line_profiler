@@ -16,7 +16,8 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-__version__ = '4.0.3'
+# NOTE: This needs to be in sync with ../kernprof.py
+__version__ = '4.0.4'
 
 
 def load_ipython_extension(ip):
@@ -206,8 +207,41 @@ def is_ipython_kernel_cell(filename):
 
 def show_func(filename, start_lineno, func_name, timings, unit,
               output_unit=None, stream=None, stripzeros=False):
-    """ Show results for a single function.
     """
+    Show results for a single function.
+
+    Args:
+        filename (str): path to the profiled file
+        start_lineno (int): first line number of profiled function
+        func_name (str): name of profiled function
+        timings (List[Tuple[int, int, float]]): measurements for each line
+        unit (float):
+        output_unit (float | None):
+        stream (io.TextIO | None): defaults to sys.stdout
+        stripzeros (bool):
+
+    Example:
+        >>> from line_profiler.line_profiler import *  # NOQA
+        >>> import line_profiler
+        >>> # Use a function in this file as an example
+        >>> func = line_profiler.line_profiler.show_text
+        >>> start_lineno = func.__code__.co_firstlineno
+        >>> func_lines = list(func.__code__.co_lines())
+        >>> filename = func.__code__.co_filename
+        >>> func_name = func.__name__
+        >>> # Build fake timeings for each line in the example function
+        >>> timings = [
+        >>>     (line_tup[2], idx * 1e13, idx * 2e9)
+        >>>     for idx, line_tup in enumerate(func_lines, start=1)
+        >>> ]
+        >>> unit = 1.0
+        >>> output_unit = 1.0
+        >>> stream = None
+        >>> stripzeros = False
+        >>> show_func(filename, start_lineno, func_name, timings, unit,
+        >>>           output_unit, stream, stripzeros)
+    """
+    import math
     if stream is None:
         stream = sys.stdout
 
@@ -215,9 +249,29 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     d = {}
     total_time = 0.0
     linenos = []
+    max_hits = 0
+    max_time = 0
     for lineno, nhits, time in timings:
         total_time += time
+        max_hits = max(nhits, max_hits)
+        max_time = max(time, max_time)
         linenos.append(lineno)
+
+    # Define how large to make each column so text reasonably fits.
+    column_sizes = {
+        'line': 6,
+        'hits': 9,
+        'time': 12,
+        'perhit': 8,
+        'percent': 8,
+    }
+    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
+    hit_ndigits = int(math.log10(max(max_hits, 1))) + 3
+    time_ndigits = int(math.log10(max(max_time, 1))) + 3
+    column_sizes['hits'] = max(column_sizes['hits'], hit_ndigits)
+    column_sizes['time'] = max(column_sizes['time'], time_ndigits)
+    template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
+    template = template + '  %-s'
 
     if stripzeros and total_time == 0:
         return

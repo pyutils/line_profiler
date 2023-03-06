@@ -1,6 +1,10 @@
 Changes
 =======
 
+4.0.4
+~~~~
+* FIX: Show text now increases column sizes of hits / time to maintain alignment
+
 4.0.3
 ~~~~
 * FIX: Stop requiring bleeding-edge Cython unless necesasry (for Python 3.12).  #206

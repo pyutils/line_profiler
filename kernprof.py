@@ -11,9 +11,9 @@ import concurrent.futures  # NOQA
 import time
 from argparse import ArgumentError, ArgumentParser
 
-# NOTE: This version needs to be manually maintained with the line_profiler
-# __version__ for now.
-__version__ = '4.0.3'
+# NOTE: This version needs to be manually maintained in
+# line_profiler/line_profiler.py as well
+__version__ = '4.0.4'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.
