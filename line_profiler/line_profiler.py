@@ -228,7 +228,7 @@ def is_ipython_kernel_cell(filename):
 
 
 def show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit=None, stream=None, stripzeros=False, rich=False):
+              output_unit=None, stream=None, stripzeros=False, rich=False, ignore=None):
     """
     Show results for a single function.
 
@@ -259,6 +259,9 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         rich (bool):
             if True, attempt to use rich highlighting.
 
+        ignore (None | List[str]):
+            list of text used to ignore line timings containing said text
+
     Example:
         >>> from line_profiler.line_profiler import show_func
         >>> import line_profiler
@@ -285,6 +288,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     """
     if stream is None:
         stream = sys.stdout
+    if ignore is None: ignore = []
 
     total_time = sum(t[2] for t in timings)
     if stripzeros and total_time == 0:
@@ -325,6 +329,20 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         nlines = 1 if not linenos else max(linenos) - min(min(linenos), start_lineno) + 1
         sublines = [''] * nlines
 
+    if ignore:
+        total_time_real = total_time
+        timings_linenos = [x[0] for x in timings]
+        for idx, line in enumerate(sublines):
+            if any(txt in line for txt in ignore):
+                lineno = start_lineno + idx
+                if lineno in timings_linenos:
+                    index = timings_linenos.index(lineno)
+                    time_info = list(timings[index])
+                    time = time_info[2]
+                    total_time -= time
+                    time_info[2] = -time
+                    timings[index] = tuple(time_info)
+
     # Define minimum column sizes so text fits and usually looks consistent
     default_column_sizes = {
         'line': 6,
@@ -342,7 +360,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         if total_time == 0:  # Happens rarely on empty function
             percent = ''
         else:
-            percent = '%5.1f' % (100 * time / total_time)
+            percent = '%5.1f' % (100 * max(0,time) / total_time)
 
         time_disp = '%5.1f' % (time * scalar)
         if len(time_disp) > default_column_sizes['time']:
@@ -388,9 +406,13 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         rhs_lines = []
         for lineno, line in zip(linenos, sublines):
             nhits, time, per_hit, percent = display.get(lineno, empty)
+            if ignore and lineno == start_lineno:
+                percent = 100 * total_time/total_time_real
             txt = lhs_template % (lineno, nhits, time, per_hit, percent)
             rhs_lines.append(line.rstrip('\n').rstrip('\r'))
             lhs_lines.append(txt)
+        if ignore and total_time != total_time_real:
+            lhs_lines.append("total time (filtered): %g s / %g s \n" % (total_time * unit, total_time_real * unit))
 
         rhs_text = '\n'.join(rhs_lines)
         lhs_text = '\n'.join(lhs_lines)
@@ -426,10 +448,14 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     else:
         for lineno, line in zip(linenos, sublines):
             nhits, time, per_hit, percent = display.get(lineno, empty)
+            if ignore and lineno == start_lineno:
+                percent = 100 * total_time/total_time_real
             txt = template % (lineno, nhits, time, per_hit, percent,
                               line.rstrip('\n').rstrip('\r'))
             stream.write(txt)
             stream.write('\n')
+        if ignore and total_time != total_time_real:
+            stream.write("total time (filtered): %g s / %g s \n" % (total_time * unit, total_time_real * unit))
     stream.write('\n')
 
 
@@ -457,7 +483,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         for (fn, lineno, name), timings in stats_order:
             show_func(fn, lineno, name, stats[fn, lineno, name], unit,
                       output_unit=output_unit, stream=stream,
-                      stripzeros=stripzeros, rich=rich)
+                      stripzeros=stripzeros, rich=rich, ignore=ignore)
 
     if summarize:
         # Summarize the total time for each function
@@ -518,6 +544,13 @@ def main():
         action='store_true',
         help='Print a summary of total function time',
     )
+    parser.add_argument(
+        '-x',
+        '--ignore',
+        nargs='+',
+        default=[],
+        help="ignore lines containing this text, can specify multiple",
+    )
     parser.add_argument('profile_output', help='*.lprof file created by kernprof')
 
     args = parser.parse_args()
@@ -528,6 +561,7 @@ def main():
         rich=args.rich,
         sort=args.sort,
         summarize=args.summarize,
+        ignore=args.ignore,
     )
 
 
