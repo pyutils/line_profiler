@@ -339,23 +339,18 @@ cdef class LineProfiler:
                 entries += list(cmap[entry].values())
             key = label(code)
 
-            temp_entries = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
-            # If there are multiple entries for a line, this will sort them by increasing # hits
-            temp_entries.sort()
-            # If a line causes a branch, the stats for the True branch and False branch are separate.
-            # So we merge them here with 2 passes
-            branch_entries = {}
-            # Find the indicies of items with the same line number
-            for indx, entry in enumerate(temp_entries):
-                branch_entries[entry[0]] = branch_entries.setdefault(entry[0], []) + [indx]
-            entries = []
-            for entry in branch_entries:
-                if len(branch_entries[entry]) < 2:
-                    # The entry is unique
-                    entries.append(temp_entries[branch_entries[entry][0]])
-                    continue
-                # A bit of an abomination, but it basically merges nhits and total_time from the duplicate entries
-                entries.append(tuple((x[0] if not indx else sum(x)) for indx, x in enumerate(zip(*[temp_entries[i] for i in branch_entries[entry]]))))
+            # Merge duplicate line numbers, which occur for branch entrypoints like `if`
+            nhits_by_lineno = {}
+            total_time_by_lineno = {}
+
+            for line_dict in entries:
+                 _, lineno, total_time, nhits = line_dict.values()
+                 nhits_by_lineno[lineno] = nhits_by_lineno.setdefault(lineno, 0) + nhits
+                 total_time_by_lineno[lineno] = total_time_by_lineno.setdefault(lineno, 0) + total_time
+
+            entries = [(lineno, nhits, total_time_by_lineno[lineno]) for lineno, nhits in nhits_by_lineno.items()]
+            entries.sort()
+
             # NOTE: v4.x may produce more than one entry per line. For example:
             #   1:  for x in range(10):
             #   2:      pass
