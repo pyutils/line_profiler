@@ -339,8 +339,16 @@ cdef class LineProfiler:
                 entries += list(cmap[entry].values())
             key = label(code)
 
-            entries = [(e["lineno"], e["nhits"], e["total_time"]) for e in entries]
-            # If there are multiple entries for a line, this will sort them by increasing # hits
+            # Merge duplicate line numbers, which occur for branch entrypoints like `if`
+            nhits_by_lineno = {}
+            total_time_by_lineno = {}
+
+            for line_dict in entries:
+                 _, lineno, total_time, nhits = line_dict.values()
+                 nhits_by_lineno[lineno] = nhits_by_lineno.setdefault(lineno, 0) + nhits
+                 total_time_by_lineno[lineno] = total_time_by_lineno.setdefault(lineno, 0) + total_time
+
+            entries = [(lineno, nhits, total_time_by_lineno[lineno]) for lineno, nhits in nhits_by_lineno.items()]
             entries.sort()
 
             # NOTE: v4.x may produce more than one entry per line. For example:
