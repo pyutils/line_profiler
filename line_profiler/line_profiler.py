@@ -7,9 +7,11 @@ import tempfile
 import os
 import sys
 from argparse import ArgumentError, ArgumentParser
+from typing import List, Sequence
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
+    from ._line_profiler import LineStats
 except ImportError as ex:
     raise ImportError(
         'The line_profiler._line_profiler c-extension is not importable. '
@@ -342,12 +344,54 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
                   stripzeros=stripzeros)
 
 
-def load_stats(filename):
-    """ Utility function to load a pickled LineStats object from a given
-    filename.
+def load_stats(filename: List[str]) -> List[LineStats]:
+    """ Utility function to load a pickled LineStats object from given
+    filenames, which should be splitted by `,`.
     """
-    with open(filename, 'rb') as f:
-        return pickle.load(f)
+    filenames = [f for f in filenames.split(',') if len(f) > 0]
+    results = []
+    for filename in filenames:
+        with open(filename, 'rb') as f:
+            results.append(pickle.load(f))
+    return results
+
+
+def aggregate_stats(results: List[LineStats]) -> LineStats:
+    """Aggregate result. 
+    
+    Currently assuming time units are same.
+    """
+    merged_result = {}
+    for result in results:
+        for k in result.timings:
+            if k not in merged_result:
+                merged_result[k] = result.timings[k]
+            else:
+                merged_result[k] = _merge_timings(result.timings[k], merged_result[k])
+    return LineStats(merged_result, result.unit)
+
+
+def _merge_timings(value1: List[Sequence[int]], value2: List[Sequence[int]]) -> List [Sequence [int]]:
+    """Merge two result."""
+    new value = []
+    for v in value1:
+        for _v in value2:
+            if v[0] == _v[0]:
+                new_v = (v[0], v[1] + _v[1], v[2] + _v[2])
+                break
+        else:
+            new_v = v
+        new_value.append(new_v)
+
+    # some line may not in value1, therefore add it back
+    line_nums = [v[0] for v in new_value]
+    for v in value2:
+        if v[0]not in line_nums:
+            new_value.append(v)
+
+    # sort the result according to line number
+    new_value = sorted(new_value, key=lambda x: x[0])
+    return new_value
 
 
 def main():
@@ -376,6 +420,7 @@ def main():
 
     args = parser.parse_args()
     lstats = load_stats(args.profile_output)
+    lstats = aggregate_stats(lstats)
     show_text(lstats.timings, lstats.unit, output_unit=args.unit, stripzeros=args.skip_zero)
 
 
