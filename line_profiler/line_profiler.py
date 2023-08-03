@@ -142,11 +142,14 @@ class LineProfiler(CLineProfiler):
         with open(filename, 'wb') as f:
             pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
 
-    def print_stats(self, stream=None, output_unit=None, stripzeros=False):
+    def print_stats(self, stream=None, output_unit=None, stripzeros=False,
+                    summarize=False, sort=False):
         """ Show the gathered statistics.
         """
         lstats = self.get_stats()
-        show_text(lstats.timings, lstats.unit, output_unit=output_unit, stream=stream, stripzeros=stripzeros)
+        show_text(lstats.timings, lstats.unit, output_unit=output_unit,
+                  stream=stream, stripzeros=stripzeros,
+                  summarize=summarize, sort=sort)
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.
@@ -260,7 +263,6 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     if stream is None:
         stream = sys.stdout
 
-    linenos = [t[0] for t in timings]
     total_time = sum(t[2] for t in timings)
     if stripzeros and total_time == 0:
         return
@@ -268,6 +270,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     if output_unit is None:
         output_unit = unit
     scalar = unit / output_unit
+
+    linenos = [t[0] for t in timings]
 
     stream.write('Total time: %g s\n' % (total_time * unit))
     if os.path.exists(filename) or is_ipython_kernel_cell(filename):
@@ -355,7 +359,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     stream.write('\n')
 
 
-def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
+def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
+              summarize=False, sort=False):
     """ Show text for the given timings.
     """
     if stream is None:
@@ -366,10 +371,28 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False):
     else:
         stream.write('Timer unit: %g s\n\n' % unit)
 
-    for (fn, lineno, name), timings in sorted(stats.items()):
+    stats_order = sorted(stats.items())
+
+    if sort:
+        # Order by increasing duration
+        stats_order = sorted(stats_order, key=lambda kv: sum(t[2] for t in kv[1]))
+
+    for (fn, lineno, name), timings in stats_order:
         show_func(fn, lineno, name, stats[fn, lineno, name], unit,
                   output_unit=output_unit, stream=stream,
                   stripzeros=stripzeros)
+
+    if summarize:
+        # Summarize the total time for each function
+
+        summary_rows = []
+        for (fn, lineno, name), timings in stats_order:
+            total_time = sum(t[2] for t in timings) * unit
+            summary_rows.append((total_time, fn, lineno, name))
+
+        for total, fn, lineno, name in summary_rows:
+            line = '%6.2f seconds - %s:%s:%s\n' % (total, fn, lineno, name)
+            stream.write(line)
 
 
 def load_stats(filename):

@@ -10,53 +10,30 @@ profile = line_profiler.LineProfiler()
 
 @atexit.register
 def _show_profile_on_end():
-    profile.print_stats()
+    profile.print_stats(summarize=1, sort=1, stripzeros=1)
 
 
 @profile
 def fib(n):
     a, b = 0, 1
     while a < n:
-        print(a, end=' ')
         a, b = b, a + b
-    print()
-
-
-@profile
-def funcy_fib(n):
-    """
-    Alternatite fib function where code splits out over multiple lines
-    """
-    a, b = (
-        0, 1
-    )
-    while a < n:
-        print(
-            a, end=' ')
-        a, b = b, \
-                a + b
-    print(
-    )
 
 
 @profile
 def fib_only_called_by_thread(n):
     a, b = 0, 1
     while a < n:
-        print(a, end=' ')
         a, b = b, a + b
-    print()
 
 
 @profile
 def fib_only_called_by_process(n):
     a, b = 0, 1
     while a < n:
-        print(a, end=' ')
         a, b = b, a + b
     # FIXME: having two functions with the EXACT same code can cause issues
-    # a = 'no longer exactly the same'
-    print()
+    a = 'no longer exactly the same'
 
 
 @profile
@@ -66,12 +43,12 @@ def main():
     """
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--size', type=int, default=10)
+    parser.add_argument('--serial_size', type=int, default=10)
+    parser.add_argument('--thread_size', type=int, default=10)
+    parser.add_argument('--process_size', type=int, default=10)
     args = parser.parse_args()
 
-    size = args.size
-
-    for i in range(size):
+    for i in range(args.serial_size):
         fib(i)
         funcy_fib(
             i)
@@ -81,7 +58,7 @@ def main():
     executor = ThreadPoolExecutor(max_workers=4)
     with executor:
         jobs = []
-        for i in range(size):
+        for i in range(args.thread_size):
             job = executor.submit(fib, i)
             jobs.append(job)
 
@@ -98,7 +75,7 @@ def main():
     executor = ProcessPoolExecutor(max_workers=4)
     with executor:
         jobs = []
-        for i in range(size):
+        for i in range(args.process_size):
             job = executor.submit(fib, i)
             jobs.append(job)
 
@@ -112,10 +89,28 @@ def main():
             job.result()
 
 
+@profile
+def funcy_fib(n):
+    """
+    Alternatite fib function where code splits out over multiple lines
+    """
+    a, b = (
+        0, 1
+    )
+    while a < n:
+        # print(
+        #     a, end=' ')
+        a, b = b, \
+                a + b
+    # print(
+    # )
+
+
 if __name__ == '__main__':
     """
     CommandLine:
         cd ~/code/line_profiler/tests/
         python complex_example.py --size 10
+        python complex_example.py --serial_size 100000 --thread_size 0 --process_size 0
     """
     main()
