@@ -1,10 +1,11 @@
 Changes
 =======
 
-4.0.4
+4.1.0
 ~~~~
-* FIX: `show_text` now increases column sizes or switches to scientific notation to maintain alignment
-* ENH: `show_text` now has new options: sort and summarize
+* FIX: ``show_text`` now increases column sizes or switches to scientific notation to maintain alignment
+* ENH: ``show_text`` now has new options: sort and summarize
+* ENH: New global ``profile`` function that can be enabled by ``--profile`` or ``LINE_PROFILE=1``.
 
 4.0.3
 ~~~~

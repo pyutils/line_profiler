@@ -4,6 +4,7 @@ The line_profiler modula for doing line-by-line profiling of functions
 __submodules__ = [
     'line_profiler',
     'ipython_extension',
+    'explicit_profiler',
 ]
 
 __autogen__ = """
@@ -21,6 +22,9 @@ from .line_profiler import (LineProfiler,
                             load_ipython_extension, load_stats, main,
                             show_func, show_text,)
 
+from .explicit_profiler import (profile,)
+
+
 __all__ = ['LineProfiler', 'line_profiler',
            'load_ipython_extension', 'load_stats', 'main', 'show_func',
-           'show_text', '__version__']
+           'show_text', '__version__', 'profile']

@@ -17,7 +17,7 @@ except ImportError as ex:
     )
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
-__version__ = '4.0.4'
+__version__ = '4.1.0'
 
 
 def load_ipython_extension(ip):
@@ -391,7 +391,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
             summary_rows.append((total_time, fn, lineno, name))
 
         for total, fn, lineno, name in summary_rows:
-            line = '%6.2f seconds - %s:%s:%s\n' % (total, fn, lineno, name)
+            line = '%6.2f seconds - %s:%s - %s\n' % (total, fn, lineno, name)
             stream.write(line)
 
 
