@@ -1,7 +1,7 @@
 import unittest
-import io
 
 from IPython.testing.globalipapp import get_ipython
+
 
 class TestIPython(unittest.TestCase):
     def test_init(self):
