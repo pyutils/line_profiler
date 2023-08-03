@@ -298,13 +298,10 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     }
 
     ALLOW_SCIENTIFIC_NOTATION = 1
-    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
-    template = '%6s %9s %12s %8s %8s  %-s'
-
     display = {}
 
     # Loop over each line to determine better column formatting.
-    # Fallback to scientific notation if columns are larger.
+    # Fallback to scientific notation if columns are larger than a threshold.
     for lineno, nhits, time in timings:
         if total_time == 0:  # Happens rarely on empty function
             percent = ''
@@ -312,28 +309,31 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             percent = '%5.1f' % (100 * time / total_time)
 
         time_disp = '%5.1f' % (time * scalar)
-        if len(time_disp) > default_column_sizes['time'] and ALLOW_SCIENTIFIC_NOTATION:
+        if ALLOW_SCIENTIFIC_NOTATION and len(time_disp) > default_column_sizes['time']:
             time_disp = '%5.1g' % (time * scalar)
 
         perhit_disp = '%5.1f' % (float(time) * scalar / nhits)
-        if len(perhit_disp) > default_column_sizes['perhit'] and ALLOW_SCIENTIFIC_NOTATION:
+        if ALLOW_SCIENTIFIC_NOTATION and len(perhit_disp) > default_column_sizes['perhit']:
             perhit_disp = '%5.1g' % (float(time) * scalar / nhits)
 
         nhits_disp = "%d" % nhits
-        if len(nhits_disp) > default_column_sizes['hits'] and ALLOW_SCIENTIFIC_NOTATION:
+        if ALLOW_SCIENTIFIC_NOTATION and len(nhits_disp) > default_column_sizes['hits']:
             nhits_disp = '%g' % nhits
 
         display[lineno] = (nhits_disp, time_disp, perhit_disp, percent)
 
-    max_hitlen = max(len(t[0]) for t in display.values())
-    max_timelen = max(len(t[1]) for t in display.values())
-    max_perhitlen = max(len(t[2]) for t in display.values())
-
     # Expand column sizes if the numbers are large.
     column_sizes = default_column_sizes.copy()
-    column_sizes['hits'] = max(column_sizes['hits'], max_hitlen)
-    column_sizes['time'] = max(column_sizes['time'], max_timelen)
-    column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
+    if len(display):
+        max_hitlen = max(len(t[0]) for t in display.values())
+        max_timelen = max(len(t[1]) for t in display.values())
+        max_perhitlen = max(len(t[2]) for t in display.values())
+        column_sizes['hits'] = max(column_sizes['hits'], max_hitlen)
+        column_sizes['time'] = max(column_sizes['time'], max_timelen)
+        column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
+
+    # template = '%6s %9s %12s %8s %8s  %-s'
+    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
     template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
     template = template + '  %-s'
 
