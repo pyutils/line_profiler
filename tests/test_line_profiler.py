@@ -104,3 +104,50 @@ def test_classmethod_decorator():
     assert profile.enable_count == 0
     assert val == C.c('test')
     assert profile.enable_count == 0
+
+
+def test_show_func_column_formatting():
+    from line_profiler.line_profiler import show_func
+    import line_profiler
+    import io
+    # Use a function in this module as an example
+    func = line_profiler.line_profiler.show_text
+    start_lineno = func.__code__.co_firstlineno
+    filename = func.__code__.co_filename
+    func_name = func.__name__
+
+    def get_func_linenos(func):
+        import sys
+        if sys.version_info[0:2] >= (3, 10):
+            return sorted(set([t[2] for t in func.__code__.co_lines()]))
+        else:
+            import dis
+            return sorted(set([t[1] for t in dis.findlinestarts(func.__code__)]))
+    line_numbers = get_func_linenos(func)
+
+    unit = 1.0
+    output_unit = 1.0
+    stripzeros = False
+
+    # Build fake timeings for each line in the example function
+    timings = [
+        (lineno, idx * 1e13, idx * (2e10 ** (idx % 3)))
+        for idx, lineno in enumerate(line_numbers, start=1)
+    ]
+    stream = io.StringIO()
+    show_func(filename, start_lineno, func_name, timings, unit,
+              output_unit, stream, stripzeros)
+    text = stream.getvalue()
+    print(text)
+
+    timings = [
+        (lineno, idx * 1e15, idx * 2e19)
+        for idx, lineno in enumerate(line_numbers, start=1)
+    ]
+    stream = io.StringIO()
+    show_func(filename, start_lineno, func_name, timings, unit,
+              output_unit, stream, stripzeros)
+    text = stream.getvalue()
+    print(text)
+
+    # TODO: write a check to verify columns are aligned nicely
