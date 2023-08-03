@@ -12,6 +12,7 @@ def g(x):
     y = yield x + 10
     yield y + 20
 
+
 class C:
     @classmethod
     def c(self, value):
@@ -92,6 +93,7 @@ def test_gen_decorator():
     with pytest.raises(StopIteration):
         next(i)
     assert profile.enable_count == 0
+
 
 def test_classmethod_decorator():
     profile = LineProfiler()
