@@ -211,14 +211,28 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     Show results for a single function.
 
     Args:
-        filename (str): path to the profiled file
-        start_lineno (int): first line number of profiled function
+        filename (str):
+            path to the profiled file
+
+        start_lineno (int):
+            first line number of profiled function
+
         func_name (str): name of profiled function
-        timings (List[Tuple[int, int, float]]): measurements for each line
+
+        timings (List[Tuple[int, int, float]]):
+            measurements for each line (lineno, nhits, time).
+
         unit (float):
+            The number of seconds used as the cython LineProfiler's unit.
+
         output_unit (float | None):
-        stream (io.TextIO | None): defaults to sys.stdout
+            Output unit (in seconds) in which the timing info is displayed.
+
+        stream (io.TextIO | None):
+            defaults to sys.stdout
+
         stripzeros (bool):
+            if True, prints nothing if the function was not run
 
     Example:
         >>> from line_profiler.line_profiler import *  # NOQA
@@ -231,7 +245,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         >>> func_name = func.__name__
         >>> # Build fake timeings for each line in the example function
         >>> timings = [
-        >>>     (line_tup[2], idx * 1e13, idx * 2e9)
+        >>>     (line_tup[2], idx * 1e13, idx * (2e10 ** (idx % 3)))
         >>>     for idx, line_tup in enumerate(func_lines, start=1)
         >>> ]
         >>> unit = 1.0
@@ -241,38 +255,11 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         >>> show_func(filename, start_lineno, func_name, timings, unit,
         >>>           output_unit, stream, stripzeros)
     """
-    import math
     if stream is None:
         stream = sys.stdout
 
-    template = '%6s %9s %12s %8s %8s  %-s'
-    d = {}
-    total_time = 0.0
-    linenos = []
-    max_hits = 0
-    max_time = 0
-    for lineno, nhits, time in timings:
-        total_time += time
-        max_hits = max(nhits, max_hits)
-        max_time = max(time, max_time)
-        linenos.append(lineno)
-
-    # Define how large to make each column so text reasonably fits.
-    column_sizes = {
-        'line': 6,
-        'hits': 9,
-        'time': 12,
-        'perhit': 8,
-        'percent': 8,
-    }
-    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
-    hit_ndigits = int(math.log10(max(max_hits, 1))) + 3
-    time_ndigits = int(math.log10(max(max_time, 1))) + 3
-    column_sizes['hits'] = max(column_sizes['hits'], hit_ndigits)
-    column_sizes['time'] = max(column_sizes['time'], time_ndigits)
-    template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
-    template = template + '  %-s'
-
+    linenos = [t[0] for t in timings]
+    total_time = sum(t[2] for t in timings)
     if stripzeros and total_time == 0:
         return
 
@@ -298,15 +285,56 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         # Fake empty lines so we can see the timings, if not the code.
         nlines = 1 if not linenos else max(linenos) - min(min(linenos), start_lineno) + 1
         sublines = [''] * nlines
+
+    # Define minimum column sizes so text fits and usually looks consistent
+    default_column_sizes = {
+        'line': 6,
+        'hits': 9,
+        'time': 12,
+        'perhit': 8,
+        'percent': 8,
+    }
+
+    ALLOW_SCIENTIFIC_NOTATION = 0
+    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
+    template = '%6s %9s %12s %8s %8s  %-s'
+
+    display = {}
+
+    # Loop over each line to determine better column formatting.
+    # Fallback to scientific notation if columns are larger.
     for lineno, nhits, time in timings:
         if total_time == 0:  # Happens rarely on empty function
             percent = ''
         else:
             percent = '%5.1f' % (100 * time / total_time)
-        d[lineno] = (nhits,
-                     '%5.1f' % (time * scalar),
-                     '%5.1f' % (float(time) * scalar / nhits),
-                     percent)
+
+        time_disp = '%5.1f' % (time * scalar)
+        if len(time_disp) > default_column_sizes['time'] and ALLOW_SCIENTIFIC_NOTATION:
+            time_disp = '%5.1g' % (time * scalar)
+
+        perhit_disp = '%5.1f' % (float(time) * scalar / nhits)
+        if len(perhit_disp) > default_column_sizes['perhit'] and ALLOW_SCIENTIFIC_NOTATION:
+            perhit_disp = '%5.1g' % (float(time) * scalar / nhits)
+
+        nhits_disp = "%d" % nhits
+        if len(nhits_disp) > default_column_sizes['hits'] and ALLOW_SCIENTIFIC_NOTATION:
+            nhits_disp = '%g' % nhits
+
+        display[lineno] = (nhits_disp, time_disp, perhit_disp, percent)
+
+    max_hitlen = max(len(t[0]) for t in display.values())
+    max_timelen = max(len(t[1]) for t in display.values())
+    max_perhitlen = max(len(t[2]) for t in display.values())
+
+    # Expand column sizes if the numbers are large.
+    column_sizes = default_column_sizes.copy()
+    column_sizes['hits'] = max(column_sizes['hits'], max_hitlen)
+    column_sizes['time'] = max(column_sizes['time'], max_timelen)
+    column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
+    template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
+    template = template + '  %-s'
+
     linenos = range(start_lineno, start_lineno + len(sublines))
     empty = ('', '', '', '')
     header = template % ('Line #', 'Hits', 'Time', 'Per Hit', '% Time',
@@ -317,7 +345,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     stream.write('=' * len(header))
     stream.write('\n')
     for lineno, line in zip(linenos, sublines):
-        nhits, time, per_hit, percent = d.get(lineno, empty)
+        nhits, time, per_hit, percent = display.get(lineno, empty)
         txt = template % (lineno, nhits, time, per_hit, percent,
                           line.rstrip('\n').rstrip('\r'))
         stream.write(txt)
