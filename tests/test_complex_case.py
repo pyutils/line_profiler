@@ -50,8 +50,9 @@ def test_complex_example():
 
     complex_fpath = test_dpath / 'complex_example.py'
 
-    proc = subprocess.run([sys.executable, complex_fpath], capture_output=True,
-                          universal_newlines=True)
+    from subprocess import PIPE
+    proc = subprocess.run([sys.executable, complex_fpath], stdout=PIPE,
+                          stderr=PIPE, universal_newlines=True)
     print(proc.stdout)
     print(proc.stderr)
     print(proc.returncode)
