@@ -235,18 +235,20 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             if True, prints nothing if the function was not run
 
     Example:
-        >>> from line_profiler.line_profiler import *  # NOQA
+        >>> from line_profiler.line_profiler import show_func
         >>> import line_profiler
         >>> # Use a function in this file as an example
         >>> func = line_profiler.line_profiler.show_text
         >>> start_lineno = func.__code__.co_firstlineno
-        >>> func_lines = list(func.__code__.co_lines())
         >>> filename = func.__code__.co_filename
         >>> func_name = func.__name__
         >>> # Build fake timeings for each line in the example function
+        >>> import inspect
+        >>> num_lines = len(inspect.getsourcelines(func)[0])
+        >>> line_numbers = list(range(start_lineno + 3, start_lineno + num_lines))
         >>> timings = [
-        >>>     (line_tup[2], idx * 1e13, idx * (2e10 ** (idx % 3)))
-        >>>     for idx, line_tup in enumerate(func_lines, start=1)
+        >>>     (lineno, idx * 1e13, idx * (2e10 ** (idx % 3)))
+        >>>     for idx, lineno in enumerate(line_numbers, start=1)
         >>> ]
         >>> unit = 1.0
         >>> output_unit = 1.0
@@ -295,7 +297,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         'percent': 8,
     }
 
-    ALLOW_SCIENTIFIC_NOTATION = 0
+    ALLOW_SCIENTIFIC_NOTATION = 1
     col_order = ['line', 'hits', 'time', 'perhit', 'percent']
     template = '%6s %9s %12s %8s %8s  %-s'
 
