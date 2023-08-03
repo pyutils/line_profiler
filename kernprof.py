@@ -239,6 +239,8 @@ def main(args=None):
         import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
+        # Overwrite the explicit profile decorator
+        line_profiler.profile._kernprof_overwrite(prof)
     else:
         prof = ContextualProfile()
     if options.builtin:
