@@ -3,7 +3,8 @@ Changes
 
 4.0.4
 ~~~~
-* FIX: Show text now increases column sizes of hits / time to maintain alignment
+* FIX: `show_text` now increases column sizes or switches to scientific notation to maintain alignment
+* ENH: `show_text` now has new options: sort and summarize
 
 4.0.3
 ~~~~
