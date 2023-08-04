@@ -70,17 +70,16 @@ def create_poc(dry_run=False):
             ''')
         ub.writeto(modpaths['script'], script_text)
 
-    return root,repo,modpaths
+    return root, repo, modpaths
 
 
 def main():
-    root,repo,modpaths = create_poc(dry_run=False)
+    root, repo, modpaths = create_poc(dry_run=False)
 
     script_file = str(modpaths['script'])
 
     """separate from prof_mod, profile all imports in script"""
     profile_script_imports = False
-
 
     """modnames to profile"""
     modnames = [
@@ -106,10 +105,9 @@ def main():
         # str(modpaths['script']), # special case to profile all items
     ]
 
-    prof_mod = modnames+modpaths
+    prof_mod = modnames + modpaths
     # prof_mod = modpaths
     # prof_mod = modnames
-
 
     """mimick running using kernprof"""
     import sys
@@ -124,12 +122,10 @@ def main():
     builtins.__dict__['profile'] = prof
     ns = locals()
 
-
     autoprofile.run(script_file, ns, prof_mod=prof_mod)
 
-
     print('\nprofiled')
-    print('='*10)
+    print('=' * 10)
     prof.print_stats(output_unit=1e-6, stripzeros=True, stream=sys.stdout)
 
 if __name__ == '__main__':
