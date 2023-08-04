@@ -86,9 +86,9 @@ class NoOpProfiler:
 # requested the real one.
 # NOTE: kernprof may overwrite this global
 if IS_PROFILING:
-    profile = LineProfiler()
+    profile = LineProfiler()  # type: ignore
 else:
-    profile = NoOpProfiler()
+    profile = NoOpProfiler()  # type: ignore
 
 
 @atexit.register
