@@ -52,7 +52,7 @@ Here is a minimal example:
 
     echo "---"
     echo "## Option 1: Enable profiler with the command line"
-    python demo.py --profile
+    python demo.py --line-profile
 
     echo "---"
     echo "## Option 1: Enable profiler with an environment variable"
@@ -81,7 +81,10 @@ _FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
 
 IS_PROFILING: bool
 IS_PROFILING = os.environ.get('LINE_PROFILE', '').lower() not in _FALSY_STRINGS
-IS_PROFILING = IS_PROFILING or '--profile' in sys.argv
+IS_PROFILING = IS_PROFILING or ('--line-profile' in sys.argv) or ('--line_profile' in sys.argv)
+
+
+OUTPUT_PREFIX = 'profile_output'
 
 
 class NoOpProfiler:
@@ -117,6 +120,8 @@ def _show_profile_on_end():
     # if we are profiling, then dump out info at the end of the program
     if IS_PROFILING:
         import io
+        from datetime import datetime as datetime_cls
+        import pathlib
         stream = io.StringIO()
         profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1)
         text = stream.getvalue()
@@ -128,12 +133,14 @@ def _show_profile_on_end():
             rich_print = print
         rich_print(text)
 
-        from datetime import datetime as datetime_cls
-        import pathlib
         now = datetime_cls.now()
         timestamp = now.strftime('%Y-%m-%dT%H%M%S')
 
-        output_fpath1 = pathlib.Path('profile_output.txt')
-        output_fpath2 = pathlib.Path(f'profile_output_{timestamp}.txt')
-        output_fpath1.write_text(text)
-        output_fpath2.write_text(text)
+        lprof_output_fpath = pathlib.Path(f'{OUTPUT_PREFIX}.lprof')
+        txt_output_fpath1 = pathlib.Path(f'{OUTPUT_PREFIX}.txt')
+        txt_output_fpath2 = pathlib.Path(f'{OUTPUT_PREFIX}_{timestamp}.txt')
+
+        txt_output_fpath1.write_text(text)
+        txt_output_fpath2.write_text(text)
+        profile.dump_stats(lprof_output_fpath)
+        print('Wrote profile results to %s' % lprof_output_fpath)
