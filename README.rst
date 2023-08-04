@@ -4,10 +4,10 @@ line_profiler and kernprof
 |Pypi| |Downloads| |CircleCI| |GithubActions| |Codecov|
 
 
-NOTICE: This is the official `line_profiler` repository. The most recent
+NOTICE: This is the official ``line_profiler`` repository. The most recent
 version of `line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi
-points to this repo. The original 
-`line_profiler <https://github.com/rkern/line_profiler/>`_ package by  
+points to this repo. The original
+`line_profiler <https://github.com/rkern/line_profiler/>`_ package by
 `@rkern <https://github.com/rkern/>`_ is currently unmaintained. This fork
 seeks to simply maintain the original code so it continues to work in new
 versions of Python.
@@ -15,8 +15,8 @@ versions of Python.
 ----
 
 
-`line_profiler` is a module for doing line-by-line profiling of functions.
-kernprof is a convenient script for running either `line_profiler` or the Python
+``line_profiler`` is a module for doing line-by-line profiling of functions.
+kernprof is a convenient script for running either ``line_profiler`` or the Python
 standard library's cProfile or profile modules, depending on what is available.
 
 They are available under a `BSD license`_.
@@ -39,7 +39,7 @@ To profile a python script:
 Installation
 ============
 
-Releases of `line_profiler` can be installed using pip::
+Releases of ``line_profiler`` can be installed using pip::
 
     $ pip install line_profiler
 
@@ -58,17 +58,13 @@ In addition, git checkouts will also require Cython. Source releases
 on PyPI should contain the pregenerated C sources, so Cython should not be
 required in that case.
 
-`kernprof` is a single-file pure Python script and does not require
+``kernprof`` is a single-file pure Python script and does not require
 a compiler.  If you wish to use it to run cProfile and not line-by-line
-profiling, you may copy it to a directory on your `PATH` manually and avoid
+profiling, you may copy it to a directory on your ``PATH`` manually and avoid
 trying to build any C extensions.
 
 As of 2021-06-04 Linux (x86_64 and i686), OSX (10_9_x86_64), and Win32 (win32,
 and amd64) binaries are available on pypi.
-
-Alternatively on windows you might consider using Christoph Gohlke's
-unofficial line-profiler 
-`precompiled win32 wheels <https://www.lfd.uci.edu/~gohlke/pythonlibs/#line_profiler>`_.
 
 The last version of line profiler to support Python 2.7 was 3.1.0 and the last
 version to support Python 3.5 was 3.3.1.
@@ -104,12 +100,12 @@ of each individual line inside those functions. In a typical workflow, one only
 cares about line timings of a few functions because wading through the results
 of timing every single line of code would be overwhelming. However, LineProfiler
 does need to be explicitly told what functions to profile. The easiest way to
-get started is to use the `kernprof` script. ::
+get started is to use the ``kernprof`` script. ::
 
     $ kernprof -l script_to_profile.py
 
-`kernprof` will create an instance of LineProfiler and insert it into the
-`__builtins__` namespace with the name `profile`. It has been written to be
+``kernprof`` will create an instance of LineProfiler and insert it into the
+``__builtins__`` namespace with the name ``profile``. It has been written to be
 used as a decorator, so in your script, you decorate the functions you want
 to profile with @profile. ::
 
@@ -117,8 +113,8 @@ to profile with @profile. ::
     def slow_function(a, b, c):
         ...
 
-The default behavior of `kernprof` is to put the results into a binary file
-script_to_profile.py.lprof . You can tell `kernprof` to immediately view the
+The default behavior of ``kernprof`` is to put the results into a binary file
+script_to_profile.py.lprof . You can tell ``kernprof`` to immediately view the
 formatted results at the terminal with the [-v/--view] option. Otherwise, you
 can view the results later like so::
 
@@ -126,7 +122,7 @@ can view the results later like so::
 
 For example, here are the results of profiling a single function from
 a decorated version of the pystone.py benchmark (the first two lines are output
-from `pystone.py`, not `kernprof`)::
+from ``pystone.py``, not ``kernprof``)::
 
     Pystone(1.1) time for 50000 passes = 2.48
     This machine benchmarks at 20161.3 pystones/second
@@ -182,7 +178,7 @@ will also add its LineProfiler instance into the __builtins__, but typically,
 you would not use it like that.
 
 For IPython 0.11+, you can install it by editing the IPython configuration file
-`~/.ipython/profile_default/ipython_config.py` to add the `'line_profiler'`
+``~/.ipython/profile_default/ipython_config.py`` to add the ``'line_profiler'``
 item to the extensions list::
 
     c.TerminalIPythonApp.extensions = [
@@ -198,22 +194,22 @@ These two methods are expected to be the most frequent user-level ways of using
 LineProfiler and will usually be the easiest. However, if you are building other
 tools with LineProfiler, you will need to use the API. There are two ways to
 inform LineProfiler of functions to profile: you can pass them as arguments to
-the constructor or use the `add_function(f)` method after instantiation. ::
+the constructor or use the ``add_function(f)`` method after instantiation. ::
 
     profile = LineProfiler(f, g)
     profile.add_function(h)
 
-LineProfiler has the same `run()`, `runctx()`, and `runcall()` methods as
-cProfile.Profile as well as `enable()` and `disable()`. It should be noted,
-though, that `enable()` and `disable()` are not entirely safe when nested.
+LineProfiler has the same ``run()``, ``runctx()``, and ``runcall()`` methods as
+cProfile.Profile as well as ``enable()`` and ``disable()``. It should be noted,
+though, that ``enable()`` and ``disable()`` are not entirely safe when nested.
 Nesting is common when using LineProfiler as a decorator. In order to support
-nesting, use `enable_by_count()` and `disable_by_count()`. These functions will
+nesting, use ``enable_by_count()`` and ``disable_by_count()``. These functions will
 increment and decrement a counter and only actually enable or disable the
 profiler when the count transitions from or to 0.
 
-After profiling, the `dump_stats(filename)` method will pickle the results out
-to the given file. `print_stats([stream])` will print the formatted results to
-sys.stdout or whatever stream you specify. `get_stats()` will return LineStats
+After profiling, the ``dump_stats(filename)`` method will pickle the results out
+to the given file. ``print_stats([stream])`` will print the formatted results to
+sys.stdout or whatever stream you specify. ``get_stats()`` will return LineStats
 object, which just holds two attributes: a dictionary containing the results and
 the timer unit.
 
@@ -221,7 +217,7 @@ the timer unit.
 kernprof
 ========
 
-`kernprof` also works with cProfile, its third-party incarnation lsprof, or the
+``kernprof`` also works with cProfile, its third-party incarnation lsprof, or the
 pure-Python profile module depending on what is available. It has a few main
 features:
 
@@ -244,7 +240,7 @@ features:
       profile a small part of your code. With the [-b/--builtin] argument, the
       Profiler will be instantiated and inserted into your __builtins__ with the
       name "profile". Like LineProfiler, it may be used as a decorator, or
-      enabled/disabled with `enable_by_count()` and `disable_by_count()`, or
+      enabled/disabled with ``enable_by_count()`` and ``disable_by_count()``, or
       even as a context manager with the "with profile:" statement.
 
     * Pre-profiling setup. With the [-s/--setup] option, you can provide
@@ -267,9 +263,9 @@ built on ``cProfile`` or ``line_profiler`` are as follows:
 
 * `pyprof2calltree <pyprof2calltree_>`_: converts profiling data to a format
   that can be visualized using kcachegrind_ (linux only), wincachegrind_
-  (windows only, unmaintained), or  qcachegrind_. 
+  (windows only, unmaintained), or  qcachegrind_.
 
-* `Line Profiler GUI <qt_profiler_gui_>`_: Qt GUI for line_profiler. 
+* `Line Profiler GUI <qt_profiler_gui_>`_: Qt GUI for line_profiler.
 
 * `SnakeViz <SnakeViz_>`_: A web viewer for Python profiling data.
 
@@ -368,29 +364,25 @@ Frequently Asked Questions
     projects for modules as small as these. However, kernprof.py is
     a standalone, pure Python script that can be used to do function profiling
     with just the Python standard library. You may grab it and install it by
-    itself without `line_profiler`.
+    itself without ``line_profiler``.
 
-* Do I need a C compiler to build `line_profiler`? kernprof.py?
+* Do I need a C compiler to build ``line_profiler``? kernprof.py?
 
     You do need a C compiler for line_profiler. kernprof.py is a pure Python
     script and can be installed separately, though.
 
-* Do I need Cython to build `line_profiler`?
+* Do I need Cython to build ``line_profiler``?
 
-    You should not have to if you are building from a released source tarball.
-    It should contain the generated C sources already. If you are running into
-    problems, that may be a bug; let me know. If you are building from
-    a git checkout or snapshot, you will need Cython to generate the
-    C sources.
-
-    As of version ``3.0.0`` manylinux wheels containing the binaries are
-    available on pypi. Work is still needed to publish osx and win32 wheels.
-    (PRs for this would be helpful!)
+    Wheels for supported versions of Python are available on PyPI and support
+    linux, osx, and windows for x86-64 architectures. Linux additionally ships
+    with i686 wheels for manylinux and musllinux. If you have a different CPU
+    architecture, or an unsupported Python version, then you will need to build
+    from source.
 
 * What version of Python do I need?
 
-    Both `line_profiler` and `kernprof` have been tested with Python 3.5-3.9.
-    Older versions of `line_profiler` support older versions of Python.
+    Both ``line_profiler`` and ``kernprof`` have been tested with Python 3.6-3.11.
+    Older versions of ``line_profiler`` support older versions of Python.
 
 
 To Do
