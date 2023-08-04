@@ -86,7 +86,7 @@ IS_PROFILING = IS_PROFILING or '--profile' in sys.argv
 
 class NoOpProfiler:
     """
-    A profiler that does nothing.
+    A LineProfiler-like API that does nothing.
     """
 
     def __call__(self, func):
