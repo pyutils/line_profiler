@@ -120,3 +120,28 @@ def test_explicit_profile_with_cmdline():
     assert (temp_dpath / 'profile_output.txt').exists()
     assert (temp_dpath / 'profile_output.lprof').exists()
     shutil.rmtree(temp_dpath)
+
+
+def test_explicit_profile_with_kernprof():
+    """
+    Test that explicit profiling works when using kernprof. In this case
+    we should get as many output files.
+    """
+    temp_dpath = pathlib.Path(tempfile.mkdtemp())
+
+    with contextlib.chdir(temp_dpath):
+
+        script_fpath = pathlib.Path('script.py')
+        script_fpath.write_text(_demo_explicit_profile_script())
+
+        args = [sys.executable, '-m', 'kernprof', '-l', os.fspath(script_fpath)]
+        print(f'args={args}')
+        proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
+                              universal_newlines=True)
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+
+    assert not (temp_dpath / 'profile_output.txt').exists()
+    assert (temp_dpath / 'script.py.lprof').exists()
+    shutil.rmtree(temp_dpath)
