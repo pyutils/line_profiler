@@ -198,8 +198,10 @@ profile Python applications and scripts either with line_profiler or with the
 function-level profiling tools in the Python standard library.
 """
 
-VERSION = parse_version('line_profiler/line_profiler.py')
-NAME = 'line_profiler'
+
+NAME = "line_profiler"
+INIT_PATH = "line_profiler/line_profiler.py"
+VERSION = parse_version(INIT_PATH)
 
 
 if __name__ == '__main__':
@@ -237,17 +239,21 @@ if __name__ == '__main__':
     else:
         raise Exception('Unknown build method')
 
-    setupkw["install_requires"] = parse_requirements("requirements/runtime.txt")
+    setupkw["install_requires"] = parse_requirements(
+        "requirements/runtime.txt", versions="loose"
+    )
     setupkw["extras_require"] = {
-        "all": parse_requirements("requirements.txt"),
-        "tests": parse_requirements("requirements/tests.txt"),
-        "ipython": parse_requirements('requirements/ipython.txt'),
-        'build': parse_requirements('requirements/build.txt'),
-        "runtime-strict": parse_requirements("requirements/runtime.txt", versions="strict"),
+        "all": parse_requirements("requirements.txt", versions="loose"),
+        "tests": parse_requirements("requirements/tests.txt", versions="loose"),
+        "optional": parse_requirements("requirements/optional.txt", versions="loose"),
         "all-strict": parse_requirements("requirements.txt", versions="strict"),
+        "runtime-strict": parse_requirements(
+            "requirements/runtime.txt", versions="strict"
+        ),
         "tests-strict": parse_requirements("requirements/tests.txt", versions="strict"),
-        "ipython-strict": parse_requirements('requirements/ipython.txt', versions="strict"),
-        'build-strict': parse_requirements('requirements/build.txt', versions="strict"),
+        "optional-strict": parse_requirements(
+            "requirements/optional.txt", versions="strict"
+        ),
     }
     setupkw['entry_points'] = {
         'console_scripts': [
@@ -258,9 +264,9 @@ if __name__ == '__main__':
     setupkw["version"] = VERSION
     setupkw["author"] = "Robert Kern"
     setupkw["author_email"] = "robert.kern@enthought.com"
-    setupkw['url'] = 'https://github.com/pyutils/line_profiler'
+    setupkw["url"] = "https://github.com/pyutils/line_profiler"
     setupkw["description"] = "Line-by-line profiler"
-    setupkw["long_description"] = long_description
+    setupkw["long_description"] = parse_description()
     setupkw["long_description_content_type"] = "text/x-rst"
     setupkw["license"] = "BSD"
     setupkw["packages"] = list(setuptools.find_packages())
