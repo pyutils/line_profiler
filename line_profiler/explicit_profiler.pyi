@@ -1,15 +1,23 @@
-from _typeshed import Incomplete
+from typing import Callable
 
-IS_PROFILING: Incomplete
+# Note: xdev docstubs outputs incorrect code.
+# For now just manually fix the resulting pyi file to shift these lines down
+# and remove the extra incomplete profile type declaration
+
+from .line_profiler import LineProfiler
+from typing import Union
+
+__docstubs__: str
+IS_PROFILING: bool
 
 
 class NoOpProfiler:
 
-    def __call__(self, func):
+    def __call__(self, func: Callable) -> Callable:
         ...
 
     def print_stats(self) -> None:
         ...
 
 
-profile: Incomplete
+profile: Union[NoOpProfiler, LineProfiler]

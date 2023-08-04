@@ -65,7 +65,21 @@ import os
 import atexit
 
 
+# For pyi autogeneration
+__docstubs__ = """
+# Note: xdev docstubs outputs incorrect code.
+# For now just manually fix the resulting pyi file to shift these lines down
+# and remove the extra incomplete profile type declaration
+
+from .line_profiler import LineProfiler
+from typing import Union
+profile: Union[NoOpProfiler, LineProfiler]
+"""
+
+
 _FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
+
+IS_PROFILING: bool
 IS_PROFILING = os.environ.get('LINE_PROFILE', '').lower() not in _FALSY_STRINGS
 IS_PROFILING = IS_PROFILING or '--profile' in sys.argv
 
@@ -76,6 +90,13 @@ class NoOpProfiler:
     """
 
     def __call__(self, func):
+        """
+        Args:
+            func (Callable): function to decorate
+
+        Returns:
+            Callable: returns the input
+        """
         return func
 
     def print_stats(self):
