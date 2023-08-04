@@ -34,10 +34,10 @@ class AstTreeProfiler:
         return tree
 
     def _profile_ast_tree(self,
-                         tree,
-                         tree_names_to_profile_dict,
-                         profile_script=False,
-                         profile_script_imports=False):
+                          tree,
+                          tree_names_to_profile_dict,
+                          profile_script=False,
+                          profile_script_imports=False):
         profiled_imports = []
         argsort_tree_indexes = sorted(list(tree_names_to_profile_dict), reverse=True)
         for tree_index in argsort_tree_indexes:
@@ -59,7 +59,7 @@ class AstTreeProfiler:
         tree_names_to_profile_dict = self.profmod_extractor_class_handler(
             tree, self.script_file, self.prof_mod).run()
         tree_profiled = self._profile_ast_tree(tree,
-                                              tree_names_to_profile_dict,
-                                              profile_script=profile_script,
-                                              profile_script_imports=self.profile_imports)
+                                               tree_names_to_profile_dict,
+                                               profile_script=profile_script,
+                                               profile_script_imports=self.profile_imports)
         return tree_profiled

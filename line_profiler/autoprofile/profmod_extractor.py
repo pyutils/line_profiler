@@ -1,8 +1,7 @@
 import sys
 import os
 import ast
-
-from line_profiler.autoprofile.util_import import modname_to_modpath, modpath_to_modname, package_modpaths
+from line_profiler.autoprofile.util_static import modname_to_modpath, modpath_to_modname, package_modpaths
 
 
 class ProfmodExtractor:
