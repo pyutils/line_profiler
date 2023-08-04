@@ -273,6 +273,7 @@ if __name__ == '__main__':
     setupkw["py_modules"] = ['kernprof', 'line_profiler']
     setupkw["python_requires"] = ">=3.6"
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
+    setupkw["package_data"] = {"line_profiler": ["py.typed", "*.pyi"]}
     setupkw['keywords'] = ['timing', 'timer', 'profiling', 'profiler', 'line_profiler']
     setupkw["classifiers"] = [
         'Development Status :: 5 - Production/Stable',
