@@ -51,6 +51,8 @@ def test_explicit_profile_with_environ_on():
     enviornment variable.
     """
     temp_dpath = pathlib.Path(tempfile.mkdtemp())
+    env = os.environ.copy()
+    env['LINE_PROFILE'] = '1'
 
     with ChDir(temp_dpath):
 
@@ -59,7 +61,7 @@ def test_explicit_profile_with_environ_on():
 
         args = [sys.executable, os.fspath(script_fpath)]
         proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              env={'LINE_PROFILE': '1'},
+                              env=env,
                               universal_newlines=True)
         print(proc.stdout)
         print(proc.stderr)
@@ -75,6 +77,8 @@ def test_explicit_profile_with_environ_off():
     When LINE_PROFILE is falsy, profiling should not run.
     """
     temp_dpath = pathlib.Path(tempfile.mkdtemp())
+    env = os.environ.copy()
+    env['LINE_PROFILE'] = '0'
 
     with ChDir(temp_dpath):
 
@@ -83,7 +87,7 @@ def test_explicit_profile_with_environ_off():
 
         args = [sys.executable, os.fspath(script_fpath)]
         proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              env={'LINE_PROFILE': '0'},
+                              env=env,
                               universal_newlines=True)
         print(proc.stdout)
         print(proc.stderr)
