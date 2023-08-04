@@ -16,7 +16,7 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 
-# NOTE: This needs to be in sync with ../kernprof.py
+# NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.0.4'
 
 
@@ -231,7 +231,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         output_unit (float | None):
             Output unit (in seconds) in which the timing info is displayed.
 
-        stream (io.TextIO | None):
+        stream (io.TextIOBase | None):
             defaults to sys.stdout
 
         stripzeros (bool):

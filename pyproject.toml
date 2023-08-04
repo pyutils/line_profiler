@@ -54,6 +54,7 @@ description = "Line-by-line profiler"
 url = "https://github.com/pyutils/line_profiler"
 license = "BSD"
 dev_status = "stable"
+typed = true
 
 [tool.pytest.ini_options]
 addopts = "--ignore-glob=setup.py --ignore-glob=dev"

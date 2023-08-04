@@ -1,8 +1,4 @@
 #!/usr/bin/env python
-"""
-A wrapper around pytest that attempts to ensure correct arguments are passed to
-it both when running locally and through cibuildhweel.
-"""
 from os.path import dirname, join, abspath
 import sqlite3
 import sys

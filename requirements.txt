@@ -1,4 +1,4 @@
 -r requirements/runtime.txt
 -r requirements/tests.txt
--r requirements/ipython.txt
+-r requirements/optional.txt
 -r requirements/build.txt
