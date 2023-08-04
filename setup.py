@@ -254,6 +254,8 @@ if __name__ == '__main__':
         "optional-strict": parse_requirements(
             "requirements/optional.txt", versions="strict"
         ),
+        "ipython": parse_requirements('requirements/ipython.txt', versions="loose"),
+        "ipython-strict": parse_requirements('requirements/ipython.txt', versions="strict"),
     }
     setupkw['entry_points'] = {
         'console_scripts': [
