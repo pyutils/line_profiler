@@ -1,23 +1,30 @@
 from typing import Callable
-
-# Note: xdev docstubs outputs incorrect code.
-# For now just manually fix the resulting pyi file to shift these lines down
-# and remove the extra incomplete profile type declaration
-
-from .line_profiler import LineProfiler
-from typing import Union
-
-__docstubs__: str
-IS_PROFILING: bool
+from _typeshed import Incomplete
 
 
-class NoOpProfiler:
+class GlobalProfiler:
+    output_prefix: str
+    environ_flag: str
+    cli_flags: Incomplete
+    enabled: Incomplete
+
+    def __init__(self) -> None:
+        ...
+
+    def implicit_setup(self) -> None:
+        ...
+
+    def enable(self, output_prefix: Incomplete | None = ...) -> None:
+        ...
+
+    def disable(self) -> None:
+        ...
 
     def __call__(self, func: Callable) -> Callable:
         ...
 
-    def print_stats(self) -> None:
+    def show(self) -> None:
         ...
 
 
-profile: Union[NoOpProfiler, LineProfiler]
+profile: Incomplete

@@ -135,40 +135,19 @@ import atexit
 
 
 # For pyi autogeneration
-__docstubs__ = """
-# Note: xdev docstubs outputs incorrect code.
-# For now just manually fix the resulting pyi file to shift these lines down
-# and remove the extra incomplete profile type declaration
+# xdev docstubs line_profiler
+# __docstubs__ = """
+# # Note: xdev docstubs outputs incorrect code.
+# # For now just manually fix the resulting pyi file to shift these lines down
+# # and remove the extra incomplete profile type declaration
 
-from .line_profiler import LineProfiler
-from typing import Union
-profile: Union[NoOpProfiler, LineProfiler]
-"""
+# from .line_profiler import LineProfiler
+# from typing import Union
+# profile: Union[NoOpProfiler, LineProfiler]
+# """
 
 
 _FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
-
-
-class NoOpProfiler:
-    """
-    A LineProfiler-like API that does nothing.
-    """
-
-    def __call__(self, func):
-        """
-        Args:
-            func (Callable): function to decorate
-
-        Returns:
-            Callable: returns the input
-        """
-        return func
-
-    def print_stats(self, *args, **kwargs):
-        print('Profiling was not enabled')
-
-    def dump_stats(self, *args, **kwargs):
-        print('Profiling was not enabled')
 
 
 class GlobalProfiler:
@@ -180,20 +159,14 @@ class GlobalProfiler:
         self.output_prefix = 'profile_output'
         self.environ_flag = 'LINE_PROFILE'
         self.cli_flags = ['--line-profile', '--line_profile']
-
-        # Holds the object the user will get when they access
-        # the profile attribute. Could be a real profiler or a noop profiler.
         self._profile = None
+        self.enabled = None
 
-        # The real profile can only be None or a real LineProfiler object
-        # We keep it here in case _profile is disabled and then re-enabled
-        self._real_profile = None
-
-    def kernprof_overwrite(self, profile):
+    def _kernprof_overwrite(self, profile):
         """
-        Allows kernprof to overwrite our profile object with its own.
+        Kernprof will call this when it runs, so we can use its profile object
+        instead of our own.
         """
-        self._real_profile = profile
         self._profile = profile
 
     def implicit_setup(self):
@@ -213,14 +186,14 @@ class GlobalProfiler:
         """
         Explicitly enables global profiler and controls its settings.
         """
-        if self._real_profile is None:
+        if self._profile is None:
             # Try to only ever create one real LineProfiler object
             atexit.register(self.show)
-            self._real_profile = LineProfiler()  # type: ignore
+            self._profile = LineProfiler()  # type: ignore
 
         # The user can call this function more than once to update the final
         # reporting or to re-enable the profiler after it a disable.
-        self._profile = self._real_profile
+        self.enabled = True
 
         if output_prefix is not None:
             self.output_prefix = output_prefix
@@ -229,7 +202,7 @@ class GlobalProfiler:
         """
         Explicitly initialize a disabled global profiler.
         """
-        self._profile = NoOpProfiler()  # type: ignore
+        self.enabled = False
 
     def __call__(self, func):
         """
@@ -243,9 +216,11 @@ class GlobalProfiler:
         Returns:
             Callable: a potentially wrapped function
         """
-        if self._profile is None:
+        if self.enabled is None:
             # Force a setup if we haven't done it before.
             self.implicit_setup()
+        if not self.enabled:
+            return func
         return self._profile(func)
 
     def show(self):
