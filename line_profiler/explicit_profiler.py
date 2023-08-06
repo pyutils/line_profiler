@@ -95,7 +95,7 @@ Here is a minimal example:
             def func1():
                 return list(range(100))
 
-            profile.enable()
+            profile.enable(output_prefix='custom')
 
             @profile
             def func2():
@@ -165,7 +165,9 @@ class GlobalProfiler:
     def _kernprof_overwrite(self, profile):
         """
         Kernprof will call this when it runs, so we can use its profile object
-        instead of our own.
+        instead of our own. Note: when kernprof overwrites us we wont ever
+        register an atexit hook. This is what we want because kernprof wants us
+        to use another program to read its output file.
         """
         self._profile = profile
 
