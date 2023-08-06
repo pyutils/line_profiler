@@ -27,9 +27,9 @@ def profile_now(func):
 
 
 def func_to_profile():
-    list(range(100000))
-    tuple(range(100000))
-    set(range(100000))
+    list(range(100))
+    tuple(range(100))
+    set(range(100))
 
 
 def test_profile_now():
