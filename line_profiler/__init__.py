@@ -15,16 +15,14 @@ mkinit ./line_profiler/__init__.py --relative -w
 # from .line_profiler import __version__
 
 # NOTE: This needs to be in sync with ../kernprof.py and line_profiler.py
-__version__ = '4.0.4'
+__version__ = '4.1.0'
 
 from .line_profiler import (LineProfiler,
                             load_ipython_extension, load_stats, main,
                             show_func, show_text,)
 
 
-def profile(func):
-    from line_profiler import explicit_profiler
-    return explicit_profiler.profile(func)
+from .explicit_profiler import profile
 
 
 __all__ = ['LineProfiler', 'line_profiler',

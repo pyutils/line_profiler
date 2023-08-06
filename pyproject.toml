@@ -56,6 +56,13 @@ license = "BSD"
 dev_status = "stable"
 typed = true
 
+[tool.xcookie.entry_points]
+# the console_scripts entry point creates the xdoctest executable
+console_scripts = [
+    "kernprof=kernprof:main",
+]
+
+
 [tool.pytest.ini_options]
 addopts = "--ignore-glob=setup.py --ignore-glob=dev"
 norecursedirs = ".git ignore build __pycache__ dev _skbuild"

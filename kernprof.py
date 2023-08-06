@@ -240,8 +240,7 @@ def main(args=None):
         prof = line_profiler.LineProfiler()
         options.builtin = True
         # Overwrite the explicit profile decorator
-        from line_profiler import explicit_profiler
-        explicit_profiler.__dict__['profile'] = prof
+        line_profiler.profile.kernprof_overwrite(prof)
     else:
         prof = ContextualProfile()
     if options.builtin:
