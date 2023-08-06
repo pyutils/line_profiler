@@ -171,7 +171,7 @@ class GlobalProfiler:
         """
         self._profile = profile
 
-    def implicit_setup(self):
+    def _implicit_setup(self):
         """
         Called once the first time the user decorates a function with
         ``line_profiler.profile`` and they have not explicitly setup the global
@@ -220,7 +220,7 @@ class GlobalProfiler:
         """
         if self.enabled is None:
             # Force a setup if we haven't done it before.
-            self.implicit_setup()
+            self._implicit_setup()
         if not self.enabled:
             return func
         return self._profile(func)
