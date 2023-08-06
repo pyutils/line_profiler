@@ -29,12 +29,28 @@ Here is a minimal example:
             from line_profiler import profile
 
             @profile
+            def plus(a, b):
+                return a + b
+
+            @profile
             def fib(n):
                 a, b = 0, 1
                 while a < n:
-                    a, b = b, a + b
+                    a, b = b, plus(a, b)
 
-            fib(100)
+            @profile
+            def main():
+                import math
+                import time
+                start = time.time()
+
+                print('start calculating')
+                while time.time() - start < 10:
+                    fib(10)
+                    math.factorial(1000)
+                print('done calculating')
+
+            main()
             '''
         ).strip()
         with open('demo.py', 'w') as file:
@@ -170,6 +186,7 @@ class GlobalProfiler:
         to use another program to read its output file.
         """
         self._profile = profile
+        self.enabled = True
 
     def _implicit_setup(self):
         """
@@ -237,18 +254,11 @@ class GlobalProfiler:
         stream = io.StringIO()
         self._profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1, rich=1)
         rich_text = stream.getvalue()
+        print(rich_text)
 
         stream = io.StringIO()
         self._profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1, rich=0)
         raw_text = stream.getvalue()
-
-        # TODO: highlight the code separately from the rest of the text
-        # try:
-        #     from rich import print as rich_print
-        # except ImportError:
-        #     rich_print = print
-        # rich_print(text)
-        print(rich_text)
 
         now = datetime_cls.now()
         timestamp = now.strftime('%Y-%m-%dT%H%M%S')
