@@ -233,17 +233,22 @@ class GlobalProfiler:
         import io
         from datetime import datetime as datetime_cls
         import pathlib
-        stream = io.StringIO()
 
-        self._profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1)
-        text = stream.getvalue()
+        stream = io.StringIO()
+        self._profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1, rich=1)
+        rich_text = stream.getvalue()
+
+        stream = io.StringIO()
+        self._profile.print_stats(stream=stream, summarize=1, sort=1, stripzeros=1, rich=0)
+        raw_text = stream.getvalue()
 
         # TODO: highlight the code separately from the rest of the text
-        try:
-            from rich import print as rich_print
-        except ImportError:
-            rich_print = print
-        rich_print(text)
+        # try:
+        #     from rich import print as rich_print
+        # except ImportError:
+        #     rich_print = print
+        # rich_print(text)
+        print(rich_text)
 
         now = datetime_cls.now()
         timestamp = now.strftime('%Y-%m-%dT%H%M%S')
@@ -252,8 +257,8 @@ class GlobalProfiler:
         txt_output_fpath1 = pathlib.Path(f'{self.output_prefix}.txt')
         txt_output_fpath2 = pathlib.Path(f'{self.output_prefix}_{timestamp}.txt')
 
-        txt_output_fpath1.write_text(text)
-        txt_output_fpath2.write_text(text)
+        txt_output_fpath1.write_text(raw_text)
+        txt_output_fpath2.write_text(raw_text)
         self._profile.dump_stats(lprof_output_fpath)
         print('Wrote profile results to %s' % lprof_output_fpath)
         print('Wrote profile results to %s' % txt_output_fpath1)
