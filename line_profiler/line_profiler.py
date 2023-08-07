@@ -143,7 +143,7 @@ class LineProfiler(CLineProfiler):
             pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
 
     def print_stats(self, stream=None, output_unit=None, stripzeros=False,
-                    summarize=False, sort=False, rich=0):
+                    summarize=False, sort=False, rich=False):
         """ Show the gathered statistics.
         """
         lstats = self.get_stats()
@@ -415,7 +415,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
 
 def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
-              summarize=False, sort=False, rich=0):
+              details=True, summarize=False, sort=False, rich=False):
     """ Show text for the given timings.
     """
     if stream is None:
@@ -426,27 +426,25 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
     else:
         stream.write('Timer unit: %g s\n\n' % unit)
 
-    stats_order = sorted(stats.items())
-
     if sort:
-        # Order by increasing duration
-        stats_order = sorted(stats_order, key=lambda kv: sum(t[2] for t in kv[1]))
+        # Order by ascending duration
+        stats_order = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
+    else:
+        # Default ordering
+        stats_order = sorted(stats.items())
 
-    for (fn, lineno, name), timings in stats_order:
-        show_func(fn, lineno, name, stats[fn, lineno, name], unit,
-                  output_unit=output_unit, stream=stream,
-                  stripzeros=stripzeros, rich=rich)
+    if details:
+        # Show detailed per-line information for each function.
+        for (fn, lineno, name), timings in stats_order:
+            show_func(fn, lineno, name, stats[fn, lineno, name], unit,
+                      output_unit=output_unit, stream=stream,
+                      stripzeros=stripzeros, rich=rich)
 
     if summarize:
         # Summarize the total time for each function
-
-        summary_rows = []
         for (fn, lineno, name), timings in stats_order:
             total_time = sum(t[2] for t in timings) * unit
-            summary_rows.append((total_time, fn, lineno, name))
-
-        for total, fn, lineno, name in summary_rows:
-            line = '%6.2f seconds - %s:%s - %s\n' % (total, fn, lineno, name)
+            line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
             stream.write(line)
 
 
