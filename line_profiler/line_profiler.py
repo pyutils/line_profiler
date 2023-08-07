@@ -276,8 +276,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             from rich.syntax import Syntax
             from rich.highlighter import ReprHighlighter
             from rich.text import Text
-            from rich.columns import Columns
             from rich.console import Console
+            from rich.table import Table
         except ImportError:
             rich = 0
 
@@ -315,7 +315,6 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         'percent': 8,
     }
 
-    ALLOW_SCIENTIFIC_NOTATION = 1
     display = {}
 
     # Loop over each line to determine better column formatting.
@@ -327,15 +326,15 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             percent = '%5.1f' % (100 * time / total_time)
 
         time_disp = '%5.1f' % (time * scalar)
-        if ALLOW_SCIENTIFIC_NOTATION and len(time_disp) > default_column_sizes['time']:
+        if len(time_disp) > default_column_sizes['time']:
             time_disp = '%5.1g' % (time * scalar)
 
         perhit_disp = '%5.1f' % (float(time) * scalar / nhits)
-        if ALLOW_SCIENTIFIC_NOTATION and len(perhit_disp) > default_column_sizes['perhit']:
+        if len(perhit_disp) > default_column_sizes['perhit']:
             perhit_disp = '%5.1g' % (float(time) * scalar / nhits)
 
         nhits_disp = "%d" % nhits
-        if ALLOW_SCIENTIFIC_NOTATION and len(nhits_disp) > default_column_sizes['hits']:
+        if len(nhits_disp) > default_column_sizes['hits']:
             nhits_disp = '%g' % nhits
 
         display[lineno] = (nhits_disp, time_disp, perhit_disp, percent)
@@ -350,15 +349,14 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         column_sizes['time'] = max(column_sizes['time'], max_timelen)
         column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
 
-    # template = '%6s %9s %12s %8s %8s  %-s'
     col_order = ['line', 'hits', 'time', 'perhit', 'percent']
     lhs_template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
     template = lhs_template + '  %-s'
 
     linenos = range(start_lineno, start_lineno + len(sublines))
     empty = ('', '', '', '')
-    header = template % ('Line #', 'Hits', 'Time', 'Per Hit', '% Time',
-                         'Line Contents')
+    header = ('Line #', 'Hits', 'Time', 'Per Hit', '% Time', 'Line Contents')
+    header = template % header
     stream.write('\n')
     stream.write(header)
     stream.write('\n')
@@ -366,29 +364,45 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     stream.write('\n')
 
     if rich:
-        import io
+        # Build the RHS and LHS of the table separately
         lhs_lines = []
         rhs_lines = []
         for lineno, line in zip(linenos, sublines):
             nhits, time, per_hit, percent = display.get(lineno, empty)
             txt = lhs_template % (lineno, nhits, time, per_hit, percent)
-
             rhs_lines.append(line.rstrip('\n').rstrip('\r'))
             lhs_lines.append(txt)
 
         rhs_text = '\n'.join(rhs_lines)
         lhs_text = '\n'.join(lhs_lines)
 
+        # Highlight the RHS with Python syntax
         rhs = Syntax(rhs_text, 'python', background_color='default')
+
+        # Use default highlights for the LHS
+        # TODO: could use colors to draw the eye to longer running lines.
         lhs = Text(lhs_text)
         ReprHighlighter().highlight(lhs)
-        renderable = Columns([lhs, '', rhs])
-        tmp = io.StringIO()
-        # write_console = Console(file=tmp, force_terminal=True, soft_wrap=True)
-        write_console = Console(file=tmp, soft_wrap=True, color_system='standard')
-        write_console.print(renderable)
-        block = tmp.getvalue()
-        stream.write(block)
+
+        # Use a table to horizontally concatenate the text
+        # reference: https://github.com/Textualize/rich/discussions/3076
+        table = Table(
+            box=None,
+            padding=0,
+            collapse_padding=True,
+            show_header=False,
+            show_footer=False,
+            show_edge=False,
+            pad_edge=False,
+            expand=False,
+        )
+        table.add_row(lhs, '  ', rhs)
+
+        # Use a Console to render to the stream
+        # Not sure if we should force-terminal or just specify the color system
+        # write_console = Console(file=stream, force_terminal=True, soft_wrap=True)
+        write_console = Console(file=stream, soft_wrap=True, color_system='standard')
+        write_console.print(table)
         stream.write('\n')
     else:
         for lineno, line in zip(linenos, sublines):
@@ -473,7 +487,7 @@ def main():
         help='Use rich formatting',
     )
     parser.add_argument(
-        '-s',
+        '-t',
         '--sort',
         action='store_true',
         help='Sort by ascending total time',
