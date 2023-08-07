@@ -143,13 +143,13 @@ class LineProfiler(CLineProfiler):
             pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
 
     def print_stats(self, stream=None, output_unit=None, stripzeros=False,
-                    summarize=False, sort=False, rich=False):
+                    details=True, summarize=False, sort=False, rich=False):
         """ Show the gathered statistics.
         """
         lstats = self.get_stats()
         show_text(lstats.timings, lstats.unit, output_unit=output_unit,
                   stream=stream, stripzeros=stripzeros,
-                  summarize=summarize, sort=sort, rich=rich)
+                  details=details, summarize=summarize, sort=sort, rich=rich)
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.
