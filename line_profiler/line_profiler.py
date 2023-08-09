@@ -143,13 +143,13 @@ class LineProfiler(CLineProfiler):
             pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
 
     def print_stats(self, stream=None, output_unit=None, stripzeros=False,
-                    summarize=False, sort=False):
+                    details=True, summarize=False, sort=False, rich=False):
         """ Show the gathered statistics.
         """
         lstats = self.get_stats()
         show_text(lstats.timings, lstats.unit, output_unit=output_unit,
                   stream=stream, stripzeros=stripzeros,
-                  summarize=summarize, sort=sort)
+                  details=details, summarize=summarize, sort=sort, rich=rich)
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.
@@ -209,7 +209,7 @@ def is_ipython_kernel_cell(filename):
 
 
 def show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit=None, stream=None, stripzeros=False):
+              output_unit=None, stream=None, stripzeros=False, rich=False):
     """
     Show results for a single function.
 
@@ -237,6 +237,9 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         stripzeros (bool):
             if True, prints nothing if the function was not run
 
+        rich (bool):
+            if True, attempt to use rich highlighting.
+
     Example:
         >>> from line_profiler.line_profiler import show_func
         >>> import line_profiler
@@ -257,8 +260,9 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         >>> output_unit = 1.0
         >>> stream = None
         >>> stripzeros = False
+        >>> rich = 1
         >>> show_func(filename, start_lineno, func_name, timings, unit,
-        >>>           output_unit, stream, stripzeros)
+        >>>           output_unit, stream, stripzeros, rich)
     """
     if stream is None:
         stream = sys.stdout
@@ -266,6 +270,16 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     total_time = sum(t[2] for t in timings)
     if stripzeros and total_time == 0:
         return
+
+    if rich:
+        try:
+            from rich.syntax import Syntax
+            from rich.highlighter import ReprHighlighter
+            from rich.text import Text
+            from rich.console import Console
+            from rich.table import Table
+        except ImportError:
+            rich = 0
 
     if output_unit is None:
         output_unit = unit
@@ -301,7 +315,6 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         'percent': 8,
     }
 
-    ALLOW_SCIENTIFIC_NOTATION = 1
     display = {}
 
     # Loop over each line to determine better column formatting.
@@ -313,15 +326,15 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             percent = '%5.1f' % (100 * time / total_time)
 
         time_disp = '%5.1f' % (time * scalar)
-        if ALLOW_SCIENTIFIC_NOTATION and len(time_disp) > default_column_sizes['time']:
+        if len(time_disp) > default_column_sizes['time']:
             time_disp = '%5.1g' % (time * scalar)
 
         perhit_disp = '%5.1f' % (float(time) * scalar / nhits)
-        if ALLOW_SCIENTIFIC_NOTATION and len(perhit_disp) > default_column_sizes['perhit']:
+        if len(perhit_disp) > default_column_sizes['perhit']:
             perhit_disp = '%5.1g' % (float(time) * scalar / nhits)
 
         nhits_disp = "%d" % nhits
-        if ALLOW_SCIENTIFIC_NOTATION and len(nhits_disp) > default_column_sizes['hits']:
+        if len(nhits_disp) > default_column_sizes['hits']:
             nhits_disp = '%g' % nhits
 
         display[lineno] = (nhits_disp, time_disp, perhit_disp, percent)
@@ -336,31 +349,73 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         column_sizes['time'] = max(column_sizes['time'], max_timelen)
         column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
 
-    # template = '%6s %9s %12s %8s %8s  %-s'
     col_order = ['line', 'hits', 'time', 'perhit', 'percent']
-    template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
-    template = template + '  %-s'
+    lhs_template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
+    template = lhs_template + '  %-s'
 
     linenos = range(start_lineno, start_lineno + len(sublines))
     empty = ('', '', '', '')
-    header = template % ('Line #', 'Hits', 'Time', 'Per Hit', '% Time',
-                         'Line Contents')
+    header = ('Line #', 'Hits', 'Time', 'Per Hit', '% Time', 'Line Contents')
+    header = template % header
     stream.write('\n')
     stream.write(header)
     stream.write('\n')
     stream.write('=' * len(header))
     stream.write('\n')
-    for lineno, line in zip(linenos, sublines):
-        nhits, time, per_hit, percent = display.get(lineno, empty)
-        txt = template % (lineno, nhits, time, per_hit, percent,
-                          line.rstrip('\n').rstrip('\r'))
-        stream.write(txt)
+
+    if rich:
+        # Build the RHS and LHS of the table separately
+        lhs_lines = []
+        rhs_lines = []
+        for lineno, line in zip(linenos, sublines):
+            nhits, time, per_hit, percent = display.get(lineno, empty)
+            txt = lhs_template % (lineno, nhits, time, per_hit, percent)
+            rhs_lines.append(line.rstrip('\n').rstrip('\r'))
+            lhs_lines.append(txt)
+
+        rhs_text = '\n'.join(rhs_lines)
+        lhs_text = '\n'.join(lhs_lines)
+
+        # Highlight the RHS with Python syntax
+        rhs = Syntax(rhs_text, 'python', background_color='default')
+
+        # Use default highlights for the LHS
+        # TODO: could use colors to draw the eye to longer running lines.
+        lhs = Text(lhs_text)
+        ReprHighlighter().highlight(lhs)
+
+        # Use a table to horizontally concatenate the text
+        # reference: https://github.com/Textualize/rich/discussions/3076
+        table = Table(
+            box=None,
+            padding=0,
+            collapse_padding=True,
+            show_header=False,
+            show_footer=False,
+            show_edge=False,
+            pad_edge=False,
+            expand=False,
+        )
+        table.add_row(lhs, '  ', rhs)
+
+        # Use a Console to render to the stream
+        # Not sure if we should force-terminal or just specify the color system
+        # write_console = Console(file=stream, force_terminal=True, soft_wrap=True)
+        write_console = Console(file=stream, soft_wrap=True, color_system='standard')
+        write_console.print(table)
         stream.write('\n')
+    else:
+        for lineno, line in zip(linenos, sublines):
+            nhits, time, per_hit, percent = display.get(lineno, empty)
+            txt = template % (lineno, nhits, time, per_hit, percent,
+                              line.rstrip('\n').rstrip('\r'))
+            stream.write(txt)
+            stream.write('\n')
     stream.write('\n')
 
 
 def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
-              summarize=False, sort=False):
+              details=True, summarize=False, sort=False, rich=False):
     """ Show text for the given timings.
     """
     if stream is None:
@@ -371,27 +426,25 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
     else:
         stream.write('Timer unit: %g s\n\n' % unit)
 
-    stats_order = sorted(stats.items())
-
     if sort:
-        # Order by increasing duration
-        stats_order = sorted(stats_order, key=lambda kv: sum(t[2] for t in kv[1]))
+        # Order by ascending duration
+        stats_order = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
+    else:
+        # Default ordering
+        stats_order = sorted(stats.items())
 
-    for (fn, lineno, name), timings in stats_order:
-        show_func(fn, lineno, name, stats[fn, lineno, name], unit,
-                  output_unit=output_unit, stream=stream,
-                  stripzeros=stripzeros)
+    if details:
+        # Show detailed per-line information for each function.
+        for (fn, lineno, name), timings in stats_order:
+            show_func(fn, lineno, name, stats[fn, lineno, name], unit,
+                      output_unit=output_unit, stream=stream,
+                      stripzeros=stripzeros, rich=rich)
 
     if summarize:
         # Summarize the total time for each function
-
-        summary_rows = []
         for (fn, lineno, name), timings in stats_order:
             total_time = sum(t[2] for t in timings) * unit
-            summary_rows.append((total_time, fn, lineno, name))
-
-        for total, fn, lineno, name in summary_rows:
-            line = '%6.2f seconds - %s:%s:%s\n' % (total, fn, lineno, name)
+            line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
             stream.write(line)
 
 
@@ -425,11 +478,35 @@ def main():
         action='store_true',
         help='Hide functions which have not been called',
     )
+    parser.add_argument(
+        '-r',
+        '--rich',
+        action='store_true',
+        help='Use rich formatting',
+    )
+    parser.add_argument(
+        '-t',
+        '--sort',
+        action='store_true',
+        help='Sort by ascending total time',
+    )
+    parser.add_argument(
+        '-m',
+        '--summarize',
+        action='store_true',
+        help='Print a summary of total function time',
+    )
     parser.add_argument('profile_output', help='*.lprof file created by kernprof')
 
     args = parser.parse_args()
     lstats = load_stats(args.profile_output)
-    show_text(lstats.timings, lstats.unit, output_unit=args.unit, stripzeros=args.skip_zero)
+    show_text(
+        lstats.timings, lstats.unit, output_unit=args.unit,
+        stripzeros=args.skip_zero,
+        rich=args.rich,
+        sort=args.sort,
+        summarize=args.summarize,
+    )
 
 
 if __name__ == '__main__':

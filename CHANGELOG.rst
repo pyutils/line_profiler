@@ -3,8 +3,9 @@ Changes
 
 4.1.0
 ~~~~
-* FIX: `show_text` now increases column sizes or switches to scientific notation to maintain alignment
-* ENH: `show_text` now has new options: sort and summarize
+* FIX: ``show_text`` now increases column sizes or switches to scientific notation to maintain alignment
+* ENH: ``show_text`` now has new options: sort and summarize
+* ENH: Added new CLI arguments ``-srm`` to ``line_profiler`` to control sorting, rich printing, and summary printing.
 
 4.0.3
 ~~~~
