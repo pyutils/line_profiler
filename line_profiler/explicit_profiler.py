@@ -194,9 +194,8 @@ class GlobalProfiler:
         >>> self.write_config['text'] = False
         >>> self.write_config['timestamped_text'] = False
         >>> # Demo data: a function to profile
-        >>> def foo():
-        >>>     n = 100
-        >>>     for i in range(a + b):
+        >>> def collatz(n):
+        >>>     while n != 1:
         >>>         if n % 2 == 0:
         >>>             n = n // 2
         >>>         else:
@@ -204,15 +203,15 @@ class GlobalProfiler:
         >>>     return n
         >>> # Disabled by default, implicitly checks to auto-enable on first wrap
         >>> assert self.enabled is None
-        >>> foo_wrap = self(foo)
+        >>> wrapped = self(collatz)
         >>> assert self.enabled is False
-        >>> assert foo_wrap is foo
+        >>> assert wrapped is collatz
         >>> # Can explicitly enable
         >>> self.enable()
-        >>> foo_wrap = self(foo)
+        >>> wrapped = self(collatz)
         >>> assert self.enabled is True
-        >>> assert foo_wrap is not foo
-        >>> foo_wrap()
+        >>> assert wrapped is not collatz
+        >>> wrapped(100)
         >>> # Can explicitly request output
         >>> self.show()
     """
