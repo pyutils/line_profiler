@@ -1,6 +1,14 @@
 line\_profiler package
 ======================
 
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   line_profiler.autoprofile
+
 Submodules
 ----------
 
