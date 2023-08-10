@@ -163,6 +163,7 @@ intersphinx_mapping = {
     'xdoctest': ('https://xdoctest.readthedocs.io/en/latest/', None),
     'networkx': ('https://networkx.org/documentation/stable/', None),
     'scriptconfig': ('https://scriptconfig.readthedocs.io/en/latest/', None),
+    'xdev': ('https://xdev.readthedocs.io/en/latest/', None),
 
 }
 __dev_note__ = """
