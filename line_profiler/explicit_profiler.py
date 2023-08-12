@@ -302,6 +302,10 @@ class GlobalProfiler:
         Returns:
             Callable: a potentially wrapped function
         """
+        # from multiprocessing import current_process
+        # if current_process().name != 'MainProcess':
+        #     return func
+
         if self.enabled is None:
             # Force a setup if we haven't done it before.
             self._implicit_setup()

@@ -288,6 +288,20 @@ built on ``cProfile`` or ``line_profiler`` are as follows:
 .. _spyder_line_profiler_plugin: https://github.com/spyder-ide/spyder-line-profiler
 .. _web_profiler_ui: https://github.com/mirecl/pprof
 
+
+Related Work
+============
+
+Check out these other Python profilers:
+
+* `Scalene <https://github.com/plasma-umass/scalene>`_: A CPU+GPU+memory sampling based profiler.
+
+* `PyInstrument  <https://github.com/joerick/pyinstrument>`_: A call stack profiler.
+
+* `Yappi <https://github.com/sumerc/yappi>`_: A tracing profiler that is multithreading, asyncio and gevent aware.
+
+* `profile / cProfile <https://docs.python.org/3/library/profile.html>`_: The builtin profile module.
+
 Frequently Asked Questions
 ==========================
 

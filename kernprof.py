@@ -239,10 +239,17 @@ def main(args=None):
         import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
-        # Overwrite the explicit profile decorator
-        line_profiler.profile._kernprof_overwrite(prof)
     else:
         prof = ContextualProfile()
+
+    # If line_profiler is installed, then overwrite the explicit decorator
+    try:
+        import line_profiler
+    except ImportError:
+        ...
+    else:
+        line_profiler.profile._kernprof_overwrite(prof)
+
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
@@ -275,7 +282,7 @@ def main(args=None):
         print('Wrote profile results to %s' % options.outfile)
         if options.view:
             if isinstance(prof, ContextualProfile):
-                prof.print_stats(stream=original_stdout)
+                prof.print_stats()
             else:
                 prof.print_stats(output_unit=options.unit,
                                  stripzeros=options.skip_zero,
