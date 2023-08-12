@@ -32,6 +32,8 @@ def test_varied_complex_invocations():
     import sys
     import os
 
+    LINUX = sys.platform.startswith('linux')
+
     # Enumerate valid cases to test
     cases = []
     for runner in ['python',  'kernprof']:
@@ -89,7 +91,7 @@ def test_varied_complex_invocations():
             env['PROFILE_TYPE'] = item["profile_type"]
             command = f'{runner} {complex_fpath}' + prog_flags
 
-            HAS_SHELL = 1
+            HAS_SHELL = LINUX
             if HAS_SHELL:
                 # Use shell because it gives a indication of what is happening
                 environ_prefix = ' '.join([f'{k}={v}' for k, v in env.items()])
