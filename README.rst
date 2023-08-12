@@ -8,9 +8,8 @@ NOTICE: This is the official ``line_profiler`` repository. The most recent
 version of `line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi
 points to this repo. The original
 `line_profiler <https://github.com/rkern/line_profiler/>`_ package by
-`@rkern <https://github.com/rkern/>`_ is currently unmaintained. This fork
-seeks to simply maintain the original code so it continues to work in new
-versions of Python.
+`@rkern <https://github.com/rkern/>`_ is unmaintained. This fork is the
+official continuation of the project.
 
 ----
 
