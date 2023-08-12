@@ -164,6 +164,7 @@ intersphinx_mapping = {
     'networkx': ('https://networkx.org/documentation/stable/', None),
     'scriptconfig': ('https://scriptconfig.readthedocs.io/en/latest/', None),
     'xdev': ('https://xdev.readthedocs.io/en/latest/', None),
+    'rich': ('https://rich.readthedocs.io/en/latest/', None),
 
 }
 __dev_note__ = """

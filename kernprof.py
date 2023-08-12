@@ -203,6 +203,8 @@ def main(args=None):
                         help='Code to execute before the code to profile')
     parser.add_argument('-v', '--view', action='store_true',
                         help='View the results of the profile in addition to saving it')
+    parser.add_argument('-r', '--rich', action='store_true',
+                        help='Use rich formatting if viewing output')
     parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
 
                         help='Output unit (in seconds) in which the timing info is '
@@ -286,7 +288,14 @@ def main(args=None):
             else:
                 prof.print_stats(output_unit=options.unit,
                                  stripzeros=options.skip_zero,
+                                 rich=options.rich,
                                  stream=original_stdout)
+        else:
+            print('Inspect results with:')
+            if isinstance(prof, ContextualProfile):
+                print(f'{sys.executable} -m pstats "{options.outfile}"')
+            else:
+                print(f'{sys.executable} -m line_profiler -rmt "{options.outfile}"')
 
 
 if __name__ == '__main__':

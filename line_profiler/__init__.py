@@ -4,11 +4,13 @@ Line Profiler
 
 The line_profiler module for doing line-by-line profiling of functions
 
-+---------------+-------------------------------------------+
-| Github        | https://github.com/pyutils/line_profiler  |
-+---------------+-------------------------------------------+
-| Pypi          | https://pypi.org/project/line_profiler    |
-+---------------+-------------------------------------------+
++---------------+--------------------------------------------+
+| Github        | https://github.com/pyutils/line_profiler   |
++---------------+--------------------------------------------+
+| Pypi          | https://pypi.org/project/line_profiler     |
++---------------+--------------------------------------------+
+| ReadTheDocs   | https://kernprof.readthedocs.io/en/latest/ |
++---------------+--------------------------------------------+
 
 
 Installation
@@ -21,70 +23,113 @@ Releases of ``line_profiler`` can be installed using pip
     pip install line_profiler
 
 
+Basic Usage
+===========
+
+To demonstrate line profiling, we first need to generate a Python script to
+profile. Write the following code to a file called ``demo_primes.py``.
+
+.. code:: python
+
+    from line_profiler import profile
 
 
-Demo
-----
+    @profile
+    def is_prime(n):
+        '''
+        Check if the number "n" is prime, with n > 1.
 
-The following code gives a demonstration:
-
-First we generate a demo python script:
-
-.. code:: bash
-
-    python -c "if 1:
-        import textwrap
-
-        # Define the script
-        text = textwrap.dedent(
-            '''
-            from line_profiler import profile
-
-            @profile
-            def plus(a, b):
-                return a + b
-
-            @profile
-            def fib(n):
-                a, b = 0, 1
-                while a < n:
-                    a, b = b, plus(a, b)
-
-            @profile
-            def main():
-                import math
-                import time
-                start = time.time()
-
-                print('start calculating')
-                while time.time() - start < 1:
-                    fib(10)
-                    math.factorial(1000)
-                print('done calculating')
-
-            main()
-            '''
-        ).strip()
-
-        # Write the script to disk
-        with open('demo_script.py', 'w') as file:
-            file.write(text)
-    "
+        Returns a boolean, True if n is prime.
+        '''
+        max_val = n ** 0.5
+        stop = int(max_val + 1)
+        for i in range(2, stop):
+            if n % i == 0:
+                return False
+        return True
 
 
-Run the script with kernprof
+    @profile
+    def find_primes(size):
+        primes = []
+        for n in range(size):
+            flag = is_prime(n)
+            if flag:
+                primes.append(n)
+        return primes
+
+
+    @profile
+    def main():
+        print('start calculating')
+        primes = find_primes(100000)
+        print(f'done calculating. Found {len(primes)} primes.')
+
+    main()
+
+
+In this script we explicitly import the ``profile`` function from
+``line_profiler``, and then we decorate function of interest with ``@profile``.
+
+By default nothing is profiled when running the script.
 
 .. code:: bash
 
-    python -m kernprof demo_script.py
+    python demo_primes.py
+
+
+The output will be
+
+.. code::
+
+    start calculating
+    done calculating. Found 9594 primes.
+
+
+The quickest way to enable profiling is to set the environment variable
+``LINE_PROFILE=1`` and running your script as normal.
+
 
 .. code:: bash
 
-    python -m pstats demo_script.py.prof
+    LINE_PROFILE=1 python demo_primes.py
+
+This will output 3 files: profile_output.txt, profile_output_<timestamp>.txt,
+and profile_output.lprof and stdout will look something like:
 
 
+.. code::
+
+    start calculating
+    done calculating. Found 9594 primes.
+    Timer unit: 1e-09 s
+
+      0.65 seconds - demo_primes.py:4 - is_prime
+      1.47 seconds - demo_primes.py:19 - find_primes
+      1.51 seconds - demo_primes.py:29 - main
+    Wrote profile results to profile_output.txt
+    Wrote profile results to profile_output_2023-08-12T193302.txt
+    Wrote profile results to profile_output.lprof
+    To view details run:
+    python -m line_profiler -rtmz profile_output.lprof
+
+
+For more control over the outputs, run your script using :py:mod:`kernprof`.
+The following invocation will run your script, dump results to
+``demo_primes.py.lprof``, and display results.
+
+.. code:: bash
+
+    python -m kernprof -lvr demo_primes.py
+
+
+Note: the ``-r`` flag will use "rich-output" if you have the :py:mod:`rich`
+module installed.
 
 """
+# Note: there are better ways to generate primes
+# https://github.com/Sylhare/nprime
+
 __submodules__ = [
     'line_profiler',
     'ipython_extension',

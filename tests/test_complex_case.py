@@ -1,5 +1,5 @@
-# TODO: use tempdir to run each command in isolation
 import ubelt as ub
+import tempfile
 
 
 def get_complex_example_fpath():
@@ -13,16 +13,24 @@ def get_complex_example_fpath():
 
 
 def test_complex_example_python_none():
+    """
+    Make sure the complex example script works without any profiling
+    """
     complex_fpath = get_complex_example_fpath()
     info = ub.cmd(f'PROFILE_TYPE=none python {complex_fpath}', shell=True, verbose=3)
-    assert info.stdout() == ''
+    assert info.stdout == ''
     info.check_returncode()
 
 
 def test_varied_complex_invocations():
+    """
+    Tests variations of running the complex example:
+        with / without kernprof
+        with cProfile / LineProfiler backends
+        with / without explicit profiler
+    """
     import sys
     import os
-    # import tempfile
 
     # Enumerate valid cases to test
     cases = []
@@ -56,62 +64,61 @@ def test_varied_complex_invocations():
                 })
 
     complex_fpath = get_complex_example_fpath()
-    # os.environ.copy()
 
     results = []
 
     for item in cases:
-        # temp_dpath = tempfile.mkdtemp()
+        temp_dpath = tempfile.mkdtemp()
+        with ub.ChDir(temp_dpath):
+            env = {}
 
-        env = {}
+            outpath = item['outpath']
+            if outpath:
+                outpath = ub.Path(outpath)
 
-        outpath = item['outpath']
-        if outpath:
-            outpath = ub.Path(outpath)
+            # Construct the invocation for each case
+            if item['runner'] == 'kernprof':
+                kern_flags = item['kern_flags']
+                # Note: kernprof doesn't seem to play well with multiprocessing
+                prog_flags = ' --process_size=0'
+                runner = f'{sys.executable} -m kernprof {kern_flags}'
+            else:
+                env['LINE_PROFILE'] = item["env_line_profile"]
+                runner = f'{sys.executable}'
+                prog_flags = ''
+            env['PROFILE_TYPE'] = item["profile_type"]
+            command = f'{runner} {complex_fpath}' + prog_flags
 
-        # Construct the invocation for each case
-        if item['runner'] == 'kernprof':
-            kern_flags = item['kern_flags']
-            # Note: kernprof doesn't seem to play well with multiprocessing
-            prog_flags = ' --process_size=0'
-            runner = f'{sys.executable} -m kernprof {kern_flags}'
-        else:
-            env['LINE_PROFILE'] = item["env_line_profile"]
-            runner = f'{sys.executable}'
-            prog_flags = ''
-        env['PROFILE_TYPE'] = item["profile_type"]
-        command = f'{runner} {complex_fpath}' + prog_flags
+            HAS_SHELL = 1
+            if HAS_SHELL:
+                # Use shell because it gives a indication of what is happening
+                environ_prefix = ' '.join([f'{k}={v}' for k, v in env.items()])
+                info = ub.cmd(environ_prefix + ' ' + command, shell=True, verbose=3)
+            else:
+                env = ub.udict(os.environ) | env
+                info = ub.cmd(command, env=env, verbose=3)
 
-        HAS_SHELL = 1
-        if HAS_SHELL:
-            # Use shell because it gives a indication of what is happening
-            environ_prefix = ' '.join([f'{k}={v}' for k, v in env.items()])
-            info = ub.cmd(environ_prefix + ' ' + command, shell=True, verbose=3)
-        else:
-            env = ub.udict(os.environ) | env
-            info = ub.cmd(command, env=env, verbose=3)
+            info.check_returncode()
 
-        info.check_returncode()
+            result = item.copy()
+            if outpath:
+                result['outsize'] = outpath.stat().st_size
+            else:
+                result['outsize'] = None
+            results.append(result)
 
-        result = item.copy()
-        if outpath:
-            result['outsize'] = outpath.stat().st_size
-        else:
-            result['outsize'] = None
-        results.append(result)
+            if outpath:
+                assert outpath.exists()
+                assert outpath.is_file()
+                outpath.delete()
 
-        if outpath:
-            assert outpath.exists()
-            assert outpath.is_file()
-            outpath.delete()
+            if 0:
+                import pandas as pd
+                import rich
+                table = pd.DataFrame(results)
+                rich.print(table)
 
-        if 0:
-            import pandas as pd
-            import rich
-            table = pd.DataFrame(results)
-            rich.print(table)
-
-        # Ensure the scripts that produced output produced non-trivial output
-        for result in results:
-            if result['outpath'] is not None:
-                assert result['outsize'] > 100
+            # Ensure the scripts that produced output produced non-trivial output
+            for result in results:
+                if result['outpath'] is not None:
+                    assert result['outsize'] > 100

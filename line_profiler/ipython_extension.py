@@ -1,3 +1,7 @@
+"""
+This module defines the ``%lprun`` IPython magic.
+"""
+
 from io import StringIO
 
 from IPython.core.magic import Magics, magics_class, line_magic
@@ -16,7 +20,8 @@ class LineProfilerMagics(Magics):
         line_profiler module.
 
         Usage:
-        %lprun -f func1 -f func2 <statement>
+
+            %lprun -f func1 -f func2 <statement>
 
         The given statement (which doesn't require quote marks) is run via the
         LineProfiler. Profiling is enabled for the functions specified by the -f

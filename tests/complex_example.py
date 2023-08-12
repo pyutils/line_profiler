@@ -25,7 +25,7 @@ python -m pstats ./complex_example.py.prof
 
 
 # Explicit decorator with line kernprof
-# NOTE: again, multiprocessing breaks when using kernprof (does this happen in older verions?)
+# NOTE: again, multiprocessing breaks when using kernprof
 PROFILE_TYPE=explicit python -m kernprof -l complex_example.py --process_size=0
 python -m line_profiler complex_example.py.lprof
 

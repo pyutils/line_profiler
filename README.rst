@@ -1,7 +1,7 @@
 line_profiler and kernprof
 --------------------------
 
-|Pypi| |Downloads| |CircleCI| |GithubActions| |Codecov|
+|Pypi| |ReadTheDocs| |Downloads| |CircleCI| |GithubActions| |Codecov|
 
 
 NOTICE: This is the official ``line_profiler`` repository. The most recent
@@ -10,6 +10,14 @@ points to this repo. The original
 `line_profiler <https://github.com/rkern/line_profiler/>`_ package by
 `@rkern <https://github.com/rkern/>`_ is unmaintained. This fork is the
 official continuation of the project.
+
++---------------+--------------------------------------------+
+| Github        | https://github.com/pyutils/line_profiler   |
++---------------+--------------------------------------------+
+| Pypi          | https://pypi.org/project/line_profiler     |
++---------------+--------------------------------------------+
+| ReadTheDocs   | https://kernprof.readthedocs.io/en/latest/ |
++---------------+--------------------------------------------+
 
 ----
 
@@ -184,6 +192,9 @@ item to the extensions list::
         'line_profiler',
     ]
 
+Or explicitly call::
+
+    %load_ext line_profiler
 
 To get usage help for %lprun, use the standard IPython help mechanism::
 
@@ -440,4 +451,5 @@ See `CHANGELOG`_.
    :target: https://pypistats.org/packages/line_profiler
 .. |GithubActions| image:: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml/badge.svg?branch=main
    :target: https://github.com/pyutils/line_profiler/actions?query=branch%3Amain
-
+.. |ReadTheDocs| image:: https://readthedocs.org/projects/ubelt/badge/?version=latest
+    :target: http://ubelt.readthedocs.io/en/latest/

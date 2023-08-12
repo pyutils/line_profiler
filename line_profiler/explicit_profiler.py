@@ -1,11 +1,16 @@
 """
-The idea is that we are going to expose a top-level ``profile`` decorator which
-will be disabled by default **unless** you are running with with line profiler
-itself OR if the LINE_PROFILE environment variable is True.
+New in ``line_profiler`` version 4.1.0, this module defines a top-level
+``profile`` decorator which will be disabled by default **unless** a script is
+being run with :mod:`kernprof`, if the environment variable ``LINE_PROFILE`` is
+set, or if ``--line-profile`` is given on the command line.
 
-This uses the :mod:`atexit` module to perform a profile dump at the end.
+In the latter two cases, the :mod:`atexit` module is used to display and dump
+line profiling results to disk when Python exits.
 
-This work is ported from :mod:`xdev`.
+If none of the enabling conditions are met, then
+:py:obj:`line_profiler.profile` is a noop. This means you no longer have to add
+and remove the implicit ``profile`` decorators required by previous version of
+this library.
 
 Basic usage is to import line_profiler and decorate your function with
 line_profiler.profile.  By default this does nothing, it's a no-op decorator.
@@ -13,7 +18,8 @@ However, if you run with the environment variable ``LINE_PROFILER=1`` or if
 ``'--profile' in sys.argv'``, then it enables profiling and at the end of your
 script it will output the profile text.
 
-Here is a minimal example:
+Here is a minimal example that will write a script to disk and then run it
+with profiling enabled or disabled by various methods:
 
 .. code:: bash
 
@@ -71,7 +77,9 @@ Here is a minimal example:
     LINE_PROFILE=1 python demo.py
 
 
-An example with in-code enabling:
+The explicit :py:attr:`line_profiler.profile` decorator can also be enabled and
+configured in the Python code itself by calling
+:func:`line_profiler.profile.enable`. The following example demonstrates this:
 
 .. code:: bash
 
@@ -99,7 +107,10 @@ An example with in-code enabling:
     python demo.py
 
 
-An example with in-code enabling and disabling:
+Likewise there is a :func:`line_profiler.profile.disable` function that will
+prevent any subsequent functions decorated with ``@profile`` from being
+profiled. In the following example, profiling information will only be recorded
+for ``func2`` and ``func4``.
 
 .. code:: bash
 
@@ -145,7 +156,11 @@ An example with in-code enabling and disabling:
     echo "---"
     echo "## Configuration handled inside the script"
     python demo.py
+
+    # Running with --line-profile will also profile ``func1``
     python demo.py --line-profile
+
+The core functionality in this module was ported from :mod:`xdev`.
 """
 from .line_profiler import LineProfiler
 import sys
@@ -159,6 +174,8 @@ _FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
 class GlobalProfiler:
     """
     Manages a profiler that will output on interpreter exit.
+
+    The :py:obj:`line_profile.profile` decorator is an instance of this object.
 
     Attributes:
         setup_config (Dict[str, List[str]]):
@@ -317,7 +334,8 @@ class GlobalProfiler:
         """
         Write the managed profiler stats to enabled outputs.
 
-        If the implicit setup triggered, then this will be called by atexit.
+        If the implicit setup triggered, then this will be called by
+        :py:mod:`atexit`.
         """
         import io
         import pathlib
