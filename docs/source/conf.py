@@ -27,7 +27,7 @@ Notes:
 
         https://docs.readthedocs.io/en/stable/guides/autobuild-docs-for-pull-requests.html
 
-        https://readthedocs.org/dashboard/line-profiler/advanced/
+        https://readthedocs.org/dashboard/kernprof/advanced/
 
         ensure your github account is connected to readthedocs
         https://readthedocs.org/accounts/social/connections/
