@@ -1,16 +1,81 @@
 """
 A script used in test_complex_case.py
+
+python ~/code/line_profiler/tests/complex_example.py
+LINE_PROFILE=1 python ~/code/line_profiler/tests/complex_example.py
+python -m kernprof -v ~/code/line_profiler/tests/complex_example.py
+python -m kernprof -lv ~/code/line_profiler/tests/complex_example.py
+
+
+cd ~/code/line_profiler/tests/
+
+
+# Run the code by itself without any profiling
+PROFILE_TYPE=none python complex_example.py
+
+
+# NOTE: this fails because we are not running with kernprof
+PROFILE_TYPE=implicit python complex_example.py
+
+
+# Kernprof with the implicit profile decorator
+# NOTE: multiprocessing breaks this invocation, so set process size to zero
+PROFILE_TYPE=implicit python -m kernprof -b complex_example.py --process_size=0
+python -m pstats ./complex_example.py.prof
+
+
+# Explicit decorator with line kernprof
+# NOTE: again, multiprocessing breaks when using kernprof
+PROFILE_TYPE=explicit python -m kernprof -l complex_example.py --process_size=0
+python -m line_profiler complex_example.py.lprof
+
+
+# Explicit decorator with cProfile kernprof
+# NOTE: again, multiprocessing breaks when using kernprof (does this happen in older verions?)
+PROFILE_TYPE=explicit python -m kernprof -b complex_example.py --process_size=0
+python -m pstats ./complex_example.py.prof
+
+# Explicit decorator with environment enabling
+PROFILE_TYPE=explicit LINE_PROFILE=1 python complex_example.py
+
+
+# Explicit decorator without enabling it
+PROFILE_TYPE=explicit LINE_PROFILE=0 python complex_example.py
+
+
+# Use a custom defined line profiler object
+PROFILE_TYPE=custom python complex_example.py
+
 """
-import line_profiler
-import atexit
+import os
+
+# The test will define how we expect the profile decorator to exist
+PROFILE_TYPE = os.environ.get('PROFILE_TYPE', '')
 
 
-profile = line_profiler.LineProfiler()
+if PROFILE_TYPE == 'implicit':
+    # Do nothing, assume kernprof will inject profile in for us
+    ...
+elif PROFILE_TYPE == 'none':
+    # Define a no-op profiler
+    def profile(func):
+        return func
+elif PROFILE_TYPE == 'explicit':
+    # Use the explicit profile decorator
+    import line_profiler
+    profile = line_profiler.profile
+elif PROFILE_TYPE == 'custom':
+    # Create a custom profile decorator
+    import line_profiler
+    import atexit
+    profile = line_profiler.LineProfiler()
 
-
-@atexit.register
-def _show_profile_on_end():
-    profile.print_stats(summarize=1, sort=1, stripzeros=1)
+    @atexit.register
+    def _show_profile_on_end():
+        ...
+        profile.print_stats(summarize=1, sort=1, stripzeros=1, rich=1)
+else:
+    raise KeyError('')
 
 
 @profile
@@ -92,7 +157,7 @@ def main():
 @profile
 def funcy_fib(n):
     """
-    Alternatite fib function where code splits out over multiple lines
+    Alternative fib function where code splits out over multiple lines
     """
     a, b = (
         0, 1

@@ -27,7 +27,7 @@ Notes:
 
         https://docs.readthedocs.io/en/stable/guides/autobuild-docs-for-pull-requests.html
 
-        https://readthedocs.org/dashboard/line-profiler/advanced/
+        https://readthedocs.org/dashboard/kernprof/advanced/
 
         ensure your github account is connected to readthedocs
         https://readthedocs.org/accounts/social/connections/
@@ -164,6 +164,7 @@ intersphinx_mapping = {
     'networkx': ('https://networkx.org/documentation/stable/', None),
     'scriptconfig': ('https://scriptconfig.readthedocs.io/en/latest/', None),
     'xdev': ('https://xdev.readthedocs.io/en/latest/', None),
+    'rich': ('https://rich.readthedocs.io/en/latest/', None),
 
 }
 __dev_note__ = """

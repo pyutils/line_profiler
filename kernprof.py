@@ -203,6 +203,8 @@ def main(args=None):
                         help='Code to execute before the code to profile')
     parser.add_argument('-v', '--view', action='store_true',
                         help='View the results of the profile in addition to saving it')
+    parser.add_argument('-r', '--rich', action='store_true',
+                        help='Use rich formatting if viewing output')
     parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
 
                         help='Output unit (in seconds) in which the timing info is '
@@ -239,10 +241,17 @@ def main(args=None):
         import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
-        # Overwrite the explicit profile decorator
-        line_profiler.profile._kernprof_overwrite(prof)
     else:
         prof = ContextualProfile()
+
+    # If line_profiler is installed, then overwrite the explicit decorator
+    try:
+        import line_profiler
+    except ImportError:
+        ...
+    else:
+        line_profiler.profile._kernprof_overwrite(prof)
+
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
@@ -275,11 +284,18 @@ def main(args=None):
         print('Wrote profile results to %s' % options.outfile)
         if options.view:
             if isinstance(prof, ContextualProfile):
-                prof.print_stats(stream=original_stdout)
+                prof.print_stats()
             else:
                 prof.print_stats(output_unit=options.unit,
                                  stripzeros=options.skip_zero,
+                                 rich=options.rich,
                                  stream=original_stdout)
+        else:
+            print('Inspect results with:')
+            if isinstance(prof, ContextualProfile):
+                print(f'{sys.executable} -m pstats "{options.outfile}"')
+            else:
+                print(f'{sys.executable} -m line_profiler -rmt "{options.outfile}"')
 
 
 if __name__ == '__main__':

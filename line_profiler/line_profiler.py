@@ -1,4 +1,9 @@
 #!/usr/bin/env python
+"""
+This module defines the core :class:`LineProfiler` class as well as methods to
+inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
+Cython backend.
+"""
 import pickle
 import functools
 import inspect
@@ -46,7 +51,21 @@ def is_classmethod(f):
 
 
 class LineProfiler(CLineProfiler):
-    """ A profiler that records the execution times of individual lines.
+    """
+    A profiler that records the execution times of individual lines.
+
+    This provides the core line-profiler functionality.
+
+    Example:
+        >>> import line_profiler
+        >>> profile = line_profiler.LineProfiler()
+        >>> @profile
+        >>> def func():
+        >>>     x1 = list(range(10))
+        >>>     x2 = list(range(100))
+        >>>     x3 = list(range(1000))
+        >>> func()
+        >>> profile.print_stats()
     """
 
     def __call__(self, func):
@@ -457,6 +476,9 @@ def load_stats(filename):
 
 
 def main():
+    """
+    The line profiler CLI to view output from ``kernprof -l``.
+    """
     def positive_float(value):
         val = float(value)
         if val <= 0:

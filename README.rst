@@ -1,7 +1,7 @@
 line_profiler and kernprof
 --------------------------
 
-|Pypi| |Downloads| |CircleCI| |GithubActions| |Codecov|
+|Pypi| |ReadTheDocs| |Downloads| |CircleCI| |GithubActions| |Codecov|
 
 
 NOTICE: This is the official ``line_profiler`` repository. The most recent
@@ -10,6 +10,14 @@ points to this repo. The original
 `line_profiler <https://github.com/rkern/line_profiler/>`_ package by
 `@rkern <https://github.com/rkern/>`_ is unmaintained. This fork is the
 official continuation of the project.
+
++---------------+--------------------------------------------+
+| Github        | https://github.com/pyutils/line_profiler   |
++---------------+--------------------------------------------+
+| Pypi          | https://pypi.org/project/line_profiler     |
++---------------+--------------------------------------------+
+| ReadTheDocs   | https://kernprof.readthedocs.io/en/latest/ |
++---------------+--------------------------------------------+
 
 ----
 
@@ -184,6 +192,9 @@ item to the extensions list::
         'line_profiler',
     ]
 
+Or explicitly call::
+
+    %load_ext line_profiler
 
 To get usage help for %lprun, use the standard IPython help mechanism::
 
@@ -287,6 +298,20 @@ built on ``cProfile`` or ``line_profiler`` are as follows:
 .. _pycharm_line_profiler_plugin: https://plugins.jetbrains.com/plugin/16536-line-profiler
 .. _spyder_line_profiler_plugin: https://github.com/spyder-ide/spyder-line-profiler
 .. _web_profiler_ui: https://github.com/mirecl/pprof
+
+
+Related Work
+============
+
+Check out these other Python profilers:
+
+* `Scalene <https://github.com/plasma-umass/scalene>`_: A CPU+GPU+memory sampling based profiler.
+
+* `PyInstrument  <https://github.com/joerick/pyinstrument>`_: A call stack profiler.
+
+* `Yappi <https://github.com/sumerc/yappi>`_: A tracing profiler that is multithreading, asyncio and gevent aware.
+
+* `profile / cProfile <https://docs.python.org/3/library/profile.html>`_: The builtin profile module.
 
 Frequently Asked Questions
 ==========================
@@ -426,4 +451,5 @@ See `CHANGELOG`_.
    :target: https://pypistats.org/packages/line_profiler
 .. |GithubActions| image:: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml/badge.svg?branch=main
    :target: https://github.com/pyutils/line_profiler/actions?query=branch%3Amain
-
+.. |ReadTheDocs| image:: https://readthedocs.org/projects/kernprof/badge/?version=latest
+    :target: http://ubelt.readthedocs.io/en/latest/

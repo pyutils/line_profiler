@@ -1,4 +1,7 @@
 #cython: language_level=3
+"""
+This is the Cython backend used in :py:mod:`line_profiler.line_profiler`.
+"""
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
 cimport cython
@@ -159,6 +162,9 @@ class LineStats(object):
 cdef class LineProfiler:
     """ 
     Time the execution of lines of Python code.
+
+    This is the Cython base class for
+    :class:`line_profiler.line_profiler.LineProfiler`.
 
     Example:
         >>> import copy
