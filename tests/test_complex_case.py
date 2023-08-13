@@ -1,5 +1,8 @@
-import ubelt as ub
+import os
+import sys
 import tempfile
+import ubelt as ub
+LINUX = sys.platform.startswith('linux')
 
 
 def get_complex_example_fpath():
@@ -17,7 +20,7 @@ def test_complex_example_python_none():
     Make sure the complex example script works without any profiling
     """
     complex_fpath = get_complex_example_fpath()
-    info = ub.cmd(f'PROFILE_TYPE=none python {complex_fpath}', shell=True, verbose=3)
+    info = ub.cmd(f'python {complex_fpath}', shell=True, verbose=3, env=ub.udict(os.environ) | {'PROFILE_TYPE': 'none'})
     assert info.stdout == ''
     info.check_returncode()
 
@@ -29,10 +32,6 @@ def test_varied_complex_invocations():
         with cProfile / LineProfiler backends
         with / without explicit profiler
     """
-    import sys
-    import os
-
-    LINUX = sys.platform.startswith('linux')
 
     # Enumerate valid cases to test
     cases = []
