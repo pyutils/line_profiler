@@ -61,9 +61,9 @@ class LineProfiler(CLineProfiler):
         >>> profile = line_profiler.LineProfiler()
         >>> @profile
         >>> def func():
-        >>>     x1 = [_ for i in range(10)]
-        >>>     x2 = [_ for i in range(100)]
-        >>>     x3 = [_ for i in range(1000)]
+        >>>     x1 = list(range(10))
+        >>>     x2 = list(range(100))
+        >>>     x3 = list(range(1000))
         >>> func()
         >>> profile.print_stats()
     """
