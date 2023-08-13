@@ -36,7 +36,7 @@ class ProfmodExtractor:
     def _is_path(text):
         """Check whether a string is a path.
 
-        Checks if a string contains a slash or ends with .py
+        Checks if a string contains a slash or ends with .py indicating it is a path.
 
         Args:
             text (str):
@@ -51,12 +51,16 @@ class ProfmodExtractor:
 
     @classmethod
     def _get_modnames_to_profile_from_prof_mod(cls, script_file, prof_mod):
-        """Grab the valid paths and all dotted paths in prof_mod and their subpackages and submodules.
+        """Grab the valid paths and all dotted paths in prof_mod and their subpackages
+        and submodules, in the form of dotted paths.
 
-        Gets paths and converts dotted paths to paths, in prof_mod, and checks if they exist.
-        Then converts the paths to dotted paths and adds them to a list of modnames_to_profile.
-        Then all subpackages and submodules under each path is fetched, converted to modname
-        and added to the list.
+        First all items in prof_mod are converted to a valid path. if unable to convert, 
+        check if the item is an invalid path and skip it, else assume it is an installed package.
+        The valid paths are then converted to dotted paths.
+        The converted dotted paths along with the items assumed to be installed packages
+        are added a list of modnames_to_profile.
+        Then all subpackages and submodules under each valid path is fetched, converted to
+        dotted path and also added to the list.
         if script_file is in prof_mod it is skipped to avoid name collision with othe imports,
         it will be processed elsewhere in the autoprofile pipeline.
 
@@ -87,17 +91,20 @@ class ProfmodExtractor:
                 """
                 continue
             """
-            check whether the item in prof_mod is a path that exists, then convert it to dotted path.
-            if it is not a path (doesn't have a slash), assume the item is a dotted path
+            convert the item in prof_mod into a valid path.
+            if it fails, the item may point to an installed module rather than local script
+            so we check if the item is path and whether that path exists, else skip the item.
             """
             modpath = modname_to_modpath(mod, sys_path=new_sys_path)
             if modpath is None:
+                """if cannot convert to modpath, check if already path and if invalid"""
                 if not os.path.exists(mod):
                     if cls._is_path(mod):
                         """modpath does not exist, so skip"""
                         continue
                     modnames_to_profile.append(mod)
                     continue
+                """assume item is and installed package. modpath_to_modname will have no effect"""
                 modpath = mod
 
             """convert path to dotted path and add it to list to be profiled"""

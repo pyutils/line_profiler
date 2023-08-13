@@ -7,7 +7,7 @@ PROFILER_LOCALS_NAME = 'prof'
 
 
 def _extend_line_profiler_for_profiling_imports(prof):
-    """Allow @profile decorator to handle functions/methods, classes & modules.
+    """Allow profiler to handle functions/methods, classes & modules with a single call.
 
     Add a method to LineProfiler that can identify whether the object is a
     function/method, class or module and handle it's profiling accordingly.

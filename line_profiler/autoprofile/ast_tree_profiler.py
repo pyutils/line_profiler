@@ -9,9 +9,9 @@ from .profmod_extractor import ProfmodExtractor
 class AstTreeProfiler:
     """Create an abstract syntax tree of a script and add profiling to it.
 
-    Reads a script file and generates an abstract syntax tree, then adds nodes to the AST
-    that adds the specified functions/methods, classes & modules in prof_mod to the
-    profiler to be profiled.
+    Reads a script file and generates an abstract syntax tree, then adds nodes
+    and/or decorators to the AST that adds the specified functions/methods,
+    classes & modules in prof_mod to the profiler to be profiled.
     """
 
     def __init__(self,
@@ -94,7 +94,7 @@ class AstTreeProfiler:
                           profile_imports=False):
         """Add profiling to an abstract syntax tree.
 
-        Adds nodes in the AST that adds the specified objects to the profiler.
+        Adds nodes to the AST that adds the specified objects to the profiler.
         If profile_full_script is True, all functions/methods, classes & modules in the script
         have a node added to the AST to add them to the profiler.
         If profile_imports is True as well as profile_full_script, all imports are have a node

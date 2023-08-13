@@ -69,8 +69,8 @@ class AstProfileTransformer(ast.NodeTransformer):
 
         Checks if the function/method already has a profile_name decorator, if not, it will append
         profile_name to the end of the node's decorator list.
-        The decorator is added to the end of the list to avoid conflicts with other decorators,
-        like @staticmethod.
+        The decorator is added to the end of the list to avoid conflicts with other decorators
+        e.g. @staticmethod.
 
         Args:
             node (_ast.FunctionDef):
