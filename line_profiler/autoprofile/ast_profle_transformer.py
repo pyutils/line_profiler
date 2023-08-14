@@ -1,10 +1,7 @@
 import ast
 
-PROFILER_NAME = 'profile'
-PROFILER_METHOD = 'add_imported_function_or_module'
 
-
-def ast_create_profile_node(modname, profiler_name=PROFILER_NAME, attr=PROFILER_METHOD):
+def ast_create_profile_node(modname, profiler_name='profile', attr='add_imported_function_or_module'):
     """Create an abstract syntax tree node that adds an object to the profiler to be profiled.
 
     An abstract syntax tree node is created which calls the attr method from profile and
@@ -26,7 +23,7 @@ def ast_create_profile_node(modname, profiler_name=PROFILER_NAME, attr=PROFILER_
             the objects can be specified using its dotted path or full path (if applicable).
 
     Returns:
-        expr (_ast.Expr):
+        (_ast.Expr): expr
             AST node that adds modname to profiler.
     """
     func = ast.Attribute(value=ast.Name(id=profiler_name, ctx=ast.Load()), attr=attr, ctx=ast.Load())
@@ -47,7 +44,7 @@ class AstProfileTransformer(ast.NodeTransformer):
     immediately after the import.
     """
 
-    def __init__(self, profile_imports=False, profiled_imports=None, profiler_name=PROFILER_NAME):
+    def __init__(self, profile_imports=False, profiled_imports=None, profiler_name='profile'):
         """Initializes the AST transformer with the profiler name.
 
         Args:
@@ -74,11 +71,11 @@ class AstProfileTransformer(ast.NodeTransformer):
         e.g. @staticmethod.
 
         Args:
-            node (_ast.FunctionDef):
+            (_ast.FunctionDef): node
                 function/method in the AST
 
         Returns:
-            node (_ast.FunctionDef):
+            (_ast.FunctionDef): node
                 function/method with profiling decorator
         """
         if self._profiler_name not in (d.id for d in node.decorator_list):
@@ -97,7 +94,7 @@ class AstProfileTransformer(ast.NodeTransformer):
                 import in the AST
 
         Returns:
-            node (Union[Union[_ast.Import,_ast.ImportFrom],List[Union[_ast.Import,_ast.ImportFrom,_ast.Expr]]]):
+            (Union[Union[_ast.Import,_ast.ImportFrom],List[Union[_ast.Import,_ast.ImportFrom,_ast.Expr]]]): node
                 if profile_imports is False:
                     returns the import node
                 if profile_imports is True:
@@ -123,7 +120,7 @@ class AstProfileTransformer(ast.NodeTransformer):
                 import in the AST
 
         Returns:
-            node (Union[_ast.Import,List[Union[_ast.Import,_ast.Expr]]]):
+            (Union[_ast.Import,List[Union[_ast.Import,_ast.Expr]]]): node
                 if profile_imports is False:
                     returns the import node
                 if profile_imports is True:
@@ -139,7 +136,7 @@ class AstProfileTransformer(ast.NodeTransformer):
                 import in the AST
 
         Returns:
-            node (Union[_ast.ImportFrom,List[Union[_ast.ImportFrom,_ast.Expr]]]):
+            (Union[_ast.ImportFrom,List[Union[_ast.ImportFrom,_ast.Expr]]]): node
                 if profile_imports is False:
                     returns the import node
                 if profile_imports is True:

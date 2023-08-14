@@ -221,7 +221,7 @@ class ProfmodExtractor:
         abstract syntax tree, returning their alias and the index they appear in the AST.
 
         Returns:
-            tree_imports_to_profile_dict (Dict[int,str]):
+            (Dict[int,str]): tree_imports_to_profile_dict
                 dict of imports to profile
                     key (int):
                         index of import in AST

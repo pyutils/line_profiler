@@ -9,7 +9,7 @@ def add_imported_function_or_module(self, item):
     profiling accordingly.
 
     Args:
-        item (Union[function,type,module]):
+        item (Callable | Type | ModuleType):
             object to be profiled.
     """
     if inspect.isfunction(item):

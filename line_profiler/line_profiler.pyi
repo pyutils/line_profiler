@@ -48,8 +48,10 @@ class LineProfiler(CLineProfiler):
                     stream: Incomplete | None = ...,
                     output_unit: Incomplete | None = ...,
                     stripzeros: bool = ...,
+                    details: bool = ...,
                     summarize: bool = ...,
-                    sort: bool = ...) -> None:
+                    sort: bool = ...,
+                    rich: bool = ...) -> None:
         ...
 
     def run(self, cmd):
@@ -76,7 +78,8 @@ def show_func(filename: str,
               unit: float,
               output_unit: float | None = None,
               stream: io.TextIOBase | None = None,
-              stripzeros: bool = False) -> None:
+              stripzeros: bool = False,
+              rich: bool = False) -> None:
     ...
 
 
@@ -85,8 +88,10 @@ def show_text(stats,
               output_unit: Incomplete | None = ...,
               stream: Incomplete | None = ...,
               stripzeros: bool = ...,
+              details: bool = ...,
               summarize: bool = ...,
-              sort: bool = ...):
+              sort: bool = ...,
+              rich: bool = ...):
     ...
 
 

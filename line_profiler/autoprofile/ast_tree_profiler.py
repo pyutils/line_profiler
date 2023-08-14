@@ -5,6 +5,11 @@ from .ast_profle_transformer import (AstProfileTransformer,
                                      ast_create_profile_node)
 from .profmod_extractor import ProfmodExtractor
 
+__docstubs__ = """
+from .ast_profle_transformer import AstProfileTransformer
+from .profmod_extractor import ProfmodExtractor
+"""
+
 
 class AstTreeProfiler:
     """Create an abstract syntax tree of a script and add profiling to it.
@@ -34,10 +39,10 @@ class AstTreeProfiler:
             profile_imports (bool):
                 if True, when auto-profiling whole script, profile all imports aswell.
 
-            ast_transformer_class_handler (AstProfileTransformer):
+            ast_transformer_class_handler (Type):
                 the AstProfileTransformer class that handles profiling the whole script.
 
-            profmod_extractor_class_handler (ProfmodExtractor):
+            profmod_extractor_class_handler (Type):
                 the ProfmodExtractor class that handles mapping prof_mod to objects in the script.
         """
         self._script_file = script_file
@@ -63,7 +68,7 @@ class AstTreeProfiler:
                 the objects can be specified using its dotted path or full path (if applicable).
 
         Returns:
-            profile_full_script (bool):
+            (bool): profile_full_script
                 if True, profile whole script.
         """
         script_file_realpath = os.path.realpath(script_file)
@@ -118,7 +123,7 @@ class AstTreeProfiler:
                 if True, and profile_full_script is True, profile all imports aswell.
 
         Returns:
-            tree (_ast.Module):
+            (_ast.Module): tree
                 abstract syntax tree with profiling.
         """
         profiled_imports = []
@@ -146,7 +151,7 @@ class AstTreeProfiler:
         in the script are added to the profiler.
 
         Returns:
-            tree (_ast.Module):
+            (_ast.Module): tree
                 abstract syntax tree with profiling.
         """
         profile_full_script = self._check_profile_full_script(self._script_file, self._prof_mod)

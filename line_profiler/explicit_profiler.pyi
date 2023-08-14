@@ -1,17 +1,17 @@
+from typing import Dict
+from typing import List
 from typing import Callable
 from _typeshed import Incomplete
 
 
 class GlobalProfiler:
+    setup_config: Dict[str, List[str]]
     output_prefix: str
-    environ_flag: str
-    cli_flags: Incomplete
-    enabled: Incomplete
+    write_config: Dict[str, bool]
+    show_config: Dict[str, bool]
+    enabled: bool | None
 
     def __init__(self) -> None:
-        ...
-
-    def implicit_setup(self) -> None:
         ...
 
     def enable(self, output_prefix: Incomplete | None = ...) -> None:
