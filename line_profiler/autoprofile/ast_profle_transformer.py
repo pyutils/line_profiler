@@ -12,6 +12,7 @@ def ast_create_profile_node(modname, profiler_name=PROFILER_NAME, attr=PROFILER_
     At runtime, this adds the object to the profiler so it can be profiled.
     This node must be added after the first instance of modname in the AST and before it is used.
     The node will look like:
+        >>> # xdoctest: +SKIP
         >>> import foo.bar
         >>> profile.add_imported_function_or_module(foo.bar)
 
