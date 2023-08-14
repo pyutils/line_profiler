@@ -10,7 +10,9 @@ import ubelt as ub
 #     except ModuleNotFoundError:
 #         unparse = None
 
-import autoprofile
+# import sys
+# sys.path.append('../')
+from line_profiler.autoprofile import autoprofile
 
 
 def create_poc(dry_run=False):
