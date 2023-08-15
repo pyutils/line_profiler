@@ -1,3 +1,50 @@
+"""
+
+AutoProfile Script Demo
+=======================
+
+The following demo is end-to-end bash code that writes a demo script and
+profiles it with autoprofile.
+
+.. code:: bash
+
+    # Write demo python script to disk
+    python -c "if 1:
+        import textwrap
+        text = textwrap.dedent(
+            '''
+            def plus(a, b):
+                return a + b
+
+            def fib(n):
+                a, b = 0, 1
+                while a < n:
+                    a, b = b, plus(a, b)
+
+            def main():
+                import math
+                import time
+                start = time.time()
+
+                print('start calculating')
+                while time.time() - start < 1:
+                    fib(10)
+                    math.factorial(1000)
+                print('done calculating')
+
+            main()
+            '''
+        ).strip()
+        with open('demo.py', 'w') as file:
+            file.write(text)
+    "
+
+    echo "---"
+    echo "## Profile With AutoProfile"
+    python -m kernprof -p demo.py -l demo.py
+    python -m line_profiler -rmt demo.py.lprof
+"""
+
 import types
 from .ast_tree_profiler import AstTreeProfiler
 from .line_profiler_utils import add_imported_function_or_module

@@ -211,14 +211,14 @@ def main(args=None):
     parser.add_argument('-z', '--skip-zero', action='store_true',
                         help="Hide functions which have not been called")
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module."
+                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                         "Minimum value is 1 (second). Defaults to disabled.")
     parser.add_argument('-p', '--prof-mod', type=str, default='',
-                        help="List of modules, functions and/or classes to profile specified by their name or path."
-                        "List is comma separated, adding the current script path profiles full script."
+                        help="List of modules, functions and/or classes to profile specified by their name or path. "
+                        "List is comma separated, adding the current script path profiles full script. "
                         "Only works with line_profiler -l, --line-by-line")
-    parser.add_argument('-m', '--prof-imports', action='store_true',
-                        help="Profile imports aswell when full script is being profiled."
+    parser.add_argument('--prof-imports', action='store_true',
+                        help="Profile imports aswell when full script is being profiled. "
                         "Only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')
@@ -302,10 +302,24 @@ def main(args=None):
                                  stream=original_stdout)
         else:
             print('Inspect results with:')
+            py_exe = _python_command()
             if isinstance(prof, ContextualProfile):
-                print(f'{sys.executable} -m pstats "{options.outfile}"')
+                print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
-                print(f'{sys.executable} -m line_profiler -rmt "{options.outfile}"')
+                print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+
+
+def _python_command():
+    """
+    Return a command that corresponds to ``sys.executable``.
+    """
+    import shutil
+    if shutil.which('python') == sys.executable:
+        return 'python'
+    elif shutil.which('python3') == sys.executable:
+        return 'python3'
+    else:
+        return sys.executable
 
 
 if __name__ == '__main__':
