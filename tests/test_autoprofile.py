@@ -138,7 +138,7 @@ def _write_demo_module(temp_dpath):
             val = submod2.add_two(val)
             val = submod3.add_three(val)
 
-            result = statistics.geometric_mean(val)
+            result = statistics.harmonic_mean(val)
             print(result)
 
         main()
@@ -276,5 +276,5 @@ def test_autoprofile_script_with_prof_imports():
     proc.check_returncode()
 
     assert 'Function: add_one' in raw_output
-    assert 'Function: geometric_mean' in raw_output
+    assert 'Function: harmonic_mean' in raw_output
     assert 'Function: main' in raw_output
