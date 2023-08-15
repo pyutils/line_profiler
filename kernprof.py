@@ -218,7 +218,7 @@ def main(args=None):
                         "List is comma separated, adding the current script path profiles full script. "
                         "Only works with line_profiler -l, --line-by-line")
     parser.add_argument('--prof-imports', action='store_true',
-                        help="Profile imports aswell when full script is being profiled. "
+                        help="If specified in autoprofile mode, will also autoprofile imports in the autoprofiled modules. "
                         "Only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')

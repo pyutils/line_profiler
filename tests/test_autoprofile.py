@@ -1,55 +1,49 @@
 import tempfile
-import pathlib
-import shutil
 import sys
 import os
-import subprocess
-import textwrap
-from subprocess import PIPE
+import ubelt as ub
 
 
 def test_single_function_autoprofile():
     """
     Test that every function in a file is profiled when autoprofile is enabled.
     """
-    temp_dpath = pathlib.Path(tempfile.mkdtemp())
+    temp_dpath = ub.Path(tempfile.mkdtemp())
 
-    code = textwrap.dedent(
+    code = ub.codeblock(
         '''
         def func1(a):
             return a + 1
 
         func1(1)
-        ''').strip()
-    with ChDir(temp_dpath):
+        ''')
+    with ub.ChDir(temp_dpath):
 
-        script_fpath = pathlib.Path('script.py')
+        script_fpath = ub.Path('script.py')
         script_fpath.write_text(code)
 
         args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l', os.fspath(script_fpath)]
-        proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              universal_newlines=True)
+        proc = ub.cmd(args)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
         args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
-        proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              universal_newlines=True)
+        proc = ub.cmd(args)
         raw_output = proc.stdout
         proc.check_returncode()
 
     assert 'func1' in raw_output
-    shutil.rmtree(temp_dpath)
+    temp_dpath.delete()
 
 
 def test_multi_function_autoprofile():
     """
     Test that every function in a file is profiled when autoprofile is enabled.
     """
-    temp_dpath = pathlib.Path(tempfile.mkdtemp())
+    temp_dpath = ub.Path(tempfile.mkdtemp())
 
-    code = textwrap.dedent(
+    code = ub.codeblock(
         '''
         def func1(a):
             return a + 1
@@ -64,22 +58,20 @@ def test_multi_function_autoprofile():
             return a % 2 + 4
 
         func1(1)
-        ''').strip()
-    with ChDir(temp_dpath):
+        ''')
+    with ub.ChDir(temp_dpath):
 
-        script_fpath = pathlib.Path('script.py')
+        script_fpath = ub.Path('script.py')
         script_fpath.write_text(code)
 
         args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l', os.fspath(script_fpath)]
-        proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              universal_newlines=True)
+        proc = ub.cmd(args)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
         args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
-        proc = subprocess.run(args, stdout=PIPE, stderr=PIPE,
-                              universal_newlines=True)
+        proc = ub.cmd(args)
         raw_output = proc.stdout
         proc.check_returncode()
 
@@ -88,49 +80,201 @@ def test_multi_function_autoprofile():
     assert 'func3' in raw_output
     assert 'func4' in raw_output
 
-    shutil.rmtree(temp_dpath)
+    temp_dpath.delete()
 
 
-class ChDir:
+def _write_demo_module(temp_dpath):
     """
-    Context manager that changes the current working directory and then
-    returns you to where you were.
-
-    This is nearly the same as the stdlib :func:`contextlib.chdir`, with the
-    exception that it will do nothing if the input path is None (i.e. the user
-    did not want to change directories).
-
-    Args:
-        dpath (str | PathLike | None):
-            The new directory to work in.
-            If None, then the context manager is disabled.
-
-    SeeAlso:
-        :func:`contextlib.chdir`
+    Make a dummy test module structure
     """
-    def __init__(self, dpath):
-        self._context_dpath = dpath
-        self._orig_dpath = None
+    (temp_dpath / 'test_mod').ensuredir()
+    (temp_dpath / 'test_mod/subpkg').ensuredir()
 
-    def __enter__(self):
-        """
-        Returns:
-            ChDir: self
-        """
-        if self._context_dpath is not None:
-            self._orig_dpath = os.getcwd()
-            os.chdir(self._context_dpath)
-        return self
+    (temp_dpath / 'test_mod/__init__.py').touch()
+    (temp_dpath / 'test_mod/subpkg/__init__.py').touch()
 
-    def __exit__(self, ex_type, ex_value, ex_traceback):
-        """
-        Args:
-            ex_type (Type[BaseException] | None):
-            ex_value (BaseException | None):
-            ex_traceback (TracebackType | None):
+    (temp_dpath / 'test_mod/util.py').write_text(ub.codeblock(
+        '''
+        def add_operator(a, b):
+            return a + b
+        '''))
 
-        Returns:
-            bool | None
-        """
-        if self._context_dpath is not None:
-            os.chdir(self._orig_dpath)
+    (temp_dpath / 'test_mod/submod1.py').write_text(ub.codeblock(
+        '''
+        from test_mod.util import add_operator
+        def add_one(items):
+            new_items = []
+            for item in items:
+                new_item = add_operator(item, 1)
+                new_items.append(new_item)
+            return new_items
+        '''))
+    (temp_dpath / 'test_mod/submod2.py').write_text(ub.codeblock(
+        '''
+        from test_mod.util import add_operator
+        def add_two(items):
+            new_items = [add_operator(item, 2) for item in items]
+            return new_items
+        '''))
+    (temp_dpath / 'test_mod/subpkg/submod3.py').write_text(ub.codeblock(
+        '''
+        from test_mod.util import add_operator
+        def add_three(items):
+            new_items = [add_operator(item, 3) for item in items]
+            return new_items
+        '''))
+
+    script_fpath = (temp_dpath / 'script.py')
+    script_fpath.write_text(ub.codeblock(
+        '''
+        from test_mod import submod1
+        from test_mod import submod2
+        from test_mod.subpkg import submod3
+        import statistics
+
+        def main():
+            data = [1, 2, 3]
+            val = submod1.add_one(data)
+            val = submod2.add_two(val)
+            val = submod3.add_three(val)
+
+            result = statistics.geometric_mean(val)
+            print(result)
+
+        main()
+        '''))
+    return script_fpath
+
+
+def test_autoprofile_script_with_module():
+    """
+    Test that every function in a file is profiled when autoprofile is enabled.
+    """
+
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    script_fpath = _write_demo_module(temp_dpath)
+
+    # args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+    args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert 'Function: add_one' not in raw_output
+    assert 'Function: main' in raw_output
+
+
+def test_autoprofile_module():
+    """
+    Test that every function in a file is profiled when autoprofile is enabled.
+    """
+
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    script_fpath = _write_demo_module(temp_dpath)
+
+    # args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+    args = [sys.executable, '-m', 'kernprof', '-p', 'test_mod', '-l', os.fspath(script_fpath)]
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: main' not in raw_output
+
+
+def test_autoprofile_module_list():
+    """
+    Test only modules specified are autoprofiled
+    """
+
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    script_fpath = _write_demo_module(temp_dpath)
+
+    # args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+    args = [sys.executable, '-m', 'kernprof', '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l', os.fspath(script_fpath)]
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: add_two' not in raw_output
+    assert 'Function: add_three' in raw_output
+    assert 'Function: main' not in raw_output
+
+
+def test_autoprofile_module_with_prof_imports():
+    """
+    Test the imports of the specified modules are profiled as well.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+    script_fpath = _write_demo_module(temp_dpath)
+
+    args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'test_mod.submod1', '-l', os.fspath(script_fpath)]
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: add_operator' in raw_output
+    assert 'Function: add_three' not in raw_output
+    assert 'Function: main' not in raw_output
+
+
+def test_autoprofile_script_with_prof_imports():
+    """
+    Test the imports of the specified modules are profiled as well.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+    script_fpath = _write_demo_module(temp_dpath)
+
+    import sys
+    if sys.version_info[0:2] >= (3, 11):
+        import pytest
+        pytest.skip('Failing due to the noop bug')
+
+    args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: geometric_mean' in raw_output
+    assert 'Function: main' in raw_output
