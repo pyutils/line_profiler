@@ -325,22 +325,6 @@ Frequently Asked Questions
     I didn't manage to come up with a meaningful name, so I named it after
     myself.
 
-* Why not use hotshot instead of line_profile?
-
-    hotshot can do line-by-line timings, too. However, it is deprecated and may
-    disappear from the standard library. Also, it can take a long time to
-    process the results while I want quick turnaround in my workflows. hotshot
-    pays this processing time in order to make itself minimally intrusive to the
-    code it is profiling. Code that does network operations, for example, may
-    even go down different code paths if profiling slows down execution too
-    much. For my use cases, and I think those of many other people, their
-    line-by-line profiling is not affected much by this concern.
-
-* Why not allow using hotshot from kernprof.py?
-
-    I don't use hotshot, myself. I will accept contributions in this vein,
-    though.
-
 * The line-by-line timings don't add up when one profiled function calls
   another. What's up with that?
 
