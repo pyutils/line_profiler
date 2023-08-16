@@ -1,6 +1,83 @@
 #!/usr/bin/env python
 """
 Script to conveniently run profilers on code in a variety of circumstances.
+
+To profile a script, decorate the functions of interest with ``@profile``
+
+.. code:: bash
+
+    echo "if 1:
+        @profile
+        def main():
+            1 + 1
+        main()
+    " > script_to_profile.py
+
+NOTE:
+
+    New in 4.1.0: Instead of relying on injecting ``profile`` into the builtins
+    you can now ``import line_profiler`` and use ``line_profiler.profile`` to
+    decorate your functions. This allows the script to remain functional even
+    if it is not actively profiled. See :py:mod:`line_profiler` for details.
+
+
+Then run the script using kernprof:
+
+.. code:: bash
+
+    kernprof -b script_to_profile.py
+
+By default this runs with the default :py:mod:`cProfile` profiler and does not
+require compiled modules. Instructions to view the results will be given in the
+output. Alternatively, adding ``-v`` to the command line will write results to
+stdout.
+
+To enable line-by-line profiling, then :py:mod:`line_profiler` must be
+available and compiled. Add the ``-l`` argument to the kernprof invocation.
+
+.. code:: bash
+
+    kernprof -lb script_to_profile.py
+
+
+For more details and options, refer to the CLI help.
+To view kernprof help run:
+
+.. code:: bash
+
+    kenprof --help
+
+which displays:
+
+.. code::
+
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports] script ...
+
+    Run and profile a python script.
+
+    positional arguments:
+      script                The python script file to run
+      args                  Optional script arguments
+
+    options:
+      -h, --help            show this help message and exit
+      -V, --version         show program's version number and exit
+      -l, --line-by-line    Use the line-by-line profiler instead of cProfile. Implies --builtin.
+      -b, --builtin         Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', '@profile' to decorate functions, or 'with profile:' to profile a section of code.
+      -o OUTFILE, --outfile OUTFILE
+                            Save stats to <outfile> (default: 'scriptname.lprof' with --line-by-line, 'scriptname.prof' without)
+      -s SETUP, --setup SETUP
+                            Code to execute before the code to profile
+      -v, --view            View the results of the profile in addition to saving it
+      -r, --rich            Use rich formatting if viewing output
+      -u UNIT, --unit UNIT  Output unit (in seconds) in which the timing info is displayed (default: 1e-6)
+      -z, --skip-zero       Hide functions which have not been called
+      -i [OUTPUT_INTERVAL], --output-interval [OUTPUT_INTERVAL]
+                            Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to disabled.
+      -p PROF_MOD, --prof-mod PROF_MOD
+                            List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
+                            full script. Only works with line_profiler -l, --line-by-line
+      --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
 import functools
@@ -137,7 +214,7 @@ class RepeatedTimer(object):
     Adapted from [SO474528]_.
 
     References:
-        .. [SO474528] https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds/40965385#40965385
+        .. [SO474528] https://stackoverflow.com/questions/474528/execute-function-every-x-seconds/40965385#40965385
     """
     def __init__(self, interval, dump_func, outfile):
         self._timer = None
@@ -186,7 +263,7 @@ def find_script(script_name):
 
 def _python_command():
     """
-    Return a command that corresponds to ``sys.executable``.
+    Return a command that corresponds to :py:obj:`sys.executable`.
     """
     import shutil
     if shutil.which('python') == sys.executable:
@@ -198,6 +275,9 @@ def _python_command():
 
 
 def main(args=None):
+    """
+    Runs the command line interface
+    """
     def positive_float(value):
         val = float(value)
         if val <= 0:
@@ -234,7 +314,7 @@ def main(args=None):
                         "List is comma separated, adding the current script path profiles full script. "
                         "Only works with line_profiler -l, --line-by-line")
     parser.add_argument('--prof-imports', action='store_true',
-                        help="If specified in autoprofile mode, will also autoprofile imports in the autoprofiled modules. "
+                        help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                         "Only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')
