@@ -313,6 +313,10 @@ Check out these other Python profilers:
 
 * `profile / cProfile <https://docs.python.org/3/library/profile.html>`_: The builtin profile module.
 
+* `timeit <https://docs.python.org/3/library/timeit.html>`_: The builtin timeit module for profiling single statements.
+
+* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alterantive to the buildin ``timeit`` module.
+
 Frequently Asked Questions
 ==========================
 

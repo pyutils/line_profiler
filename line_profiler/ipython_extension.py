@@ -1,5 +1,26 @@
 """
 This module defines the ``%lprun`` IPython magic.
+
+If you are using IPython, there is an implementation of an %lprun magic command
+which will let you specify functions to profile and a statement to execute. It
+will also add its LineProfiler instance into the __builtins__, but typically,
+you would not use it like that.
+
+For IPython 0.11+, you can install it by editing the IPython configuration file
+``~/.ipython/profile_default/ipython_config.py`` to add the ``'line_profiler'``
+item to the extensions list::
+
+    c.TerminalIPythonApp.extensions = [
+        'line_profiler',
+    ]
+
+Or explicitly call::
+
+    %load_ext line_profiler
+
+To get usage help for %lprun, use the standard IPython help mechanism::
+
+    In [1]: %lprun?
 """
 
 from io import StringIO
