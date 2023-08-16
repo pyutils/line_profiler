@@ -3,6 +3,7 @@ Changes
 
 4.1.0
 ~~~~
+* FIX: skipzeros now checks for zero hits instead of zero time
 * FIX: Fixed errors in Python 3.11 with duplicate functions.
 * FIX: ``show_text`` now increases column sizes or switches to scientific notation to maintain alignment
 * ENH: ``show_text`` now has new options: sort and summarize

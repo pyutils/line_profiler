@@ -4,6 +4,7 @@ This is the Cython backend used in :py:mod:`line_profiler.line_profiler`.
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
+import sys
 cimport cython
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
@@ -238,8 +239,12 @@ cdef class LineProfiler:
             NOP_VALUE: int = 9
             # Op code should be 2 bytes as stated in
             # https://docs.python.org/3/library/dis.html
+            # if sys.version_info[0:2] >= (3, 11):
             NOP_BYTES = NOP_VALUE.to_bytes(2, byteorder=byteorder)
-            co_padding = NOP_BYTES * len(self.dupes_map[code.co_code])
+            # else:
+            #     NOP_BYTES = NOP_VALUE.to_bytes(1, byteorder=byteorder)
+
+            co_padding = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
             co_code = code.co_code + co_padding
             CodeType = type(code)
             code = _code_replace(func, co_code=co_code)
