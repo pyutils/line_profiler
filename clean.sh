@@ -19,6 +19,13 @@ rm -rf CMakeTmp
 rm -rf CMakeFiles
 rm -rf tests/htmlcov
 
+rm -rf demo_primes*
+rm -rf docs/demo.py*
+rm -rf docs/script_to_profile.py*
+rm -rf tests/complex_example.py.lprof
+rm -rf tests/complex_example.py.prof
+rm -rf script_to_profile.py*
+
 
 if [ -f "distutils.errors" ]; then
     rm distutils.errors || echo "skip rm"
