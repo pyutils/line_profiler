@@ -106,8 +106,8 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     return block_hash ^ linenum
 
 def label(code):
-    """ Return a (filename, first_lineno, func_name) tuple for a given code
-    object.
+    """ 
+    Return a (filename, first_lineno, func_name) tuple for a given code object.
 
     This is the same labelling as used by the cProfile module in Python 2.5.
     """
@@ -142,17 +142,19 @@ cpdef _code_replace(func, co_code):
 
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
-    """ Object to encapsulate line-profile statistics.
+    """ 
+    Object to encapsulate line-profile statistics.
 
-    Attributes
-    ----------
-    timings : dict
-        Mapping from (filename, first_lineno, function_name) of the profiled
-        function to a list of (lineno, nhits, total_time) tuples for each
-        profiled line. total_time is an integer in the native units of the
-        timer.
-    unit : float
-        The number of seconds per timer unit.
+    Attributes:
+
+        timings (dict):
+            Mapping from (filename, first_lineno, function_name) of the
+            profiled function to a list of (lineno, nhits, total_time) tuples
+            for each profiled line. total_time is an integer in the native
+            units of the timer.
+
+        unit (float):
+            The number of seconds per timer unit.
     """
     def __init__(self, timings, unit):
         self.timings = timings
@@ -225,7 +227,8 @@ cdef class LineProfiler:
         if code.co_code in self.dupes_map:
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
-            co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
+            # co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
+            co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]) * 2)
             CodeType = type(code)
             code = _code_replace(func, co_code=co_code)
             try:
@@ -333,7 +336,8 @@ cdef class LineProfiler:
         unset_trace()
 
     def get_stats(self):
-        """ Return a LineStats object containing the timings.
+        """ 
+        Return a LineStats object containing the timings.
         """
         cdef dict cmap
         
@@ -373,7 +377,8 @@ cdef class LineProfiler:
 @cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
 PyObject *arg):
-    """ The PyEval_SetTrace() callback.
+    """ 
+    The PyEval_SetTrace() callback.
     """
     cdef LineProfiler self
     cdef object code
