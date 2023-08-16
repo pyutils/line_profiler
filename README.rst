@@ -452,4 +452,4 @@ See `CHANGELOG`_.
 .. |GithubActions| image:: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml/badge.svg?branch=main
    :target: https://github.com/pyutils/line_profiler/actions?query=branch%3Amain
 .. |ReadTheDocs| image:: https://readthedocs.org/projects/kernprof/badge/?version=latest
-    :target: http://ubelt.readthedocs.io/en/latest/
+    :target: http://kernprof.readthedocs.io/en/latest/

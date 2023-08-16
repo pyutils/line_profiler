@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-""" Script to conveniently run profilers on code in a variety of circumstances.
+"""
+Script to conveniently run profilers on code in a variety of circumstances.
 """
 import builtins
 import functools
@@ -133,8 +134,10 @@ class RepeatedTimer(object):
     """
     Background timer for outputting file every n seconds.
 
-    Adapted from
-    https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds/40965385#40965385
+    Adapted from [SO474528]_.
+
+    References:
+        .. [SO474528] https://stackoverflow.com/questions/474528/what-is-the-best-way-to-repeatedly-execute-a-function-every-x-seconds/40965385#40965385
     """
     def __init__(self, interval, dump_func, outfile):
         self._timer = None
@@ -179,6 +182,19 @@ def find_script(script_name):
 
     sys.stderr.write('Could not find script %s\n' % script_name)
     raise SystemExit(1)
+
+
+def _python_command():
+    """
+    Return a command that corresponds to ``sys.executable``.
+    """
+    import shutil
+    if shutil.which('python') == sys.executable:
+        return 'python'
+    elif shutil.which('python3') == sys.executable:
+        return 'python3'
+    else:
+        return sys.executable
 
 
 def main(args=None):
@@ -307,19 +323,6 @@ def main(args=None):
                 print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
-
-
-def _python_command():
-    """
-    Return a command that corresponds to ``sys.executable``.
-    """
-    import shutil
-    if shutil.which('python') == sys.executable:
-        return 'python'
-    elif shutil.which('python3') == sys.executable:
-        return 'python3'
-    else:
-        return sys.executable
 
 
 if __name__ == '__main__':
