@@ -188,10 +188,10 @@ def test_explicit_profile_with_in_code_enable():
     output_fpath = (temp_dpath / 'custom_output.txt')
     raw_output = output_fpath.read_text()
 
-    assert 'func1' not in raw_output
-    assert 'func2' in raw_output
-    assert 'func3' not in raw_output
-    assert 'func4' in raw_output
+    assert 'Function: func1' not in raw_output
+    assert 'Function: func2' in raw_output
+    assert 'Function: func3' not in raw_output
+    assert 'Function: func4' in raw_output
 
     assert output_fpath.exists()
     assert (temp_dpath / 'custom_output.lprof').exists()
