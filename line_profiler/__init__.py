@@ -16,11 +16,21 @@ The line_profiler module for doing line-by-line profiling of functions
 Installation
 ============
 
-Releases of ``line_profiler`` can be installed using pip
+Releases of :py:mod:`line_profiler` and :py:mod:`kernprof` can be installed
+using pip
 
 .. code:: bash
 
     pip install line_profiler
+
+
+The package also provides extras for optional dependencies, which can be
+installed via:
+
+
+.. code:: bash
+
+    pip install line_profiler[all]
 
 
 Line Profiler Basic Usage
