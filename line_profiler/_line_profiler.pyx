@@ -228,7 +228,19 @@ cdef class LineProfiler:
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
             # co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
-            co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]) * 2)
+
+            """
+            # Code to lookup the NOP opcode, which we will just hard code here
+            # instead of looking it up. Perhaps do a global lookup in the
+            # future.
+            NOP_VALUE: int = opcode.opmap['NOP']
+            """
+            NOP_VALUE: int = 9
+            # Op code should be 2 bytes as stated in
+            # https://docs.python.org/3/library/dis.html
+            NOP_BYTES = NOP_VALUE.to_bytes(2, byteorder=byteorder)
+            co_padding = NOP_BYTES * len(self.dupes_map[code.co_code])
+            co_code = code.co_code + co_padding
             CodeType = type(code)
             code = _code_replace(func, co_code=co_code)
             try:
