@@ -8,6 +8,7 @@ Changes
 * ENH: Added new CLI arguments ``-srm`` to ``line_profiler`` to control sorting, rich printing, and summary printing.
 * ENH: New global ``profile`` function that can be enabled by ``--profile`` or ``LINE_PROFILE=1``.
 * ENH: New auto-profile feature in ``kernprof`` that will profile all functions in specified modules.
+* ENH: Added readthedocs integration: https://kernprof.readthedocs.io/en/latest/index.html
 
 4.0.3
 ~~~~
