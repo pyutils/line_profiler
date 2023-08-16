@@ -4,12 +4,12 @@ line_profiler and kernprof
 |Pypi| |ReadTheDocs| |Downloads| |CircleCI| |GithubActions| |Codecov|
 
 
-NOTICE: This is the official ``line_profiler`` repository. The most recent
-version of `line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi
-points to this repo. The original
-`line_profiler <https://github.com/rkern/line_profiler/>`_ package by
-`@rkern <https://github.com/rkern/>`_ is unmaintained. This fork is the
-official continuation of the project.
+This is the official ``line_profiler`` repository. The most recent version of
+`line-profiler <https://pypi.org/project/line_profiler/>`_ on pypi points to
+this repo.
+The original `line_profiler <https://github.com/rkern/line_profiler/>`_ package
+by `@rkern <https://github.com/rkern/>`_ is unmaintained.
+This fork is the official continuation of the project.
 
 +---------------+--------------------------------------------+
 | Github        | https://github.com/pyutils/line_profiler   |
