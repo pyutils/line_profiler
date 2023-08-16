@@ -23,8 +23,8 @@ Releases of ``line_profiler`` can be installed using pip
     pip install line_profiler
 
 
-Basic Usage
-===========
+Line Profiler Basic Usage
+=========================
 
 To demonstrate line profiling, we first need to generate a Python script to
 profile. Write the following code to a file called ``demo_primes.py``.
@@ -65,7 +65,9 @@ profile. Write the following code to a file called ``demo_primes.py``.
         primes = find_primes(100000)
         print(f'done calculating. Found {len(primes)} primes.')
 
-    main()
+
+    if __name__ == '__main__':
+        main()
 
 
 In this script we explicitly import the ``profile`` function from
@@ -126,6 +128,9 @@ The following invocation will run your script, dump results to
 Note: the ``-r`` flag will use "rich-output" if you have the :py:mod:`rich`
 module installed.
 
+See Also:
+
+    * autoprofiling usage in: :py:mod:`line_profiler.autoprofile`
 """
 # Note: there are better ways to generate primes
 # https://github.com/Sylhare/nprime

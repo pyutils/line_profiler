@@ -206,14 +206,20 @@ def main(args=None):
     parser.add_argument('-r', '--rich', action='store_true',
                         help='Use rich formatting if viewing output')
     parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-
                         help='Output unit (in seconds) in which the timing info is '
                         'displayed (default: 1e-6)')
     parser.add_argument('-z', '--skip-zero', action='store_true',
                         help="Hide functions which have not been called")
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module."
+                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                         "Minimum value is 1 (second). Defaults to disabled.")
+    parser.add_argument('-p', '--prof-mod', type=str, default='',
+                        help="List of modules, functions and/or classes to profile specified by their name or path. "
+                        "List is comma separated, adding the current script path profiles full script. "
+                        "Only works with line_profiler -l, --line-by-line")
+    parser.add_argument('--prof-imports', action='store_true',
+                        help="If specified in autoprofile mode, will also autoprofile imports in the autoprofiled modules. "
+                        "Only works with line_profiler -l, --line-by-line")
 
     parser.add_argument('script', help='The python script file to run')
     parser.add_argument('args', nargs='...', help='Optional script arguments')
@@ -271,7 +277,11 @@ def main(args=None):
         try:
             execfile_ = execfile
             ns = locals()
-            if options.builtin:
+            if options.prof_mod and options.line_by_line:
+                from line_profiler.autoprofile import autoprofile
+                prof_mod = options.prof_mod.split(',')
+                autoprofile.run(script_file, ns, prof_mod=prof_mod, profile_imports=options.prof_imports)
+            elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
@@ -292,10 +302,24 @@ def main(args=None):
                                  stream=original_stdout)
         else:
             print('Inspect results with:')
+            py_exe = _python_command()
             if isinstance(prof, ContextualProfile):
-                print(f'{sys.executable} -m pstats "{options.outfile}"')
+                print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
-                print(f'{sys.executable} -m line_profiler -rmt "{options.outfile}"')
+                print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+
+
+def _python_command():
+    """
+    Return a command that corresponds to ``sys.executable``.
+    """
+    import shutil
+    if shutil.which('python') == sys.executable:
+        return 'python'
+    elif shutil.which('python3') == sys.executable:
+        return 'python3'
+    else:
+        return sys.executable
 
 
 if __name__ == '__main__':
