@@ -201,8 +201,10 @@ def test_explicit_profile_with_in_code_enable():
 
 def test_explicit_profile_with_duplicate_functions():
     """
-    Test that the user can enable the profiler explicitly from within their
-    code.
+    Test profiling duplicate functions with the explicit profiler
+
+    CommandLine:
+        pytest -sv tests/test_explicit_profile.py -k test_explicit_profile_with_duplicate_functions
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
 
