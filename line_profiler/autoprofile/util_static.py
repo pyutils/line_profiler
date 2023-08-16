@@ -30,7 +30,7 @@ def package_modpaths(
     with_libs=False,
     check=True,
 ):
-    """
+    r"""
 
     Finds sub-packages and sub-modules belonging to a package.
 
@@ -119,13 +119,7 @@ def _parse_static_node_value(node):
         value = node.value
     else:
         print(node.__dict__)
-        raise TypeError(
-            """
-                        Cannot parse a static value from non-static node of type: {!r}
-                        """.format(
-                type(node)
-            )
-        )
+        raise TypeError("""Cannot parse a static value from non-static node of type: {!r}""".format(type(node)))
     return value
 
 
@@ -148,7 +142,7 @@ def _extension_module_tags():
 
 
 def _static_parse(varname, fpath):
-    """
+    r"""
 
     Statically parse the a constant variable from a python file
 
@@ -224,7 +218,7 @@ def _platform_pylib_exts():
 
 
 def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None):
-    """
+    r"""
 
     syspath version of modname_to_modpath
 
@@ -391,7 +385,7 @@ def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None):
 
 
 def modname_to_modpath(modname, hide_init=True, hide_main=False, sys_path=None):
-    """
+    r"""
 
     Finds the path to a python module from its name.
 
@@ -441,7 +435,7 @@ def modname_to_modpath(modname, hide_init=True, hide_main=False, sys_path=None):
 
 
 def split_modpath(modpath, check=True):
-    """
+    r"""
 
     Splits the modpath into the dir that must be in PYTHONPATH for the module
     to be imported and the modulepath relative to this directory.
@@ -487,7 +481,7 @@ def split_modpath(modpath, check=True):
 
 
 def normalize_modpath(modpath, hide_init=True, hide_main=False):
-    """
+    r"""
 
     Normalizes __init__ and __main__ paths.
 
@@ -543,7 +537,7 @@ def normalize_modpath(modpath, hide_init=True, hide_main=False):
 def modpath_to_modname(
     modpath, hide_init=True, hide_main=False, check=True, relativeto=None
 ):
-    """
+    r"""
 
     Determines importable name from file path
 
