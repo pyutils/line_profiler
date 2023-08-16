@@ -315,7 +315,7 @@ Check out these other Python profilers:
 
 * `timeit <https://docs.python.org/3/library/timeit.html>`_: The builtin timeit module for profiling single statements.
 
-* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alterantive to the buildin ``timeit`` module.
+* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alterantive to the builtin ``timeit`` module.
 
 Frequently Asked Questions
 ==========================
