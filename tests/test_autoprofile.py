@@ -83,6 +83,55 @@ def test_multi_function_autoprofile():
     temp_dpath.delete()
 
 
+def test_duplicate_function_autoprofile():
+    """
+    Test that every function in a file is profiled when autoprofile is enabled.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    code = ub.codeblock(
+        '''
+        def func1(a):
+            return a + 1
+
+        def func2(a):
+            return a + 1
+
+        def func3(a):
+            return a + 1
+
+        def func4(a):
+            return a + 1
+
+        func1(1)
+        func2(1)
+        func3(1)
+        ''')
+    with ub.ChDir(temp_dpath):
+
+        script_fpath = ub.Path('script.py')
+        script_fpath.write_text(code)
+
+        args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l', os.fspath(script_fpath)]
+        proc = ub.cmd(args)
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+
+        args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
+        proc = ub.cmd(args)
+        raw_output = proc.stdout
+        print(raw_output)
+        proc.check_returncode()
+
+    assert 'Function: func1' in raw_output
+    assert 'Function: func2' in raw_output
+    assert 'Function: func3' in raw_output
+    assert 'Function: func4' in raw_output
+
+    temp_dpath.delete()
+
+
 def _write_demo_module(temp_dpath):
     """
     Make a dummy test module structure
@@ -258,10 +307,10 @@ def test_autoprofile_script_with_prof_imports():
     temp_dpath = ub.Path(tempfile.mkdtemp())
     script_fpath = _write_demo_module(temp_dpath)
 
-    import sys
-    if sys.version_info[0:2] >= (3, 11):
-        import pytest
-        pytest.skip('Failing due to the noop bug')
+    # import sys
+    # if sys.version_info[0:2] >= (3, 11):
+    #     import pytest
+    #     pytest.skip('Failing due to the noop bug')
 
     args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
     proc = ub.cmd(args, cwd=temp_dpath, verbose=2)

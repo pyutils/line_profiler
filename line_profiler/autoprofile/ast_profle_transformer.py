@@ -78,7 +78,13 @@ class AstProfileTransformer(ast.NodeTransformer):
             (_ast.FunctionDef): node
                 function/method with profiling decorator
         """
-        if self._profiler_name not in (d.id for d in node.decorator_list):
+        decor_ids = set()
+        for decor in node.decorator_list:
+            try:
+                decor_ids.add(decor.id)
+            except AttributeError:
+                ...
+        if self._profiler_name not in decor_ids:
             node.decorator_list.append(ast.Name(id=self._profiler_name, ctx=ast.Load()))
         return self.generic_visit(node)
 

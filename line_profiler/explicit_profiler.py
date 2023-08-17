@@ -376,7 +376,21 @@ class GlobalProfiler:
             self._profile.dump_stats(lprof_output_fpath)
             print('Wrote profile results to %s' % lprof_output_fpath)
             print('To view details run:')
-            print(sys.executable + ' -m line_profiler -rtmz ' + str(lprof_output_fpath))
+            py_exe = _python_command()
+            print(py_exe + ' -m line_profiler -rtmz ' + str(lprof_output_fpath))
+
+
+def _python_command():
+    """
+    Return a command that corresponds to :py:obj:`sys.executable`.
+    """
+    import shutil
+    if shutil.which('python') == sys.executable:
+        return 'python'
+    elif shutil.which('python3') == sys.executable:
+        return 'python3'
+    else:
+        return sys.executable
 
 
 # Construct the global profiler.

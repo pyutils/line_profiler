@@ -97,8 +97,6 @@ def fib_only_called_by_process(n):
     a, b = 0, 1
     while a < n:
         a, b = b, a + b
-    # FIXME: having two functions with the EXACT same code can cause issues
-    a = 'no longer exactly the same'
 
 
 @profile

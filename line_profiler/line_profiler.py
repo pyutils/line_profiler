@@ -286,8 +286,10 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     if stream is None:
         stream = sys.stdout
 
+    total_hits = sum(t[1] for t in timings)
     total_time = sum(t[2] for t in timings)
-    if stripzeros and total_time == 0:
+
+    if stripzeros and total_hits == 0:
         return
 
     if rich:
