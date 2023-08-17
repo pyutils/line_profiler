@@ -1,10 +1,14 @@
 import unittest
 
-from IPython.testing.globalipapp import get_ipython
-
 
 class TestIPython(unittest.TestCase):
     def test_init(self):
+        try:
+            from IPython.testing.globalipapp import get_ipython
+        except ImportError:
+            import pytest
+            pytest.skip()
+
         ip = get_ipython()
         ip.run_line_magic('load_ext', 'line_profiler')
         ip.run_cell(raw_cell='def func():\n    return 2**20')
