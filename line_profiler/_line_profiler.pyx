@@ -356,11 +356,10 @@ cdef class LineProfiler:
         """ 
         Return a LineStats object containing the timings.
         """
-        cdef dict cmap
+        cdef dict cmap = self._c_code_map
         
         stats = {}
         for code in self.code_hash_map:
-            cmap = self._c_code_map
             entries = []
             for entry in self.code_hash_map[code]:
                 entries += list(cmap[entry].values())
