@@ -1,6 +1,10 @@
 Changes
 =======
 
+4.1.1
+~~~~
+* FIX: ``get_stats`` is no longer slowed down when profiling many code sections #236
+
 4.1.0
 ~~~~
 * FIX: skipzeros now checks for zero hits instead of zero time
