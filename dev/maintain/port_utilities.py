@@ -2,46 +2,36 @@
 Statically port utilities from ubelt and xdocest need for the autoprofile
 features.
 """
+import ubelt as ub
+import liberator
+import re
 
 
-def _autogen_util_static():
-    import ubelt as ub
-    import liberator
-    lib = liberator.Liberator()
+def generate_util_static():
+    lib = liberator.Liberator(verbose=0)
 
     import ubelt
     import xdoctest
-    lib.add_dynamic(ubelt.util_import.modpath_to_modname)
-    lib.add_dynamic(ubelt.util_import.modname_to_modpath)
-    lib.expand(['ubelt'])
-    lib.add_dynamic(xdoctest.static_analysis.package_modpaths)
-    lib.expand(['xdoctest'])
 
-    # Hack because ubelt and xdoctest define this
-    del lib.body_defs['xdoctest.utils.util_import._platform_pylib_exts']
+    if 1:
+        lib.add_dynamic(ubelt.util_import.modpath_to_modname)
+        lib.add_dynamic(ubelt.util_import.modname_to_modpath)
+        lib.expand(['ubelt'])
+
+    if 1:
+        lib.add_dynamic(xdoctest.static_analysis.package_modpaths)
+        lib.expand(['xdoctest'])
+
+        # # Hack because ubelt and xdoctest define this
+        del lib.body_defs['xdoctest.utils.util_import._platform_pylib_exts']
 
     # lib.expand(['ubelt', 'xdoctest'])
     text = lib.current_sourcecode()
-    print(text)
 
     """
     pip install rope
     pip install parso
     """
-
-    import parso
-    import xdoctest
-    import line_profiler
-    target_fpath = ub.Path(line_profiler.__file__).parent / 'autoprofile' / 'util_static.py'
-
-    new_module = parso.parse(text)
-    if target_fpath.exists():
-        old_module = parso.parse(target_fpath.read_text())
-        new_names = [child.name.value for child in new_module.children if child.type in {'funcdef', 'classdef'}]
-        old_names = [child.name.value for child in old_module.children if child.type in {'funcdef', 'classdef'}]
-
-        print(set(old_names) - set(new_names))
-        print(set(new_names) - set(old_names))
 
     prefix = ub.codeblock(
         '''
@@ -54,7 +44,6 @@ def _autogen_util_static():
 
     # Remove doctest references to ubelt
     new_lines = []
-    import re
     for line in text.split('\n'):
         if line.strip().startswith('>>> from ubelt'):
             continue
@@ -63,10 +52,31 @@ def _autogen_util_static():
         new_lines.append(line)
 
     text = '\n'.join(new_lines)
-    target_fpath.write_text(prefix + '\n' + text + '\n')
+    text = prefix + '\n' + text + '\n'
+    return text
+
+
+def main():
+    text = generate_util_static()
+    print(ub.highlight_code(text, backend='rich'))
+
+    import parso
+    import line_profiler
+    target_fpath = ub.Path(line_profiler.__file__).parent / 'autoprofile' / 'util_static.py'
+
+    new_module = parso.parse(text)
+    if target_fpath.exists():
+        old_module = parso.parse(target_fpath.read_text())
+        new_names = [child.name.value for child in new_module.children if child.type in {'funcdef', 'classdef'}]
+        old_names = [child.name.value for child in old_module.children if child.type in {'funcdef', 'classdef'}]
+        print(set(old_names) - set(new_names))
+        print(set(new_names) - set(old_names))
+
+    target_fpath.write_text(text)
 
     # Fixup formatting
-    ub.cmd(['black', target_fpath])
+    if 1:
+        ub.cmd(['black', target_fpath])
 
 
 if __name__ == '__main__':
@@ -74,4 +84,4 @@ if __name__ == '__main__':
     CommandLine:
         python ~/code/line_profiler/dev/maintain/port_utilities.py
     """
-    _autogen_util_static()
+    main()
