@@ -167,7 +167,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v3
+    - uses: codecov/codecov-action@v4
       name: Codecov Upload
       with:
         file: ./coverage.xml
@@ -374,7 +374,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v3
+    - uses: codecov/codecov-action@v4
       name: Codecov Upload
       with:
         file: ./coverage.xml
