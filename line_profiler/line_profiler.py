@@ -293,6 +293,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         return
 
     if rich:
+        # References:
+        # https://github.com/Textualize/rich/discussions/3076
         try:
             from rich.syntax import Syntax
             from rich.highlighter import ReprHighlighter

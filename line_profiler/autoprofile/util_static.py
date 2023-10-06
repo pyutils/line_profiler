@@ -31,7 +31,6 @@ def package_modpaths(
     check=True,
 ):
     r"""
-
     Finds sub-packages and sub-modules belonging to a package.
 
     Args:
@@ -61,7 +60,6 @@ def package_modpaths(
         >>> assert 'xdoctest.__main__' in names
         >>> assert 'xdoctest' not in names
         >>> print('\n'.join(names))
-
     """
     if isfile(pkgpath):
         (yield pkgpath)
@@ -96,9 +94,7 @@ def package_modpaths(
 
 def _parse_static_node_value(node):
     """
-
     Extract a constant value from a node if possible
-
     """
     import ast
     from collections import OrderedDict
@@ -119,18 +115,20 @@ def _parse_static_node_value(node):
         value = node.value
     else:
         print(node.__dict__)
-        raise TypeError("""Cannot parse a static value from non-static node of type: {!r}""".format(type(node)))
+        raise TypeError(
+            """Cannot parse a static value from non-static node of type: {!r}""".format(
+                type(node)
+            )
+        )
     return value
 
 
 def _extension_module_tags():
     """
-
     Returns valid tags an extension module might have
 
     Returns:
         List[str]
-
     """
     import sysconfig
 
@@ -142,8 +140,7 @@ def _extension_module_tags():
 
 
 def _static_parse(varname, fpath):
-    r"""
-
+    """
     Statically parse the a constant variable from a python file
 
     Example:
@@ -169,7 +166,6 @@ def _static_parse(varname, fpath):
         >>> with pytest.raises(AttributeError):
         >>>     fpath.write_text('a = list(range(10))')
         >>>     assert _static_parse('c', fpath) is None
-
     """
     import ast
 
@@ -197,7 +193,6 @@ def _static_parse(varname, fpath):
 
 def _platform_pylib_exts():
     """
-
     Returns .so, .pyd, or .dylib depending on linux, win or mac.
     On python3 return the previous with and without abi (e.g.
     .cpython-35m-x86_64-linux-gnu) flags. On python2 returns with
@@ -205,7 +200,6 @@ def _platform_pylib_exts():
 
     Returns:
         tuple
-
     """
     import sysconfig
 
@@ -218,8 +212,7 @@ def _platform_pylib_exts():
 
 
 def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None):
-    r"""
-
+    """
     syspath version of modname_to_modpath
 
     Args:
@@ -279,7 +272,6 @@ def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None):
         >>>         ' cwd={} '.format(os.getcwd()) +
         >>>         ' sys.path={} '.format(sys.path)
         >>>     )
-
     """
     import glob
 
@@ -385,8 +377,7 @@ def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None):
 
 
 def modname_to_modpath(modname, hide_init=True, hide_main=False, sys_path=None):
-    r"""
-
+    """
     Finds the path to a python module from its name.
 
     Determines the path to a python module without directly import it
@@ -425,7 +416,6 @@ def modname_to_modpath(modname, hide_init=True, hide_main=False, sys_path=None):
         >>> # xdoctest: +REQUIRES(CPython)
         >>> modpath = basename(modname_to_modpath('_ctypes'))
         >>> assert 'ctypes' in modpath
-
     """
     modpath = _syspath_modname_to_modpath(modname, sys_path)
     if modpath is None:
@@ -435,8 +425,7 @@ def modname_to_modpath(modname, hide_init=True, hide_main=False, sys_path=None):
 
 
 def split_modpath(modpath, check=True):
-    r"""
-
+    """
     Splits the modpath into the dir that must be in PYTHONPATH for the module
     to be imported and the modulepath relative to this directory.
 
@@ -459,7 +448,6 @@ def split_modpath(modpath, check=True):
         >>> recon = join(dpath, rel_modpath)
         >>> assert recon == modpath
         >>> assert rel_modpath == join('xdoctest', 'static_analysis.py')
-
     """
     modpath_ = abspath(expanduser(modpath))
     if check:
@@ -481,8 +469,7 @@ def split_modpath(modpath, check=True):
 
 
 def normalize_modpath(modpath, hide_init=True, hide_main=False):
-    r"""
-
+    """
     Normalizes __init__ and __main__ paths.
 
     Args:
@@ -516,7 +503,6 @@ def normalize_modpath(modpath, hide_init=True, hide_main=False):
         >>> assert res1.endswith('__init__.py')
         >>> assert not res2.endswith('.py')
         >>> assert not res3.endswith('.py')
-
     """
     if hide_init:
         if basename(modpath) == "__init__.py":
@@ -537,8 +523,7 @@ def normalize_modpath(modpath, hide_init=True, hide_main=False):
 def modpath_to_modname(
     modpath, hide_init=True, hide_main=False, check=True, relativeto=None
 ):
-    r"""
-
+    """
     Determines importable name from file path
 
     Converts the path to a module (__file__) to the importable python name
@@ -589,7 +574,6 @@ def modpath_to_modname(
         >>> modpath = '/foo/libfoobar.linux-x86_64-3.6.so'
         >>> modname = modpath_to_modname(modpath, check=False)
         >>> assert modname == 'libfoobar'
-
     """
     if check and (relativeto is None):
         if not exists(modpath):
