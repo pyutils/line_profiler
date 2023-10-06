@@ -27,7 +27,7 @@ Notes:
 
         https://docs.readthedocs.io/en/stable/guides/autobuild-docs-for-pull-requests.html
 
-        https://readthedocs.org/dashboard/kernprof/advanced/
+        https://readthedocs.org/dashboard/line-profiler/advanced/
 
         ensure your github account is connected to readthedocs
         https://readthedocs.org/accounts/social/connections/
@@ -45,10 +45,12 @@ Notes:
             Set the Repository NAME: line_profiler
             Set the Repository URL: https://github.com/pyutils/line_profiler
 
-        For gitlab you also need to setup an integrations and add gitlab
-        incoming webhook
+        For gitlab you also need to setup an integrations. Navigate to:
 
             https://readthedocs.org/dashboard/line-profiler/integrations/create/
+
+        Then add gitlab incoming webhook and copy the URL (make sure
+        you copy the real url and not the text so https is included).
 
         Then go to
 
@@ -112,7 +114,7 @@ copyright = '2023, Robert Kern'
 author = 'Robert Kern'
 modname = 'line_profiler'
 
-modpath = join(dirname(dirname(dirname(__file__))), modname, '__init__.py')
+modpath = join(dirname(dirname(dirname(__file__))), 'line_profiler', '__init__.py')
 release = parse_version(modpath)
 version = '.'.join(release.split('.')[0:2])
 
@@ -127,6 +129,7 @@ version = '.'.join(release.split('.')[0:2])
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    # 'autoapi.extension',
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
@@ -134,6 +137,10 @@ extensions = [
     'sphinx.ext.todo',
     'sphinx.ext.viewcode',
     # 'myst_parser',  # TODO
+
+    'sphinx.ext.githubpages',
+    # 'sphinxcontrib.redirects',
+    'sphinx_reredirects',
 ]
 
 todo_include_todos = True
@@ -146,6 +153,15 @@ autodoc_inherit_docstrings = False
 autodoc_member_order = 'bysource'
 autoclass_content = 'both'
 # autodoc_mock_imports = ['torch', 'torchvision', 'visdom']
+
+# autoapi_modules = {
+#     modname: {
+#         'override': False,
+#         'output': 'auto'
+#     }
+# }
+# autoapi_dirs = [f'../../src/{modname}']
+# autoapi_keep_files = True
 
 intersphinx_mapping = {
     # 'pytorch': ('http://pytorch.org/docs/master/', None),
@@ -163,9 +179,14 @@ intersphinx_mapping = {
     'xdoctest': ('https://xdoctest.readthedocs.io/en/latest/', None),
     'networkx': ('https://networkx.org/documentation/stable/', None),
     'scriptconfig': ('https://scriptconfig.readthedocs.io/en/latest/', None),
-    'xdev': ('https://xdev.readthedocs.io/en/latest/', None),
     'rich': ('https://rich.readthedocs.io/en/latest/', None),
 
+    'pytest': ('https://docs.pytest.org/en/latest/', None),
+    # 'pytest._pytest.doctest': ('https://docs.pytest.org/en/latest/_modules/_pytest/doctest.html', None),
+    # 'colorama': ('https://pypi.org/project/colorama/', None),
+    # 'numpy': ('http://docs.scipy.org/doc/numpy/', None),
+    # 'cv2' : ('http://docs.opencv.org/2.4/', None),
+    # 'h5py' : ('http://docs.h5py.org/en/latest/', None)
 }
 __dev_note__ = """
 python -m sphinx.ext.intersphinx https://docs.python.org/3/objects.inv
@@ -175,6 +196,11 @@ python -m sphinx.ext.intersphinx https://kwarray.readthedocs.io/en/latest/object
 python -m sphinx.ext.intersphinx https://kwimage.readthedocs.io/en/latest/objects.inv
 python -m sphinx.ext.intersphinx https://ubelt.readthedocs.io/en/latest/objects.inv
 python -m sphinx.ext.intersphinx https://networkx.org/documentation/stable/objects.inv
+
+sphobjinv suggest -t 90 -u https://readthedocs.org/projects/pytest/reference/objects.inv
+"signal.convolve2d"
+
+python -m sphinx.ext.intersphinx https://pygments-doc.readthedocs.io/en/latest/objects.inv
 """
 
 
@@ -244,7 +270,7 @@ html_static_path = ['_static']
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'line_profilerdoc'
+htmlhelp_basename = project + 'doc'
 
 
 # -- Options for LaTeX output ------------------------------------------------
