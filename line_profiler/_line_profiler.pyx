@@ -1,6 +1,18 @@
-#cython: language_level=3
-"""
+# cython: language_level=3
+# cython: infer_types=True
+# distutils: language=c++
+# distutils: include_dirs = python25.pxd
+r"""
 This is the Cython backend used in :py:mod:`line_profiler.line_profiler`.
+
+Ignore:
+    
+    # Standalone compile instructions for developers 
+    # Assuming the cwd is the repo root.
+    cythonize --annotate --inplace \
+        ./line_profiler/_line_profiler.pyx \
+        ./line_profiler/timers.c \
+        ./line_profiler/unset_trace.c
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
