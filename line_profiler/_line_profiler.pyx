@@ -100,7 +100,7 @@ cdef struct LineTime:
     int lineno
     PY_LONG_LONG total_time
     long nhits
-    
+
 cdef struct LastTime:
     int f_lineno
     PY_LONG_LONG time
@@ -117,7 +117,7 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     return block_hash ^ linenum
 
 def label(code):
-    """ 
+    """
     Return a (filename, first_lineno, func_name) tuple for a given code object.
 
     This is the same labelling as used by the cProfile module in Python 2.5.
@@ -153,7 +153,7 @@ cpdef _code_replace(func, co_code):
 
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
-    """ 
+    """
     Object to encapsulate line-profile statistics.
 
     Attributes:
@@ -173,7 +173,7 @@ class LineStats(object):
 
 
 cdef class LineProfiler:
-    """ 
+    """
     Time the execution of lines of Python code.
 
     This is the Cython base class for
@@ -363,7 +363,7 @@ cdef class LineProfiler:
         unset_trace()
 
     def get_stats(self):
-        """ 
+        """
         Return a LineStats object containing the timings.
         """
         cdef dict cmap = self._c_code_map
@@ -403,7 +403,7 @@ cdef class LineProfiler:
 @cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
                                PyObject *arg) noexcept:
-    """ 
+    """
     The PyEval_SetTrace() callback.
     """
     cdef LineProfiler self
