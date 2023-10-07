@@ -401,10 +401,14 @@ cdef class LineProfiler:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
+@cython.exceptval(check=False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
-                               PyObject *arg) noexcept:
+                               PyObject *arg):
     """
     The PyEval_SetTrace() callback.
+
+    References:
+       https://github.com/python/cpython/blob/de2a4036/Include/cpython/pystate.h#L16 
     """
     cdef LineProfiler self
     cdef object code
