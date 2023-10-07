@@ -6,8 +6,7 @@ r"""
 This is the Cython backend used in :py:mod:`line_profiler.line_profiler`.
 
 Ignore:
-    
-    # Standalone compile instructions for developers 
+    # Standalone compile instructions for developers
     # Assuming the cwd is the repo root.
     cythonize --annotate --inplace \
         ./line_profiler/_line_profiler.pyx \
@@ -58,7 +57,6 @@ cdef extern from "Python.h":
       #include "pyframe.h"
     #endif
     """
-    
     ctypedef struct PyFrameObject
     ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
@@ -311,14 +309,14 @@ cdef class LineProfiler:
 
     def enable(self):
         PyEval_SetTrace(python_trace_callback, self)
-        
+
     @property
     def c_code_map(self):
         """
         A Python view of the internal C lookup table.
         """
         return <dict>self._c_code_map
-        
+
     @property
     def c_last_time(self):
         return (<dict>self._c_last_time)[threading.get_ident()]
@@ -369,7 +367,7 @@ cdef class LineProfiler:
         Return a LineStats object containing the timings.
         """
         cdef dict cmap = self._c_code_map
-        
+
         stats = {}
         for code in self.code_hash_map:
             entries = []
@@ -404,7 +402,7 @@ cdef class LineProfiler:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef int python_trace_callback(object self_, PyFrameObject *py_frame, int what,
-PyObject *arg):
+                               PyObject *arg) noexcept:
     """ 
     The PyEval_SetTrace() callback.
     """
