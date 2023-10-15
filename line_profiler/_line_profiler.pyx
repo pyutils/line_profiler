@@ -1,5 +1,6 @@
 # cython: language_level=3
 # cython: infer_types=True
+# cython: legacy_implicit_noexcept=True
 # distutils: language=c++
 # distutils: include_dirs = python25.pxd
 r"""
