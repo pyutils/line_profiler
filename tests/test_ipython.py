@@ -3,6 +3,10 @@ import unittest
 
 class TestIPython(unittest.TestCase):
     def test_init(self):
+        """
+        CommandLine:
+            pytest -k test_init -s -V
+        """
         try:
             from IPython.testing.globalipapp import get_ipython
         except ImportError:
