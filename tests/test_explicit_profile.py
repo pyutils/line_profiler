@@ -185,8 +185,11 @@ def test_explicit_profile_with_in_code_enable():
         print(proc.stderr)
         proc.check_returncode()
 
+    print('Finished running script')
+
     output_fpath = (temp_dpath / 'custom_output.txt')
     raw_output = output_fpath.read_text()
+    print(f'Contents of {output_fpath}')
     print(raw_output)
 
     assert 'Function: func1' not in raw_output

@@ -18,6 +18,8 @@ class TestIPython(unittest.TestCase):
         self.assertEqual(len(timings), 1)  # 1 function
 
         func_data, lines_data = next(iter(timings.items()))
+        print(f'func_data={func_data}')
+        print(f'lines_data={lines_data}')
         self.assertEqual(func_data[1], 1)  # lineno of the function
         self.assertEqual(func_data[2], "func")  # function name
         self.assertEqual(len(lines_data), 1)  # 1 line of code
