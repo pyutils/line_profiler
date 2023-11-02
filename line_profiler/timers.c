@@ -62,7 +62,7 @@ hpTimer(void)
         struct timespec ts;
         PY_LONG_LONG ret;
         clock_gettime(CLOCK_MONOTONIC, &ts);
-        ret = ts.tv_sec * 1000000000 + ts.tv_nsec;
+        ret = (PY_LONG_LONG)ts.tv_sec * 1000000000 + (PY_LONG_LONG)ts.tv_nsec;
         return ret;
 }
 
