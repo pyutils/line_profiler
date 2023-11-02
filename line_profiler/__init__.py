@@ -159,7 +159,7 @@ mkinit ./line_profiler/__init__.py --relative -w
 # from .line_profiler import __version__
 
 # NOTE: This needs to be in sync with ../kernprof.py and line_profiler.py
-__version__ = '4.1.1'
+__version__ = '4.1.2'
 
 from .line_profiler import (LineProfiler,
                             load_ipython_extension, load_stats, main,

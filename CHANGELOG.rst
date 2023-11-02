@@ -1,6 +1,10 @@
 Changes
 =======
 
+4.1.2
+~~~~
+* ENH: Add support for Python 3.12 #246
+
 4.1.1
 ~~~~
 * FIX: ``get_stats`` is no longer slowed down when profiling many code sections #236
