@@ -4,6 +4,7 @@ Changes
 4.1.2
 ~~~~
 * ENH: Add support for Python 3.12 #246
+* ENH: Add osx universal2 and arm64 wheels
 
 4.1.1
 ~~~~
