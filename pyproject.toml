@@ -41,6 +41,11 @@ build-verbosity = 1
 test-requires = [ "-r requirements/tests.txt",]
 test-command = "python {project}/run_tests.py"
 
+# https://cibuildwheel.readthedocs.io/en/stable/options/#archs
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "universal2", "arm64"]
+
+
 [tool.mypy]
 ignore_missing_imports = true
 
