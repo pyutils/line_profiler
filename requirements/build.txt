@@ -2,6 +2,7 @@
 Cython>=3.0.3
 
 setuptools>=68.2.2; python_version < '4.0'  and python_version >= '3.8'
+setuptools>=41.0.1; python_version < '3.8'  and python_version >= '3.6'
 
 scikit-build>=0.11.1
 cmake>=3.21.2
