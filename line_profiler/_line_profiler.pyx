@@ -89,6 +89,9 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_EXCEPTION
     cdef int PyTrace_C_RETURN
 
+    cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
+    
+
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
@@ -419,13 +422,17 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
     cdef int64 code_hash
     cdef int64 block_hash
     cdef unordered_map[int64, LineTime] line_entries
+    cdef uint64 linenum
 
     self = <LineProfiler>self_
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
         block_hash = hash(get_frame_code(py_frame))
-        code_hash = compute_line_hash(block_hash, py_frame.f_lineno)
+
+        linenum = PyFrame_GetLineNumber(py_frame)
+        code_hash = compute_line_hash(block_hash, linenum)
+        
         if self._c_code_map.count(code_hash):
             time = hpTimer()
             ident = threading.get_ident()
@@ -440,7 +447,7 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self._c_last_time[ident][block_hash] = LastTime(py_frame.f_lineno, hpTimer())
+                self._c_last_time[ident][block_hash] = LastTime(linenum, hpTimer())
             elif self._c_last_time[ident].count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we

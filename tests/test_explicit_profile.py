@@ -4,6 +4,28 @@ import os
 import ubelt as ub
 
 
+def test_simple_explicit_nonglobal_usage():
+    """
+    python -c "from test_explicit_profile import *; test_simple_explicit_nonglobal_usage()"
+    """
+    from line_profiler import LineProfiler
+    profiler = LineProfiler()
+
+    def func(a):
+        return a + 1
+
+    profiled_func = profiler(func)
+
+    # Run Once
+    profiled_func(1)
+
+    lstats = profiler.get_stats()
+    print(f'lstats.timings={lstats.timings}')
+    print(f'lstats.unit={lstats.unit}')
+    print(f'profiler.code_hash_map={profiler.code_hash_map}')
+    profiler.print_stats()
+
+
 def _demo_explicit_profile_script():
     return ub.codeblock(
         '''
@@ -140,12 +162,23 @@ def test_explicit_profile_with_in_code_enable():
     """
     Test that the user can enable the profiler explicitly from within their
     code.
+
+    CommandLine:
+        pytest tests/test_explicit_profile.py -s -k test_explicit_profile_with_in_code_enable
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
 
     code = ub.codeblock(
         '''
         from line_profiler import profile
+        import ubelt as ub
+        print('')
+        print('')
+        print('start test')
+
+        print('profile = {}'.format(ub.urepr(profile, nl=1)))
+        print(f'profile._profile={profile._profile}')
+        print(f'profile.enabled={profile.enabled}')
 
         @profile
         def func1(a):
@@ -153,9 +186,15 @@ def test_explicit_profile_with_in_code_enable():
 
         profile.enable(output_prefix='custom_output')
 
+        print('profile = {}'.format(ub.urepr(profile, nl=1)))
+        print(f'profile._profile={profile._profile}')
+        print(f'profile.enabled={profile.enabled}')
+
         @profile
         def func2(a):
             return a + 1
+
+        print('func2 = {}'.format(ub.urepr(func2, nl=1)))
 
         profile.disable()
 
@@ -173,6 +212,8 @@ def test_explicit_profile_with_in_code_enable():
         func2(1)
         func3(1)
         func4(1)
+
+        profile._profile
         ''')
     with ub.ChDir(temp_dpath):
 
@@ -259,3 +300,7 @@ def test_explicit_profile_with_duplicate_functions():
     assert output_fpath.exists()
     assert (temp_dpath / 'profile_output.lprof').exists()
     temp_dpath.delete()
+
+if __name__ == '__main__':
+    ...
+    test_simple_explicit_nonglobal_usage()
