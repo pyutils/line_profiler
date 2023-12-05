@@ -20,7 +20,7 @@ def test_complex_example_python_none():
     Make sure the complex example script works without any profiling
     """
     complex_fpath = get_complex_example_fpath()
-    info = ub.cmd(f'python {complex_fpath}', shell=True, verbose=3, env=ub.udict(os.environ) | {'PROFILE_TYPE': 'none'})
+    info = ub.cmd(f'{sys.executable} {complex_fpath}', shell=True, verbose=3, env=ub.udict(os.environ) | {'PROFILE_TYPE': 'none'})
     assert info.stdout == ''
     info.check_returncode()
 
