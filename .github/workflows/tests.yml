@@ -322,7 +322,7 @@ jobs:
       uses: actions/setup-python@v4.7.1
       with:
         python-version: ${{ matrix.python-version }}
-    - uses: actions/download-artifact@v3
+    - uses: actions/download-artifact@v4
       name: Download wheels
       with:
         name: wheels
@@ -401,7 +401,7 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
-    - uses: actions/download-artifact@v3
+    - uses: actions/download-artifact@v4
       name: Download wheels and sdist
       with:
         name: wheels
@@ -445,7 +445,7 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
-    - uses: actions/download-artifact@v3
+    - uses: actions/download-artifact@v4
       name: Download wheels and sdist
       with:
         name: wheels
