@@ -6,8 +6,10 @@
    :maxdepth: 8
    :caption: Package Layout
 
-   line_profiler
-   kernprof
+   auto/line_profiler
+   auto/line_profiler.autoprofile
+   auto/line_profiler.explicit_profiler
+   auto/kernprof
 
 
 Indices and tables

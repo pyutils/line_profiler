@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 __doc__="
 Runs cibuildwheel to create linux binary wheels.
 
