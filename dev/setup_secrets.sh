@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 __doc__='
 ============================
 SETUP CI SECRET INSTRUCTIONS

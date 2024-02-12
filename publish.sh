@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 __doc__='
 Script to publish a new version of this library on PyPI.
 
