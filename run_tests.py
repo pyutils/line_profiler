@@ -109,8 +109,14 @@ if __name__ == '__main__':
         print(f'No installed version of {package_name} found')
 
     try:
-        print('Changing dirs to test_dir={!r}'.format(test_dir))
-        os.chdir(test_dir)
+        # print('Changing dirs to test_dir={!r}'.format(test_dir))
+        # os.chdir(test_dir)
+
+        import pathlib
+        modpath_contents = list(pathlib.Path(modpath).glob('*'))
+        print(f'modpath_contents = {ub.urepr(modpath_contents, nl=1)}')
+        testdir_contents = list(pathlib.Path(test_dir).glob('*'))
+        print(f'testdir_contents = {ub.urepr(testdir_contents, nl=1)}')
 
         pytest_args = [
             '--cov-config', '../pyproject.toml',
@@ -118,7 +124,7 @@ if __name__ == '__main__':
             '--cov-report', 'term',
             '--cov-report', 'xml',
             '--cov=' + package_name,
-            modpath, '.'
+            modpath, test_dir
         ]
         if is_cibuildwheel():
             pytest_args.append('--cov-append')
@@ -131,7 +137,7 @@ if __name__ == '__main__':
         print(f'pytest exception: {ex}')
         ret = 1
     finally:
-        os.chdir(cwd)
+        # os.chdir(cwd)
         if is_cibuildwheel():
             # for CIBW under linux
             copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
