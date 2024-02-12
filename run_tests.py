@@ -124,10 +124,16 @@ if __name__ == '__main__':
             pytest_args.append('--cov-append')
 
         pytest_args = pytest_args + sys.argv[1:]
-        sys.exit(pytest.main(pytest_args))
+        print(f'Exec pytest with args={pytest_args}')
+        ret = pytest.main(pytest_args)
+        print(f'pytest returned ret={ret}')
+    except Exception as ex:
+        print(f'pytest exception: {ex}')
+        ret = 1
     finally:
         os.chdir(cwd)
         if is_cibuildwheel():
             # for CIBW under linux
             copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
         print('Restoring cwd = {!r}'.format(cwd))
+    sys.exit(ret)
