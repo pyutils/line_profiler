@@ -1,14 +1,17 @@
 Changes
 =======
 
+4.1.3
+~~~~~
+
 4.1.2
-~~~~
+~~~~~
 * ENH: Add support for Python 3.12 #246
 * ENH: Add osx universal2 and arm64 wheels #251
 * ENH: Fix issue with integer overflow on 32 bit systems #249
 
 4.1.1
-~~~~
+~~~~~
 * FIX: ``get_stats`` is no longer slowed down when profiling many code sections #236
 
 4.1.0
@@ -24,7 +27,7 @@ Changes
 * ENH: Added readthedocs integration: https://kernprof.readthedocs.io/en/latest/index.html
 
 4.0.3
-~~~~
+~~~~~
 * FIX: Stop requiring bleeding-edge Cython unless necesasry (for Python 3.12).  #206
 
 4.0.2
