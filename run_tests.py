@@ -118,8 +118,10 @@ if __name__ == '__main__':
         testdir_contents = list(pathlib.Path(test_dir).glob('*'))
         print(f'testdir_contents = {ub.urepr(testdir_contents, nl=1)}')
 
+        pyproject_fpath = join(repo_dir, 'pyproject.toml')
+
         pytest_args = [
-            '--cov-config', '../pyproject.toml',
+            '--cov-config', pyproject_fpath,
             '--cov-report', 'html',
             '--cov-report', 'term',
             '--cov-report', 'xml',
