@@ -1,18 +1,22 @@
 Changes
 =======
 
+4.1.3
+~~~~~
+* FIX: duration summary now respects the stripzeros argument.
+
 4.1.2
-~~~~
+~~~~~
 * ENH: Add support for Python 3.12 #246
 * ENH: Add osx universal2 and arm64 wheels #251
 * ENH: Fix issue with integer overflow on 32 bit systems #249
 
 4.1.1
-~~~~
+~~~~~
 * FIX: ``get_stats`` is no longer slowed down when profiling many code sections #236
 
 4.1.0
-~~~~
+~~~~~
 * FIX: skipzeros now checks for zero hits instead of zero time
 * FIX: Fixed errors in Python 3.11 with duplicate functions.
 * FIX: ``show_text`` now increases column sizes or switches to scientific notation to maintain alignment
@@ -24,7 +28,7 @@ Changes
 * ENH: Added readthedocs integration: https://kernprof.readthedocs.io/en/latest/index.html
 
 4.0.3
-~~~~
+~~~~~
 * FIX: Stop requiring bleeding-edge Cython unless necesasry (for Python 3.12).  #206
 
 4.0.2
