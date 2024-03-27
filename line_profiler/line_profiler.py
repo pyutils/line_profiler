@@ -467,8 +467,9 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         # Summarize the total time for each function
         for (fn, lineno, name), timings in stats_order:
             total_time = sum(t[2] for t in timings) * unit
-            line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
-            stream.write(line)
+            if not stripzeros or total_time:
+                line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
+                stream.write(line)
 
 
 def load_stats(filename):
