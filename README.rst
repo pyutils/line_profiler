@@ -33,8 +33,32 @@ They are available under a `BSD license`_.
 .. contents::
 
 
-Quick Start
-===========
+Quick Start (Modern)
+====================
+
+This guide is for versions of line profiler starting a ``4.1.0``.
+
+To profile a python script:
+
+* Install line_profiler: ``pip install line_profiler``.
+
+* In the relevant file(s), import line profiler and decorate function(s) you
+  want to profile with ``@line_profiler.profile``.
+
+* Set the environment variable ``LINE_PROFILE=1`` and run your script as normal.
+  When the script ends a summary of profile results, files written to disk, and
+  instructions for inspecting details will be written to stdout.
+
+For more details and a short tutorial see `Line Profiler Basic Usage <https://kernprof.readthedocs.io/en/latest/#line-profiler-basic-usage>`_.
+
+
+Quick Start (Legacy)
+====================
+
+This section is the original quick-start guide, and may eventually be removed
+from the README. This will work with current and older (pre ``4.1.0``) versions
+of line profiler.
+
 To profile a python script:
 
 * Install line_profiler: ``pip install line_profiler``.
