@@ -37,6 +37,7 @@ jobs:
     - name: Typecheck with mypy
       run: |-
         python -m pip install mypy
+        pip install -r requirements/runtime.txt
         mypy --install-types --non-interactive ./line_profiler
         mypy ./line_profiler
   build_and_test_sdist:
@@ -80,7 +81,7 @@ jobs:
         # Get path to installed package
         MOD_DPATH=$(python -c "import line_profiler, os; print(os.path.dirname(line_profiler.__file__))")
         echo "MOD_DPATH = $MOD_DPATH"
-        python -m pytest --verbose --cov={self.mod_name} $MOD_DPATH ../tests
+        python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
     - name: Test full loose sdist
       run: |-
@@ -95,7 +96,7 @@ jobs:
         # Get path to installed package
         MOD_DPATH=$(python -c "import line_profiler, os; print(os.path.dirname(line_profiler.__file__))")
         echo "MOD_DPATH = $MOD_DPATH"
-        python -m pytest --verbose --cov={self.mod_name} $MOD_DPATH ../tests
+        python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
     - uses: actions/upload-artifact@v3.1.3
       name: Upload sdist artifact
@@ -138,7 +139,7 @@ jobs:
       with:
         platforms: all
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v2.16.5
+      uses: pypa/cibuildwheel@v2.17.0
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
@@ -185,6 +186,7 @@ jobs:
     # environment.
     ##
     name: ${{ matrix.python-version }} on ${{ matrix.os }}, arch=${{ matrix.arch }} with ${{ matrix.install-extras }}
+    if: "! startsWith(github.event.ref, 'refs/heads/release')"
     runs-on: ${{ matrix.os }}
     needs:
     - build_binpy_wheels
@@ -200,7 +202,7 @@ jobs:
           arch: auto
         - python-version: '3.6'
           install-extras: tests-strict,runtime-strict
-          os: macOS-latest
+          os: macos-13
           arch: auto
         - python-version: '3.6'
           install-extras: tests-strict,runtime-strict
@@ -342,6 +344,9 @@ jobs:
         pip install tomli pkginfo
         export WHEEL_FPATH=$(python -c "import pathlib; print(str(sorted(pathlib.Path('wheelhouse').glob('line_profiler*.whl'))[-1]).replace(chr(92), chr(47)))")
         export MOD_VERSION=$(python -c "from pkginfo import Wheel; print(Wheel('$WHEEL_FPATH').version)")
+        echo "$WHEEL_FPATH=WHEEL_FPATH"
+        echo "$INSTALL_EXTRAS=INSTALL_EXTRAS"
+        echo "$MOD_VERSION=MOD_VERSION"
         pip install --prefer-binary "line_profiler[$INSTALL_EXTRAS]==$MOD_VERSION" -f wheelhouse
         echo "Install finished."
     - name: Test wheel ${{ matrix.install-extras }}
@@ -359,6 +364,7 @@ jobs:
         ls -altr
         # Get the path to the installed package and run the tests
         export MOD_DPATH=$(python -c "import line_profiler, os; print(os.path.dirname(line_profiler.__file__))")
+        export MOD_NAME=line_profiler
         echo "
         ---
         MOD_DPATH = $MOD_DPATH
@@ -366,7 +372,7 @@ jobs:
         running the pytest command inside the workspace
         ---
         "
-        python -m pytest --verbose -p pytester -p no:doctest --xdoctest --cov-config ../pyproject.toml --cov-report term --cov="line_profiler" "$MOD_DPATH" ../tests
+        python -m pytest --verbose -p pytester -p no:doctest --xdoctest --cov-config ../pyproject.toml --cov-report term --durations=100 --cov="$MOD_NAME" "$MOD_DPATH" ../tests
         echo "pytest command finished, moving the coverage file to the repo root"
         ls -al
         # Move coverage file to a new name
@@ -399,9 +405,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && ! startsWith(github.event.ref, 'refs/tags') && ! startsWith(github.event.ref, 'refs/heads/release')
     needs:
-    - build_and_test_sdist
     - build_binpy_wheels
-    - test_binpy_wheels
+    - build_and_test_sdist
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
@@ -474,9 +479,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/tags') || startsWith(github.event.ref, 'refs/heads/release'))
     needs:
-    - build_and_test_sdist
     - build_binpy_wheels
-    - test_binpy_wheels
+    - build_and_test_sdist
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
@@ -564,6 +568,12 @@ jobs:
       shell: bash
       run: ls -la wheelhouse
     - run: 'echo "Automatic Release Notes. TODO: improve" > ${{ github.workspace }}-CHANGELOG.txt'
+    - name: Tag Release Commit
+      if: (startsWith(github.event.ref, 'refs/heads/release'))
+      run: |-
+        export VERSION=$(python -c "import setup; print(setup.VERSION)")
+        git tag "v$VERSION"
+        git push origin "v$VERSION"
     - uses: softprops/action-gh-release@v1
       name: Create Release
       id: create_release
@@ -572,8 +582,9 @@ jobs:
       with:
         body_path: ${{ github.workspace }}-CHANGELOG.txt
         tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
+        name: Release ${{ github.ref }}
         body: Automatic Release
+        generate_release_notes: true
         draft: true
         prerelease: false
         files: |-
