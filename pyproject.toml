@@ -72,8 +72,8 @@ console_scripts = [
 
 
 [tool.pytest.ini_options]
-addopts = "--ignore-glob=setup.py --ignore-glob=dev"
-norecursedirs = ".git ignore build __pycache__ dev _skbuild"
+addopts = "--ignore-glob=setup.py --ignore-glob=dev --ignore-glob=setup.py --ignore-glob=docs --ignore-glob=agentx"
+norecursedirs = ".git ignore build __pycache__ dev _skbuild docs agentx"
 filterwarnings = [
     "default",
 ]
