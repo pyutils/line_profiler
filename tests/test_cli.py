@@ -57,8 +57,27 @@ def test_version_agreement():
     info1 = ub.cmd(f'{executable} -m line_profiler --version')
     info2 = ub.cmd(f'{executable} -m kernprof --version')
 
+    if info1['ret'] != 0:
+        print(f'Error querying line-profiler version: {info1}')
+
+    if info2['ret'] != 0:
+        print(f'Error querying kernprof version: {info2}')
+
     # Strip local version suffixes
     version1 = info1['out'].strip().split('+')[0]
     version2 = info2['out'].strip().split('+')[0]
 
-    assert version2 == version1, 'kernprof and line_profiler must be in sync'
+    if version2 != version1:
+        raise AssertionError(
+            'Version Mismatch: kernprof and line_profiler must be in sync. '
+            f'kernprof.line_profiler = {version1}. '
+            f'kernprof.__version__ = {version2}. '
+        )
+
+
+if __name__ == '__main__':
+    """
+    CommandLine:
+        python ~/code/line_profiler/tests/test_cli.py
+    """
+    test_version_agreement()
