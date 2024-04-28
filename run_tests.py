@@ -115,7 +115,8 @@ def main():
     try:
         _idx = temp_path.index(_resolved_repo_dir)
     except IndexError:
-        ...
+        print('[run_tests] Confirmed repo dir is not in sys.path')
+    else:
         print(f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from search path')
         del temp_path[_idx]
         if is_cibuildwheel():
