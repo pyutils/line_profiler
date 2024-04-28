@@ -4,6 +4,7 @@ Changes
 4.1.3
 ~~~~~
 * FIX: duration summary now respects the stripzeros argument.
+* ENH: building osx wheels for x86 and arm64.
 
 4.1.2
 ~~~~~
