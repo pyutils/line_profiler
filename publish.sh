@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 __doc__='
 Script to publish a new version of this library on PyPI.
 
@@ -23,6 +23,10 @@ Args:
     DO_GPG (bool) :
         If True, sign the packages with a GPG key specified by `GPG_KEYID`.
         defaults to auto.
+
+    DO_OTS (bool) :
+        If True, make an opentimestamp for the package and signature (if
+        available)
 
     DO_UPLOAD (bool) :
         If True, upload the packages to the pypi server specified by
@@ -138,9 +142,19 @@ DO_UPLOAD=${DO_UPLOAD:=$ARG_1}
 DO_TAG=${DO_TAG:=$ARG_1}
 
 DO_GPG=${DO_GPG:="auto"}
-# Verify that we want to build
 if [ "$DO_GPG" == "auto" ]; then
     DO_GPG="True"
+fi
+
+DO_OTS=${DO_OTS:="auto"}
+if [ "$DO_OTS" == "auto" ]; then
+    # Do opentimestamp if it is available
+    # python -m pip install opentimestamps-client
+    if type ots ; then
+        DO_OTS="True"
+    else
+        DO_OTS="False"
+    fi
 fi
 
 DO_BUILD=${DO_BUILD:="auto"}
@@ -150,6 +164,7 @@ if [ "$DO_BUILD" == "auto" ]; then
 fi
 
 DO_GPG=$(normalize_boolean "$DO_GPG")
+DO_OTS=$(normalize_boolean "$DO_OTS")
 DO_BUILD=$(normalize_boolean "$DO_BUILD")
 DO_UPLOAD=$(normalize_boolean "$DO_UPLOAD")
 DO_TAG=$(normalize_boolean "$DO_TAG")
@@ -237,6 +252,7 @@ GPG_KEYID = '$GPG_KEYID'
 DO_UPLOAD=${DO_UPLOAD}
 DO_TAG=${DO_TAG}
 DO_GPG=${DO_GPG}
+DO_OTS=${DO_OTS}
 DO_BUILD=${DO_BUILD}
 MODE_LIST_STR=${MODE_LIST_STR}
 "
@@ -375,7 +391,7 @@ ls_array(){
 }
 
 
-WHEEL_PATHS=()
+WHEEL_FPATHS=()
 for _MODE in "${MODE_LIST[@]}"
 do
     if [[ "$_MODE" == "sdist" ]]; then
@@ -393,32 +409,32 @@ do
     for new_item in "${_NEW_WHEEL_PATHS[@]}"
     do
         if [[ "$new_item" != "" ]]; then
-            WHEEL_PATHS+=("$new_item")
+            WHEEL_FPATHS+=("$new_item")
         fi
     done
 done
 
 # Dedup the paths
-readarray -t WHEEL_PATHS < <(printf '%s\n' "${WHEEL_PATHS[@]}" | sort -u)
+readarray -t WHEEL_FPATHS < <(printf '%s\n' "${WHEEL_FPATHS[@]}" | sort -u)
 
-WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_PATHS[@]}")
+WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_FPATHS[@]}")
 echo "WHEEL_PATHS_STR = $WHEEL_PATHS_STR"
 
 echo "
 MODE=$MODE
 VERSION='$VERSION'
-WHEEL_PATHS='$WHEEL_PATHS_STR'
+WHEEL_FPATHS='$WHEEL_PATHS_STR'
 "
 
 
-
+WHEEL_SIGNATURE_FPATHS=()
 if [ "$DO_GPG" == "True" ]; then
 
     echo "
     === <GPG SIGN> ===
     "
 
-    for WHEEL_FPATH in "${WHEEL_PATHS[@]}"
+    for WHEEL_FPATH in "${WHEEL_FPATHS[@]}"
     do
         echo "WHEEL_FPATH = $WHEEL_FPATH"
         check_variable WHEEL_FPATH
@@ -439,12 +455,35 @@ if [ "$DO_GPG" == "True" ]; then
 
             echo "Verifying wheels"
             $GPG_EXECUTABLE --verify "$WHEEL_FPATH".asc "$WHEEL_FPATH" || { echo 'could not verify wheels' ; exit 1; }
+
+            WHEEL_SIGNATURE_FPATHS+=("$WHEEL_FPATH".asc)
     done
     echo "
     === <END GPG SIGN> ===
     "
 else
     echo "DO_GPG=False, Skipping GPG sign"
+fi
+
+
+
+if [ "$DO_OTS" == "True" ]; then
+
+    echo "
+    === <OTS SIGN> ===
+    "
+    if [ "$DO_GPG" == "True" ]; then
+        # Stamp the wheels and the signatures
+        ots stamp "${WHEEL_FPATHS[@]}" "${WHEEL_SIGNATURE_FPATHS[@]}"
+    else
+        # Stamp only the wheels
+        ots stamp "${WHEEL_FPATHS[@]}"
+    fi
+    echo "
+    === <END OTS SIGN> ===
+    "
+else
+    echo "DO_OTS=False, Skipping OTS sign"
 fi
 
 
@@ -467,7 +506,7 @@ if [[ "$DO_UPLOAD" == "True" ]]; then
     check_variable TWINE_USERNAME
     check_variable TWINE_PASSWORD "hide"
 
-    for WHEEL_FPATH in "${WHEEL_PATHS[@]}"
+    for WHEEL_FPATH in "${WHEEL_FPATHS[@]}"
     do
         twine upload --username "$TWINE_USERNAME" "--password=$TWINE_PASSWORD" \
             --repository-url "$TWINE_REPOSITORY_URL" \
@@ -496,3 +535,39 @@ else
         !!! FINISH: DRY RUN !!!
     """
 fi
+
+__devel__='
+# Checking to see how easy it is to upload packages to gitlab.
+# This logic should go in the CI script, not sure if it belongs here.
+
+
+export HOST=https://gitlab.kitware.com
+export GROUP_NAME=computer-vision
+export PROJECT_NAME=geowatch
+PROJECT_VERSION=$(geowatch --version)
+echo "$PROJECT_VERSION"
+
+load_secrets
+export PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
+TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
+
+curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
+GROUP_ID=$(cat "$TMP_DIR/all_group_info" | jq ". | map(select(.name==\"$GROUP_NAME\")) | .[0].id")
+echo "GROUP_ID = $GROUP_ID"
+
+curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
+PROJ_ID=$(cat "$TMP_DIR/group_info" | jq ".projects | map(select(.name==\"$PROJECT_NAME\")) | .[0].id")
+echo "PROJ_ID = $PROJ_ID"
+
+ls_array DIST_FPATHS "dist/*"
+
+for FPATH in "${DIST_FPATHS[@]}"
+do
+    FNAME=$(basename $FPATH)
+    echo $FNAME
+    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+         --upload-file $FPATH \
+         "https://gitlab.kitware.com/api/v4/projects/$PROJ_ID/packages/generic/$PROJECT_NAME/$PROJECT_VERSION/$FNAME"
+done
+
+'

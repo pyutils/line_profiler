@@ -38,8 +38,9 @@ omit =[
 build = "cp36-* cp37-* cp38-* cp39-* cp310-* cp311-* cp312-*"
 build-frontend = "build"
 build-verbosity = 1
-test-requires = [ "-r requirements/tests.txt",]
+#test-requires = [ "-r requirements/tests-strict.txt",]
 test-command = "python {project}/run_tests.py"
+test-extras = ["tests-strict", "runtime-strict"]
 
 # https://cibuildwheel.readthedocs.io/en/stable/options/#archs
 [tool.cibuildwheel.macos]
@@ -72,8 +73,8 @@ console_scripts = [
 
 
 [tool.pytest.ini_options]
-addopts = "--ignore-glob=setup.py --ignore-glob=dev"
-norecursedirs = ".git ignore build __pycache__ dev _skbuild"
+addopts = "--ignore-glob=setup.py --ignore-glob=dev --ignore-glob=setup.py --ignore-glob=docs --ignore-glob=agentx"
+norecursedirs = ".git ignore build __pycache__ dev _skbuild docs agentx"
 filterwarnings = [
     "default",
 ]

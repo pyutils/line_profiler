@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-from os.path import dirname, join, abspath
+"""
+Based on template in rc/run_tests.binpy.py.in
+"""
+import os
 import sqlite3
 import sys
-import os
 import re
 
 
@@ -11,18 +13,17 @@ def is_cibuildwheel():
     return 'CIBUILDWHEEL' in os.environ
 
 
-def temp_rename_kernprof(repo_dir):
-    """
-    Hacky workaround so kernprof.py doesn't get covered twice (installed and local).
-    This needed to combine the .coverage files, since file paths need to be unique.
-
-    """
-    original_path = repo_dir + '/kernprof.py'
-    tmp_path = original_path + '.tmp'
-    if os.path.isfile(original_path):
-        os.rename(original_path, tmp_path)
-    elif os.path.isfile(tmp_path):
-        os.rename(tmp_path, original_path)
+# def temp_rename_kernprof(repo_dir):
+#     """
+#     Hacky workaround so kernprof.py doesn't get covered twice (installed and local).
+#     This needed to combine the .coverage files, since file paths need to be unique.
+#     """
+#     original_path = repo_dir + '/kernprof.py'
+#     tmp_path = original_path + '.tmp'
+#     if os.path.isfile(original_path):
+#         os.rename(original_path, tmp_path)
+#     elif os.path.isfile(tmp_path):
+#         os.rename(tmp_path, original_path)
 
 
 def replace_docker_path(path, runner_project_dir):
@@ -76,13 +77,22 @@ def copy_coverage_cibuildwheel_docker(runner_project_dir):
         os.rename(coverage_path, '/output/.coverage.{}'.format(env_hash))
 
 
-if __name__ == '__main__':
-    cwd = os.getcwd()
-    repo_dir = abspath(dirname(__file__))
-    test_dir = join(repo_dir, 'tests')
-    print('cwd = {!r}'.format(cwd))
+def main():
+    import pathlib
+    orig_cwd = os.getcwd()
+    repo_dir = pathlib.Path(__file__).parent.absolute()
+    test_dir = repo_dir / 'tests'
+    print('[run_tests] cwd = {!r}'.format(orig_cwd))
 
-    import pytest
+    print('[run_tests] Changing dirs to test_dir={!r}'.format(test_dir))
+    os.chdir(test_dir)
+
+    testdir_contents = list(pathlib.Path(test_dir).glob('*'))
+    pyproject_fpath = repo_dir / 'pyproject.toml'
+
+    print(f'[run_tests] repo_dir = {repo_dir}')
+    print(f'[run_tests] pyproject_fpath = {pyproject_fpath}')
+    print(f'[run_tests] test_dir={test_dir}')
 
     # Prefer testing the installed version, but fallback to testing the
     # development version.
@@ -91,43 +101,74 @@ if __name__ == '__main__':
     except ImportError:
         print('running this test script requires ubelt')
         raise
+
+    print(f'[run_tests] testdir_contents = {ub.urepr(testdir_contents, nl=1)}')
+    print(f'[run_tests] sys.path = {ub.urepr(sys.path, nl=1)}')
+
     package_name = 'line_profiler'
     # Statically check if ``package_name`` is installed outside of the repo.
     # To do this, we make a copy of PYTHONPATH, remove the repodir, and use
     # ubelt to check to see if ``package_name`` can be resolved to a path.
-    temp_path = list(map(abspath, sys.path))
-    if repo_dir in temp_path:
-        temp_path.remove(repo_dir)
-    modpath = ub.modname_to_modpath(package_name, sys_path=temp_path)
+    temp_path = [pathlib.Path(p).resolve() for p in sys.path]
+    _resolved_repo_dir = repo_dir.resolve()
+    print(f'[run_tests] Searching for installed version of {package_name}.')
+    try:
+        _idx = temp_path.index(_resolved_repo_dir)
+    except IndexError:
+        print('[run_tests] Confirmed repo dir is not in sys.path')
+    else:
+        print(f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from search path')
+        del temp_path[_idx]
+        if is_cibuildwheel():
+            # Remove from sys.path to prevent the import mechanism from testing
+            # the source repo rather than the installed wheel.
+            print(f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from sys.path to ensure wheels are tested')
+            del sys.path[_idx]
+            print(f'[run_tests] sys.path = {ub.urepr(sys.path, nl=1)}')
+
+    _temp_path = [os.fspath(p) for p in temp_path]
+    print(f'[run_tests] Search Paths: {ub.urepr(_temp_path, nl=1)}')
+    modpath = ub.modname_to_modpath(package_name, sys_path=_temp_path)
     if modpath is not None:
         # If it does, then import it. This should cause the installed version
         # to be used on further imports even if the repo_dir is in the path.
-        print(f'Using installed version of {package_name}')
-        module = ub.import_module_from_path(modpath, index=0)
-        print('Installed module = {!r}'.format(module))
+        print(f'[run_tests] Found installed version of {package_name}')
+        print(f'[run_tests] modpath={modpath}')
+        modpath_contents = list(pathlib.Path(modpath).glob('*'))
+        print(f'[run_tests] modpath_contents = {ub.urepr(modpath_contents, nl=1)}')
+        # module = ub.import_module_from_path(modpath, index=0)
+        # print(f'[run_tests] Installed module = {module!r}')
     else:
-        print(f'No installed version of {package_name} found')
+        print(f'[run_tests] No installed version of {package_name} found')
 
     try:
-        print('Changing dirs to test_dir={!r}'.format(test_dir))
-        os.chdir(test_dir)
-
+        import pytest
         pytest_args = [
-            '--cov-config', '../pyproject.toml',
+            '--cov-config', os.fspath(pyproject_fpath),
             '--cov-report', 'html',
             '--cov-report', 'term',
             '--cov-report', 'xml',
             '--cov=' + package_name,
-            modpath, '.'
+            os.fspath(modpath), os.fspath(test_dir)
         ]
         if is_cibuildwheel():
             pytest_args.append('--cov-append')
 
         pytest_args = pytest_args + sys.argv[1:]
-        sys.exit(pytest.main(pytest_args))
+        print(f'[run_tests] Exec pytest with args={pytest_args}')
+        retcode = pytest.main(pytest_args)
+        print(f'[run_tests] pytest returned ret={retcode}')
+    except Exception as ex:
+        print(f'[run_tests] pytest exception: {ex}')
+        retcode = 1
     finally:
-        os.chdir(cwd)
+        os.chdir(orig_cwd)
         if is_cibuildwheel():
             # for CIBW under linux
             copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
-        print('Restoring cwd = {!r}'.format(cwd))
+        print('[run_tests] Restoring cwd = {!r}'.format(orig_cwd))
+    return retcode
+
+
+if __name__ == '__main__':
+    sys.exit(main())
