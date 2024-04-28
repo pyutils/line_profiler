@@ -119,7 +119,8 @@ def test_show_func_column_formatting():
     def get_func_linenos(func):
         import sys
         if sys.version_info[0:2] >= (3, 10):
-            return sorted(set([t[2] for t in func.__code__.co_lines()]))
+            return sorted(set([t[0] if t[2] is None else t[2]
+                               for t in func.__code__.co_lines()]))
         else:
             import dis
             return sorted(set([t[1] for t in dis.findlinestarts(func.__code__)]))

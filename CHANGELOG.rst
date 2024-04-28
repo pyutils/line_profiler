@@ -3,6 +3,7 @@ Changes
 
 4.1.3
 ~~~~~
+* FIX: duration summary now respects the stripzeros argument.
 
 4.1.2
 ~~~~~
@@ -15,7 +16,7 @@ Changes
 * FIX: ``get_stats`` is no longer slowed down when profiling many code sections #236
 
 4.1.0
-~~~~
+~~~~~
 * FIX: skipzeros now checks for zero hits instead of zero time
 * FIX: Fixed errors in Python 3.11 with duplicate functions.
 * FIX: ``show_text`` now increases column sizes or switches to scientific notation to maintain alignment
