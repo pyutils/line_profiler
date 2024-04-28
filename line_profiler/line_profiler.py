@@ -220,10 +220,12 @@ class LineProfiler(CLineProfiler):
 def is_ipython_kernel_cell(filename):
     """ Return True if a filename corresponds to a Jupyter Notebook cell
     """
+    filename = os.path.normcase(filename)
+    temp_dir = os.path.normcase(tempfile.gettempdir())
     return (
         filename.startswith('<ipython-input-') or
-        filename.startswith(os.path.join(tempfile.gettempdir(), 'ipykernel_')) or
-        filename.startswith(os.path.join(tempfile.gettempdir(), 'xpython_'))
+        filename.startswith(os.path.join(temp_dir, 'ipykernel_')) or
+        filename.startswith(os.path.join(temp_dir, 'xpython_'))
     )
 
 
