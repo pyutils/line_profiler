@@ -22,7 +22,7 @@ except ImportError as ex:
     )
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
-__version__ = '4.1.3'
+__version__ = '4.1.4'
 
 
 def load_ipython_extension(ip):

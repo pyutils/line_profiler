@@ -1,10 +1,16 @@
 Changes
 =======
 
+4.1.4
+~~~~~
+
 4.1.3
 ~~~~~
 * FIX: duration summary now respects the stripzeros argument.
+* FIX: minor test fixes.
 * ENH: building osx wheels for x86 and arm64.
+* ENH: documentation improvements.
+* ENH: signed wheels are now hosted on github and published as release artifacts.
 
 4.1.2
 ~~~~~
