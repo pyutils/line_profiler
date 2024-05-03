@@ -23,7 +23,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
     - name: Set up Python 3.12 for linting
-      uses: actions/setup-python@v5.0.0
+      uses: actions/setup-python@v5.1.0
       with:
         python-version: '3.12'
     - name: Install dependencies
@@ -51,7 +51,7 @@ jobs:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
     - name: Set up Python 3.12
-      uses: actions/setup-python@v5.0.0
+      uses: actions/setup-python@v5.1.0
       with:
         python-version: '3.12'
     - name: Upgrade pip
@@ -151,7 +151,7 @@ jobs:
       shell: bash
       run: ls -la wheelhouse
     - name: Set up Python 3.12 to combine coverage
-      uses: actions/setup-python@v5.0.0
+      uses: actions/setup-python@v5.1.0
       if: runner.os == 'Linux'
       with:
         python-version: '3.12'
@@ -325,7 +325,7 @@ jobs:
       with:
         platforms: all
     - name: Setup Python
-      uses: actions/setup-python@v5.0.0
+      uses: actions/setup-python@v5.1.0
       with:
         python-version: ${{ matrix.python-version }}
     - uses: actions/download-artifact@v2.1.1
