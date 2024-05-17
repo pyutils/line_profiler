@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - name: Set up Python 3.12 for linting
       uses: actions/setup-python@v5.0.0
       with:
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - name: Set up Python 3.12
       uses: actions/setup-python@v5.0.0
       with:
@@ -130,7 +130,7 @@ jobs:
         - auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
@@ -315,7 +315,7 @@ jobs:
           arch: auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest'
@@ -410,7 +410,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - uses: actions/download-artifact@v2.1.1
       name: Download wheels
       with:
@@ -484,7 +484,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - uses: actions/download-artifact@v2.1.1
       name: Download wheels
       with:
@@ -559,7 +559,7 @@ jobs:
     - live_deploy
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.1.6
     - uses: actions/download-artifact@v2.1.1
       name: Download artifacts
       with:
