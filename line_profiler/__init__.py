@@ -199,12 +199,12 @@ Profiling multi-threaded, multi-processing, and asynchronous code may produce
 unexpected or no results. All profiling also adds some amount of overhead to
 the runtime, which may influence which parts of the code become bottlenecks.
 
-Line profiler only meausres the time between the start and end of a Python
+Line profiler only measures the time between the start and end of a Python
 call, so for benchmarking GPU code (e.g. with torch), which have asynchronous
 or delayed behavior, it will only show the time to sync blocking calls in the
 main thread.
 
-Other profilers have different limitations and different tradeoffs. It's good
+Other profilers have different limitations and different trade-offs. It's good
 to be aware of the right tool for the job. Here is a short list of other
 profiling tools:
 
