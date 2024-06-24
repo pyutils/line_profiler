@@ -181,6 +181,10 @@ def _static_parse(varname, fpath):
                 if getattr(target, "id", None) == varname:
                     self.static_value = _parse_static_node_value(node.value)
 
+        def visit_AnnAssign(self, node):
+            if getattr(node.target, "id", None) == varname:
+                self.static_value = _parse_static_node_value(node.value)
+
     visitor = StaticVisitor()
     visitor.visit(pt)
     try:
