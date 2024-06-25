@@ -3,6 +3,7 @@ Changes
 
 4.1.4
 ~~~~~
+* FIX: Fix issue with auto-profile of editable installs #279
 
 4.1.3
 ~~~~~
