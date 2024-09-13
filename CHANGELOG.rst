@@ -1,9 +1,10 @@
 Changes
 =======
 
-4.1.4
+4.2.0
 ~~~~~
 * FIX: Fix issue with auto-profile of editable installs #279
+* CHANGE: Drop support for Python 3.6 and Python 3.7
 
 4.1.3
 ~~~~~

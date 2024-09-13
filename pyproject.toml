@@ -35,7 +35,7 @@ omit =[
 ]
 
 [tool.cibuildwheel]
-build = "cp36-* cp37-* cp38-* cp39-* cp310-* cp311-* cp312-*"
+build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
 build-frontend = "build"
 build-verbosity = 1
 #test-requires = [ "-r requirements/tests-strict.txt",]
@@ -56,7 +56,7 @@ mod_name = "line_profiler"
 repo_name = "line_profiler"
 rel_mod_parent_dpath = "."
 os = [ "all", "linux", "osx", "win",]
-min_python = 3.6
+min_python = '3.8'
 author = "Robert Kern"
 author_email = "robert.kern@enthought.com"
 description = "Line-by-line profiler"
@@ -64,6 +64,7 @@ url = "https://github.com/pyutils/line_profiler"
 license = "BSD"
 dev_status = "stable"
 typed = true
+skip_autogen = ["MANIFEST.in", "CHANGELOG.md"]
 
 [tool.xcookie.entry_points]
 # the console_scripts entry point creates the xdoctest executable
