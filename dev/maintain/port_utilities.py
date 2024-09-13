@@ -1,6 +1,11 @@
 """
 Statically port utilities from ubelt and xdocest need for the autoprofile
 features.
+
+Similar Scripts:
+    ~/code/xdoctest/dev/maintain/port_ubelt_utils.py
+    ~/code/mkinit/dev/maintain/port_ubelt_code.py
+    ~/code/line_profiler/dev/maintain/port_utilities.py
 """
 import ubelt as ub
 import liberator
