@@ -91,4 +91,5 @@ def run(script_file, ns, prof_mod, profile_imports=False):
     tree_profiled = AstTreeProfiler(script_file, prof_mod, profile_imports).profile()
 
     _extend_line_profiler_for_profiling_imports(ns[PROFILER_LOCALS_NAME])
-    exec(compile(tree_profiled, script_file, 'exec'), ns, ns)
+    code_obj = compile(tree_profiled, script_file, 'exec')
+    exec(code_obj, ns, ns)
