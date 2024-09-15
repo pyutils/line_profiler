@@ -101,6 +101,8 @@ The output will be
 The quickest way to enable profiling is to set the environment variable
 ``LINE_PROFILE=1`` and running your script as normal.
 
+.... todo: add a link that points to docs showing all the different ways to enable profiling.
+
 
 .. code:: bash
 
@@ -126,21 +128,104 @@ and profile_output.lprof and stdout will look something like:
     python -m line_profiler -rtmz profile_output.lprof
 
 
-For more control over the outputs, run your script using :py:mod:`kernprof`.
-The following invocation will run your script, dump results to
-``demo_primes.py.lprof``, and display results.
-
-.. code:: bash
-
-    python -m kernprof -lvr demo_primes.py
+The details contained in the output txt files or by running the script provided
+in the output will show detailed line-by-line timing information for each
+decorated function.
 
 
-Note: the ``-r`` flag will use "rich-output" if you have the :py:mod:`rich`
-module installed.
+.. code::
+
+    Timer unit: 1e-06 s
+
+    Total time: 0.731624 s
+    File: ./demo_primes.py
+    Function: is_prime at line 4
+
+    Line #      Hits         Time  Per Hit   % Time  Line Contents
+    ==============================================================
+         4                                           @profile
+         5                                           def is_prime(n):
+         6                                               '''
+         7                                               Check if the number "n" is prime, with n > 1.
+         8
+         9                                               Returns a boolean, True if n is prime.
+        10                                               '''
+        11    100000      14178.0      0.1      1.9      max_val = n ** 0.5
+        12    100000      22830.7      0.2      3.1      stop = int(max_val + 1)
+        13   2755287     313514.1      0.1     42.9      for i in range(2, stop):
+        14   2745693     368716.6      0.1     50.4          if n % i == 0:
+        15     90406      11462.9      0.1      1.6              return False
+        16      9594        922.0      0.1      0.1      return True
+
+
+    Total time: 1.56771 s
+    File: ./demo_primes.py
+    Function: find_primes at line 19
+
+    Line #      Hits         Time  Per Hit   % Time  Line Contents
+    ==============================================================
+        19                                           @profile
+        20                                           def find_primes(size):
+        21         1          0.2      0.2      0.0      primes = []
+        22    100001      10280.4      0.1      0.7      for n in range(size):
+        23    100000    1544196.6     15.4     98.5          flag = is_prime(n)
+        24    100000      11375.4      0.1      0.7          if flag:
+        25      9594       1853.2      0.2      0.1              primes.append(n)
+        26         1          0.1      0.1      0.0      return primes
+
+
+    Total time: 1.60483 s
+    File: ./demo_primes.py
+    Function: main at line 29
+
+    Line #      Hits         Time  Per Hit   % Time  Line Contents
+    ==============================================================
+        29                                           @profile
+        30                                           def main():
+        31         1         14.0     14.0      0.0      print('start calculating')
+        32         1    1604795.1    2e+06    100.0      primes = find_primes(100000)
+        33         1         20.6     20.6      0.0      print(f'done calculating. Found {len(primes)} primes.')
+
 
 See Also:
 
     * autoprofiling usage in: :py:mod:`line_profiler.autoprofile`
+
+Limitations
+===========
+
+Line profiling does have limitations, and it is important to be aware of them.
+Profiling multi-threaded, multi-processing, and asynchronous code may produce
+unexpected or no results. All profiling also adds some amount of overhead to
+the runtime, which may influence which parts of the code become bottlenecks.
+
+Line profiler only measures the time between the start and end of a Python
+call, so for benchmarking GPU code (e.g. with torch), which have asynchronous
+or delayed behavior, it will only show the time to sync blocking calls in the
+main thread.
+
+Other profilers have different limitations and different trade-offs. It's good
+to be aware of the right tool for the job. Here is a short list of other
+profiling tools:
+
+
+* `Scalene <https://github.com/plasma-umass/scalene>`_: A CPU+GPU+memory sampling based profiler.
+
+* `PyInstrument  <https://github.com/joerick/pyinstrument>`_: A call stack profiler.
+
+* `Yappi <https://github.com/sumerc/yappi>`_: A tracing profiler that is multithreading, asyncio and gevent aware.
+
+* `profile / cProfile <https://docs.python.org/3/library/profile.html>`_: The builtin profile module.
+
+* `timeit <https://docs.python.org/3/library/timeit.html>`_: The builtin timeit module for profiling single statements.
+
+* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alternative to the builtin ``timeit`` module.
+
+* `torch.profiler <https://pytorch.org/docs/stable/profiler.html>`_ tools for profiling torch code.
+
+
+.... todo: give more details on exact limitations.
+
 """
 # Note: there are better ways to generate primes
 # https://github.com/Sylhare/nprime
