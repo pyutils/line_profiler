@@ -22,10 +22,10 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
-    - name: Set up Python 3.13 for linting
+    - name: Set up Python 3.12 for linting
       uses: actions/setup-python@v5.1.1
       with:
-        python-version: '3.13'
+        python-version: '3.12'
     - name: Install dependencies
       run: |-
         python -m pip install --upgrade pip
@@ -50,10 +50,10 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
-    - name: Set up Python 3.13
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5.1.1
       with:
-        python-version: '3.13'
+        python-version: '3.12'
     - name: Upgrade pip
       run: |-
         python -m pip install --upgrade pip
@@ -149,11 +149,11 @@ jobs:
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
-    - name: Set up Python 3.13 to combine coverage
+    - name: Set up Python 3.12 to combine coverage
       uses: actions/setup-python@v5.1.1
       if: runner.os == 'Linux'
       with:
-        python-version: '3.13'
+        python-version: '3.12'
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
       run: |-
@@ -216,23 +216,23 @@ jobs:
           install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests-strict,runtime-strict,optional-strict
           os: macOS-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests
           os: macOS-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests
           os: windows-latest
           arch: auto
@@ -256,7 +256,7 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
@@ -280,7 +280,7 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
@@ -304,7 +304,7 @@ jobs:
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        - python-version: '3.13'
+        - python-version: 3.13.0-rc.2
           install-extras: tests,optional
           os: windows-latest
           arch: auto
