@@ -23,6 +23,14 @@ from libc.stdint cimport int64_t
 
 from libcpp.unordered_map cimport unordered_map
 import threading
+import opcode
+
+NOP_VALUE: int = opcode.opmap['NOP']
+
+# The Op code should be 2 bytes as stated in
+# https://docs.python.org/3/library/dis.html
+# if sys.version_info[0:2] >= (3, 11):
+NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
@@ -242,23 +250,7 @@ cdef class LineProfiler:
         if code.co_code in self.dupes_map:
             self.dupes_map[code.co_code] += [code]
             # code hash already exists, so there must be a duplicate function. add no-op
-            # co_code = code.co_code + (9).to_bytes(1, byteorder=byteorder) * (len(self.dupes_map[code.co_code]))
-
-            """
-            # Code to lookup the NOP opcode, which we will just hard code here
-            # instead of looking it up. Perhaps do a global lookup in the
-            # future.
-            NOP_VALUE: int = opcode.opmap['NOP']
-            """
-            NOP_VALUE: int = 9
-            # Op code should be 2 bytes as stated in
-            # https://docs.python.org/3/library/dis.html
-            # if sys.version_info[0:2] >= (3, 11):
-            NOP_BYTES = NOP_VALUE.to_bytes(2, byteorder=byteorder)
-            # else:
-            #     NOP_BYTES = NOP_VALUE.to_bytes(1, byteorder=byteorder)
-
-            co_padding = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
+            co_padding : bytes = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
             co_code = code.co_code + co_padding
             CodeType = type(code)
             code = _code_replace(func, co_code=co_code)
