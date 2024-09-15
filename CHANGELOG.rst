@@ -6,6 +6,7 @@ Changes
 * FIX: Fix issue with auto-profile of editable installs #279
 * FIX: Lookup OP-codes instead of hard coding them #284
 * CHANGE: Drop support for Python 3.6 and Python 3.7
+* ENH: Add support for Python 3.13
 
 4.1.3
 ~~~~~
