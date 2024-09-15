@@ -17,7 +17,7 @@ Notes:
     # need to edit the conf.py
 
     cd ~/code/line_profiler/docs
-    sphinx-apidoc --private --separate -f -o ~/code/line_profiler/docs/source/auto ~/code/line_profiler/line_profiler
+    sphinx-apidoc --private --separate --force --output-dir ~/code/line_profiler/docs/source/auto ~/code/line_profiler/line_profiler
 
     # Note: the module should importable before running this
     # (e.g. install it in developer mode or munge the PYTHONPATH)
