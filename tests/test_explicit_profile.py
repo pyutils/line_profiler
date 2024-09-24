@@ -34,9 +34,9 @@ def _demo_explicit_profile_script():
         @profile
         def fib(n):
             a, b = 0, 1
-            while a < n:
+            for _ in range(n):
                 a, b = b, a + b
-
+            return a
         fib(10)
         ''')
 

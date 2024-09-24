@@ -36,6 +36,7 @@ omit =[
 
 [tool.cibuildwheel]
 build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+skip = "cp313-musllinux_i686"
 build-frontend = "build"
 build-verbosity = 1
 #test-requires = [ "-r requirements/tests-strict.txt",]
