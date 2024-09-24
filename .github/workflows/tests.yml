@@ -123,8 +123,8 @@ jobs:
         - ubuntu-latest
         - macOS-latest
         - windows-latest
-        cibw_skip:
-        - '*-win32'
+        #cibw_skip:
+        #- '*-win32'
         arch:
         - auto
     steps:
@@ -132,7 +132,8 @@ jobs:
       uses: actions/checkout@v4.1.1
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
+      #if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
+      if: matrix.os == 'windows-latest'
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -144,7 +145,7 @@ jobs:
         output-dir: wheelhouse
         config-file: pyproject.toml
       env:
-        CIBW_SKIP: ${{ matrix.cibw_skip }}
+        #CIBW_SKIP: ${{ matrix.cibw_skip }}
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
     - name: Show built files
       shell: bash
