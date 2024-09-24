@@ -326,6 +326,8 @@ def test_autoprofile_script_with_prof_imports():
     raw_output = proc.stdout
     print('Line_profile Stdout:')
     print(raw_output)
+    print('Line_profile Stderr:')
+    print(proc.stderr)
     print('About to check line_profiler return code')
     proc.check_returncode()
 
