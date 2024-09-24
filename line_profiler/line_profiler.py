@@ -432,9 +432,17 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     else:
         for lineno, line in zip(linenos, sublines):
             nhits, time, per_hit, percent = display.get(lineno, empty)
-            txt = template % (lineno, nhits, time, per_hit, percent,
-                              line.rstrip('\n').rstrip('\r'))
-            stream.write(txt)
+            line_ = line.rstrip('\n').rstrip('\r')
+            txt = template % (lineno, nhits, time, per_hit, percent, line_)
+            try:
+                stream.write(txt)
+            except UnicodeEncodeError as ex:
+                # todo: better handling of windows encoding issue
+                # for now just work around it
+                line_ = f'{ex!r} - help wanted for a fix'
+                txt = template % (lineno, nhits, time, per_hit, percent, line_)
+                stream.write(txt)
+
             stream.write('\n')
     stream.write('\n')
 

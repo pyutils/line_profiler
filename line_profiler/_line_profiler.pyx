@@ -222,6 +222,8 @@ cdef class LineProfiler:
         self.code_hash_map = {}
         self.dupes_map = {}
         self.timer_unit = hpTimerUnit()
+        # Create a data store for thread-local objects
+        # https://docs.python.org/3/library/threading.html#thread-local-data
         self.threaddata = threading.local()
 
         for func in functions:
