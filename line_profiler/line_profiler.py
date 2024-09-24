@@ -436,10 +436,10 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             txt = template % (lineno, nhits, time, per_hit, percent, line_)
             try:
                 stream.write(txt)
-            except UnicodeEncodeError as ex:
+            except UnicodeEncodeError:
                 # todo: better handling of windows encoding issue
                 # for now just work around it
-                line_ = f'{ex!r} - help wanted for a fix'
+                line_ = 'UnicodeEncodeError - help wanted for a fix'
                 txt = template % (lineno, nhits, time, per_hit, percent, line_)
                 stream.write(txt)
 
