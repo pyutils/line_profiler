@@ -141,17 +141,26 @@ def main():
     else:
         print(f'[run_tests] No installed version of {package_name} found')
 
+    # disable coverage in cibuildwheel for now
+    use_coverage = not is_cibuildwheel()
+
     try:
         import pytest
-        pytest_args = [
-            '--cov-config', os.fspath(pyproject_fpath),
-            '--cov-report', 'html',
-            '--cov-report', 'term',
-            '--cov-report', 'xml',
-            '--cov=' + package_name,
+        pytest_args = []
+
+        if use_coverage:
+            pytest_args += [
+                '--cov-config', os.fspath(pyproject_fpath),
+                '--cov-report', 'html',
+                '--cov-report', 'term',
+                '--cov-report', 'xml',
+                '--cov=' + package_name,
+            ]
+
+        pytest_args += [
             os.fspath(modpath), os.fspath(test_dir)
         ]
-        if is_cibuildwheel():
+        if is_cibuildwheel() and use_coverage:
             pytest_args.append('--cov-append')
 
         pytest_args = pytest_args + sys.argv[1:]
@@ -163,7 +172,7 @@ def main():
         retcode = 1
     finally:
         os.chdir(orig_cwd)
-        if is_cibuildwheel():
+        if is_cibuildwheel() and use_coverage:
             # for CIBW under linux
             copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
         print('[run_tests] Restoring cwd = {!r}'.format(orig_cwd))

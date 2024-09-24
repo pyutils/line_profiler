@@ -313,15 +313,22 @@ def test_autoprofile_script_with_prof_imports():
     #     pytest.skip('Failing due to the noop bug')
 
     args = [sys.executable, '-m', 'kernprof', '--prof-imports', '-p', 'script.py', '-l', os.fspath(script_fpath)]
-    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=0)
+    print('Kernprof Stdout:')
     print(proc.stdout)
+    print('Kernprof Stderr:')
     print(proc.stderr)
+    print('About to check kernprof return code')
     proc.check_returncode()
 
     args = [sys.executable, '-m', 'line_profiler', os.fspath(script_fpath) + '.lprof']
-    proc = ub.cmd(args, cwd=temp_dpath)
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=0)
     raw_output = proc.stdout
+    print('Line_profile Stdout:')
     print(raw_output)
+    print('Line_profile Stderr:')
+    print(proc.stderr)
+    print('About to check line_profiler return code')
     proc.check_returncode()
 
     assert 'Function: add_one' in raw_output
