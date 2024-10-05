@@ -11,6 +11,8 @@
    auto/line_profiler.explicit_profiler
    auto/kernprof
 
+   manual/examples/index
+
 
 Indices and tables
 ==================
