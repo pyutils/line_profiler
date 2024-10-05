@@ -24,3 +24,5 @@ index.html
 tests/coverage.xml
 tests/htmlcov
 wheelhouse
+profile_output*
+*.egg-info/
