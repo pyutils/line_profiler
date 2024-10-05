@@ -224,7 +224,7 @@ profiling tools:
 * `torch.profiler <https://pytorch.org/docs/stable/profiler.html>`_ tools for profiling torch code.
 
 
-.... todo: give more details on exact limitations.
+.. .. todo: give more details on exact limitations.
 
 """
 # Note: there are better ways to generate primes
