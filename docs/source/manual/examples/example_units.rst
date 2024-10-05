@@ -4,6 +4,8 @@ Timing Units
 This example demonstrates how you can change the units in which the time is
 reported.
 
+Write the following demo script to disk
+
 .. code:: bash
 
    echo "if 1:
@@ -41,6 +43,11 @@ reported.
    " > script.py
 
 
+Run the script with line profiling on. To change the unit in which time is
+reported use the ``--unit`` command line argument. The following example shows
+4 variants:
+
+.. code:: bash
    LINE_PROFILE=1 python script.py
 
    # Use different values for the unit report
