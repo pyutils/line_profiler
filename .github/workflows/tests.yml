@@ -585,7 +585,7 @@ jobs:
         export VERSION=$(python -c "import setup; print(setup.VERSION)")
         git tag "v$VERSION"
         git push origin "v$VERSION"
-    - uses: softprops/action-gh-release@v1
+    - uses: softprops/action-gh-release@v2
       name: Create Release
       id: create_release
       env:
