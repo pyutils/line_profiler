@@ -22,10 +22,10 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
-    - name: Set up Python 3.12 for linting
+    - name: Set up Python 3.13 for linting
       uses: actions/setup-python@v5.1.1
       with:
-        python-version: '3.12'
+        python-version: '3.13'
     - name: Install dependencies
       run: |-
         python -m pip install --upgrade pip
@@ -50,10 +50,10 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.1.1
-    - name: Set up Python 3.12
+    - name: Set up Python 3.13
       uses: actions/setup-python@v5.1.1
       with:
-        python-version: '3.12'
+        python-version: '3.13'
     - name: Upgrade pip
       run: |-
         python -m pip install --upgrade pip
@@ -123,8 +123,8 @@ jobs:
         - ubuntu-latest
         - macOS-latest
         - windows-latest
-        #cibw_skip:
-        #- '*-win32'
+        cibw_skip:
+        - '*-win32 *-win32 cp313-musllinux_i686'
         arch:
         - auto
     steps:
@@ -132,8 +132,7 @@ jobs:
       uses: actions/checkout@v4.1.1
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      #if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -145,16 +144,16 @@ jobs:
         output-dir: wheelhouse
         config-file: pyproject.toml
       env:
-        #CIBW_SKIP: ${{ matrix.cibw_skip }}
+        CIBW_SKIP: ${{ matrix.cibw_skip }}
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
-    - name: Set up Python 3.12 to combine coverage
+    - name: Set up Python 3.13 to combine coverage
       uses: actions/setup-python@v5.1.1
       if: runner.os == 'Linux'
       with:
-        python-version: '3.12'
+        python-version: '3.13'
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
       run: |-
@@ -217,23 +216,23 @@ jobs:
           install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: macOS-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests
           os: macOS-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests
           os: windows-latest
           arch: auto
@@ -257,7 +256,7 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
@@ -281,7 +280,7 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
@@ -305,7 +304,7 @@ jobs:
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        - python-version: 3.13.0-rc.2
+        - python-version: '3.13'
           install-extras: tests,optional
           os: windows-latest
           arch: auto
