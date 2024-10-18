@@ -134,7 +134,7 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.0.0
+      uses: docker/setup-qemu-action@v3.2.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
@@ -315,7 +315,7 @@ jobs:
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest'
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.0.0
+      uses: docker/setup-qemu-action@v3.2.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
