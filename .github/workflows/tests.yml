@@ -169,7 +169,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v4.0.1
+    - uses: codecov/codecov-action@v5.1.2
       name: Codecov Upload
       env:
         HAVE_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -177,7 +177,7 @@ jobs:
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
-    - uses: codecov/codecov-action@v4.0.1
+    - uses: codecov/codecov-action@v5.1.2
       name: Codecov Upload
       with:
         file: ./coverage.xml
@@ -404,7 +404,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v4.0.1
+    - uses: codecov/codecov-action@v5.1.2
       name: Codecov Upload
       with:
         file: ./coverage.xml
