@@ -3,6 +3,7 @@ Changes
 
 4.2.1
 ~~~~~
+* FIX: win32 encoding issues
 
 4.2.0
 ~~~~~
