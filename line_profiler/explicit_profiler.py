@@ -360,7 +360,7 @@ class GlobalProfiler:
 
             if write_text:
                 txt_output_fpath1 = pathlib.Path(f'{self.output_prefix}.txt')
-                txt_output_fpath1.write_text(raw_text)
+                txt_output_fpath1.write_text(raw_text, encoding='utf-8')
                 print('Wrote profile results to %s' % txt_output_fpath1)
 
             if write_timestamped_text:
@@ -368,7 +368,7 @@ class GlobalProfiler:
                 now = datetime_cls.now()
                 timestamp = now.strftime('%Y-%m-%dT%H%M%S')
                 txt_output_fpath2 = pathlib.Path(f'{self.output_prefix}_{timestamp}.txt')
-                txt_output_fpath2.write_text(raw_text)
+                txt_output_fpath2.write_text(raw_text, encoding='utf-8')
                 print('Wrote profile results to %s' % txt_output_fpath2)
 
         if write_lprof:
