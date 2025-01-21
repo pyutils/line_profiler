@@ -460,7 +460,7 @@ See `CHANGELOG`_.
 .. |Pypi| image:: https://img.shields.io/pypi/v/line_profiler.svg
    :target: https://pypi.python.org/pypi/line_profiler
 .. |Downloads| image:: https://img.shields.io/pypi/dm/line_profiler.svg
-   :target: https://pypistats.org/packages/line_profiler
+   :target: https://pypistats.org/packages/line-profiler
 .. |GithubActions| image:: https://github.com/pyutils/line_profiler/actions/workflows/tests.yml/badge.svg?branch=main
    :target: https://github.com/pyutils/line_profiler/actions?query=branch%3Amain
 .. |ReadTheDocs| image:: https://readthedocs.org/projects/kernprof/badge/?version=latest
