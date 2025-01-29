@@ -44,7 +44,8 @@ def parse_version(fpath):
 
 def static_parse(varname, fpath):
     """
-    Statically parse the a constant variable from a python file
+    Statically parse the a constant variable from a python file.
+    Raise an error if the variable is not a constant.
     """
     import ast
 
@@ -59,8 +60,9 @@ def static_parse(varname, fpath):
             for target in node.targets:
                 if getattr(target, "id", None) == varname:
                     value: ast.expr = node.value
-                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                        self.static_value = value.value
+                    if not isinstance(value, ast.Constant):
+                        raise ValueError("variable {!r} is not a constant".format(varname))
+                    self.static_value = value.value
 
     visitor = StaticVisitor()
     visitor.visit(pt)
