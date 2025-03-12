@@ -360,6 +360,15 @@ cdef class LineProfiler:
         self._c_last_time[threading.get_ident()].clear()
         unset_trace()
 
+    def reset_stats(self):
+        """
+        Reset the currently accumulated timings information.
+        """
+        it = self._c_code_map.begin()
+        while it != self._c_code_map.end():
+            cython.operator.dereference(it).second.clear()
+            cython.operator.preincrement(it)
+
     def get_stats(self):
         """
         Return a LineStats object containing the timings.

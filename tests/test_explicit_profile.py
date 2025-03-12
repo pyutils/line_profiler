@@ -25,6 +25,12 @@ def test_simple_explicit_nonglobal_usage():
     print(f'profiler.code_hash_map={profiler.code_hash_map}')
     profiler.print_stats()
 
+    profiler.reset_stats()
+    for code in profiler.code_hash_map:
+        for entry in profiler.code_hash_map[code]:
+            assert entry in profiler.c_code_map
+            assert len(profiler.c_code_map[entry]) == 0
+
 
 def _demo_explicit_profile_script():
     return ub.codeblock(
