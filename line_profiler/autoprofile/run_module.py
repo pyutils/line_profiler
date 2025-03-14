@@ -5,7 +5,7 @@ from .ast_tree_profiler import AstTreeProfiler
 from .util_static import modname_to_modpath
 
 
-def get_module_from_importfrom(node, module):
+def get_module_from_importfrom(node, module, main=False):
     r"""Resolve the full path of a relative import.
 
     Args:
@@ -13,6 +13,8 @@ def get_module_from_importfrom(node, module):
             ImportFrom node
         module (str)
             Full path relative to which the import is to occur
+        main (bool)
+            Whether the node originated from a '__main__.py' file
 
     Return:
         modname (str)
@@ -34,19 +36,26 @@ def get_module_from_importfrom(node, module):
         ... '''.strip('\n'))).body
         >>>
         >>>
-        >>> get_module = functools.partial(get_module_from_importfrom,
-        ...                                module='foo.bar')
-        >>> assert get_module(abs_import) == 'a'
-        >>> assert get_module(rel_imports[0]) == 'foo.bar'
-        >>> assert get_module(rel_imports[1]) == 'foo'
-        >>> assert get_module(rel_imports[2]) == 'foo.bar.baz'
-        >>> assert get_module(rel_imports[3]) == 'foo.baz'
+        >>> get_submodule = functools.partial(
+        ...     get_module_from_importfrom, module='foo.bar.foobar')
+        >>> get_module_main = functools.partial(
+        ...     get_module_from_importfrom,
+        ...     module='foo.bar',
+        ...     main=True)
+        >>> for get_module in get_submodule, get_module_main:
+        ...     assert get_module(abs_import) == 'a'
+        ...     assert get_module(rel_imports[0]) == 'foo.bar'
+        ...     assert get_module(rel_imports[1]) == 'foo'
+        ...     assert get_module(rel_imports[2]) == 'foo.bar.baz'
+        ...     assert get_module(rel_imports[3]) == 'foo.baz'
     """
     level = node.level
     if not level:
         return node.module
-    if level > 1:
-        module = '.'.join(module.split('.')[:-(level - 1)])
+    if main:
+        level -= 1
+    if level:
+        module = '.'.join(module.split('.')[:-level])
     if node.module:
         return module + '.' + node.module
     return module
@@ -54,14 +63,15 @@ def get_module_from_importfrom(node, module):
 
 class ImportFromTransformer(ast.NodeTransformer):
     """Turn all the relative imports into absolute imports."""
-    def __init__(self, module):
+    def __init__(self, module, main=False):
         self.module = module
+        self.main = main
 
     def visit_ImportFrom(self, node):
         level = node.level
         if not level:
             return self.generic_visit(node)
-        module = get_module_from_importfrom(node, self.module)
+        module = get_module_from_importfrom(node, self.module, self.main)
         new_node = ast.ImportFrom(module=module,
                                   names=node.names,
                                   level=0)
@@ -91,17 +101,22 @@ class AstTreeModuleProfiler(AstTreeProfiler):
                 passed to `.ast_tree_profiler.AstTreeProfiler`.
         """
         self._module = module_name
+        self._main = self._is_main(module_file)
         super().__init__(module_file, *args, **kwargs)
 
     def _get_script_ast_tree(self, script_file):
         tree = super()._get_script_ast_tree(script_file)
-        return ImportFromTransformer(self._module).visit(tree)
+        return ImportFromTransformer(self._module, self._main).visit(tree)
 
     @staticmethod
-    def _check_profile_full_script(script_file, prof_mod):
+    def _is_main(fname):
+        return os.path.basename(fname) == '__main__.py'
+
+    @classmethod
+    def _check_profile_full_script(cls, script_file, prof_mod):
         rp = os.path.realpath
         paths_to_check = {rp(script_file)}
-        if os.path.basename(script_file) == '__main__.py':
+        if cls._is_main(script_file):
             paths_to_check.add(rp(os.path.dirname(script_file)))
         paths_to_profile = {rp(mod) for mod in prof_mod}
         for mod in prof_mod:
