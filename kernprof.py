@@ -45,7 +45,7 @@ To view kernprof help run:
 
 .. code:: bash
 
-    kenprof --help
+    kernprof --help
 
 which displays:
 
@@ -177,11 +177,11 @@ class RepeatedTimer:
 
 
 def find_module_script(module_name):
-    """Find the path to the executable script for a module."""
+    """Find the path to the executable script for a module or package."""
     from line_profiler.autoprofile.util_static import modname_to_modpath
 
-    for suiifx in '.__main__', '':
-        fname = modname_to_modpath(module_name + suiifx)
+    for suffix in '.__main__', '':
+        fname = modname_to_modpath(module_name + suffix)
         if fname:
             return fname
 
