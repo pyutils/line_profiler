@@ -1,6 +1,7 @@
 import tempfile
 import sys
 import os
+import pytest
 import ubelt as ub
 
 
@@ -197,6 +198,23 @@ def _write_demo_module(temp_dpath):
     (temp_dpath / 'test_mod/__init__.py').touch()
     (temp_dpath / 'test_mod/subpkg/__init__.py').touch()
 
+    (temp_dpath / 'test_mod/__main__.py').write_text(ub.codeblock(
+        '''
+        import argparse
+
+        from .submod1 import add_one
+        from . import submod2
+
+        def _main(args=None):
+            parser = argparse.ArgumentParser()
+            parser.add_argument('a', nargs='*', type=int)
+            print(add_one(parser.parse_args(args).a))
+            print(submod2.add_two(parser.parse_args(args).a))
+
+        if __name__ == '__main__':
+            _main()
+        '''))
+
     (temp_dpath / 'test_mod/util.py').write_text(ub.codeblock(
         '''
         def add_operator(a, b):
@@ -226,6 +244,26 @@ def _write_demo_module(temp_dpath):
         def add_three(items):
             new_items = [add_operator(item, 3) for item in items]
             return new_items
+        '''))
+    (temp_dpath / 'test_mod/subpkg/submod4.py').write_text(ub.codeblock(
+        '''
+        import argparse
+
+        from test_mod import submod1
+        from ..submod2 import add_two
+
+        def add_four(items):
+            add_one = submod1.add_one
+            return add_two(add_one(add_one(items)))
+
+        def _main(args=None):
+            parser = argparse.ArgumentParser()
+            parser.add_argument('a', nargs='*', type=int)
+            print(submod1.add_one(parser.parse_args(args).a))
+            print(add_four(parser.parse_args(args).a))
+
+        if __name__ == '__main__':
+            _main()
         '''))
 
     script_fpath = (temp_dpath / 'script.py')
@@ -389,3 +427,84 @@ def test_autoprofile_script_with_prof_imports():
     assert 'Function: add_one' in raw_output
     assert 'Function: harmonic_mean' in raw_output
     assert 'Function: main' in raw_output
+
+
+@pytest.mark.parametrize(
+    ['prof_mod', 'prof_imports', 'add_one', 'add_two', 'add_operator', 'main'],
+    [('test_mod.submod1', False, True, False, False, False),
+     ('test_mod.submod2', True, False, True, True, False),
+     # `prof_mod = None` -> `-p test_mod`
+     (None, True, True, True, True, True)])
+def test_autoprofile_exec_package(
+        prof_mod, prof_imports, add_one, add_two, add_operator, main):
+    """
+    Test the execution of a package.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+    _write_demo_module(temp_dpath)
+
+    args = [sys.executable, '-m', 'kernprof']
+    if prof_mod is not None:
+        args.extend(['-p', prof_mod])
+    if prof_imports:
+        args.append('--prof-imports')
+    args.extend(['-l', '-m', 'test_mod', '1', '2', '3'])
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    prof = temp_dpath / 'test_mod.lprof'
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert ('Function: add_one' in raw_output) == add_one
+    assert ('Function: add_two' in raw_output) == add_two
+    assert ('Function: add_operator' in raw_output) == add_operator
+    assert ('Function: _main' in raw_output) == main
+
+
+@pytest.mark.parametrize(
+    ['prof_mod', 'prof_imports', 'add_one', 'add_two', 'add_four',
+     'add_operator', 'main'],
+    [('test_mod.submod2', False, False, True, False, False, False),
+     ('test_mod.submod1', False, True, False, False, True, False),
+     ('test_mod.subpkg.submod4', True, True, True, True, True, True),
+     # `prof_mod = None` -> `-p test_mod.subpkg.submod4`
+     (None, True, True, True, True, True, True)])
+def test_autoprofile_exec_module(
+        prof_mod, prof_imports, add_one, add_two, add_four, add_operator, main):
+    """
+    Test the execution of a module.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+    _write_demo_module(temp_dpath)
+
+    args = [sys.executable, '-m', 'kernprof']
+    if prof_mod is not None:
+        args.extend(['-p', prof_mod])
+    if prof_imports:
+        args.append('--prof-imports')
+    args.extend(['-l', '-m', 'test_mod.subpkg.submod4', '1', '2', '3'])
+    proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+    print(proc.stdout)
+    print(proc.stderr)
+    proc.check_returncode()
+
+    prof = temp_dpath / 'test_mod.subpkg.submod4.lprof'
+
+    args = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
+    proc = ub.cmd(args, cwd=temp_dpath)
+    raw_output = proc.stdout
+    print(raw_output)
+    proc.check_returncode()
+
+    assert ('Function: add_one' in raw_output) == add_one
+    assert ('Function: add_two' in raw_output) == add_two
+    assert ('Function: add_four' in raw_output) == add_four
+    assert ('Function: add_operator' in raw_output) == add_operator
+    assert ('Function: _main' in raw_output) == main
