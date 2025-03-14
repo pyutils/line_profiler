@@ -1,17 +1,17 @@
-import _ast
+import ast
 
 from .ast_tree_profiler import AstTreeProfiler
 
 
-def get_module_from_importfrom(node: _ast.ImportFrom, module: str) -> str:
+def get_module_from_importfrom(node: ast.ImportFrom, module: str) -> str:
     ...
 
 
-class ImportFromTransformer(_ast.NodeTransformer):
+class ImportFromTransformer(ast.NodeTransformer):
     def __init__(self, module: str, main: bool = False) -> None:
         ...
 
-    def visit_ImportFrom(self, _ast.ImportFrom) -> _ast.ImportFrom:
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
         ...
 
     module: str
