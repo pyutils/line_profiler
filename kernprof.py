@@ -176,6 +176,19 @@ class RepeatedTimer:
         self.is_running = False
 
 
+def find_module_script(module_name):
+    """Find the path to the executable script for a module."""
+    from line_profiler.autoprofile.util_static import modname_to_modpath
+
+    for suiifx in '.__main__', '':
+        fname = modname_to_modpath(module_name + suiifx)
+        if fname:
+            return fname
+
+    sys.stderr.write('Could not find module %s\n' % module_name)
+    raise SystemExit(1)
+
+
 def find_script(script_name):
     """ Find the script.
 
@@ -243,10 +256,14 @@ def main(args=None):
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
                         help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                         "Minimum value is 1 (second). Defaults to disabled.")
-    parser.add_argument('-p', '--prof-mod', type=str, default='',
+    parser.add_argument('-p', '--prof-mod', type=str,
                         help="List of modules, functions and/or classes to profile specified by their name or path. "
                         "List is comma separated, adding the current script path profiles full script. "
                         "Only works with line_profiler -l, --line-by-line")
+    parser.add_argument('-m', '--module', action='store_true',
+                        help="Treat `script` as a Python module, running it like "
+                        "`python -m script` "
+                        "(implies `-p script` if `-p` is not otherwise provided)")
     parser.add_argument('--prof-imports', action='store_true',
                         help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                         "Only works with line_profiler -l, --line-by-line")
@@ -294,7 +311,12 @@ def main(args=None):
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
-    script_file = find_script(options.script)
+    if options.module:
+        script_file = find_module_script(options.script)
+        if options.prof_mod is None:
+            options.prof_mod = options.script
+    else:
+        script_file = find_script(options.script)
     __file__ = script_file
     __name__ = '__main__'
     # Make sure the script's directory is on sys.path instead of just
@@ -312,8 +334,12 @@ def main(args=None):
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                prof_mod = options.prof_mod.split(',')
-                autoprofile.run(script_file, ns, prof_mod=prof_mod, profile_imports=options.prof_imports)
+                prof_mod = (options.prof_mod or '').split(',')
+                autoprofile.run(script_file,
+                                ns,
+                                prof_mod=prof_mod,
+                                profile_imports=options.prof_imports,
+                                as_module=options.script if options.module else None)
             elif options.builtin:
                 execfile(script_file, ns, ns)
             else:
