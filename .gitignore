@@ -19,6 +19,7 @@ line_profiler.egg-info/
 MANIFEST
 pypi-site-docs.zip
 index.html
+line_profiler/_line_profiler.html
 
 .coverage
 tests/coverage.xml
