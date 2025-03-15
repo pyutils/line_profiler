@@ -111,7 +111,7 @@ def main():
     # prof_mod = modpaths
     # prof_mod = modnames
 
-    """mimick running using kernprof"""
+    """mimic running using kernprof"""
     import sys
     import os
     import builtins

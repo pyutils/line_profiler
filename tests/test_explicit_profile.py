@@ -65,7 +65,7 @@ def test_explicit_profile_with_nothing():
 def test_explicit_profile_with_environ_on():
     """
     Test that explicit profiling is enabled when we specify the LINE_PROFILE
-    enviornment variable.
+    environment variable.
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
     env = os.environ.copy()

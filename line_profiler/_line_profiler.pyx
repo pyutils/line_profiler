@@ -390,7 +390,7 @@ cdef class LineProfiler:
             #   2:      pass
             #  will produce a 1-hit entry on line 1, and 10-hit entries on lines 1 and 2
             #  This doesn't affect `print_stats`, because it uses the last entry for a given line (line number is
-            #  used a dict key so earlier entries are overwritten), but to keep compatability with other tools,
+            #  used a dict key so earlier entries are overwritten), but to keep compatibility with other tools,
             #  let's only keep the last entry for each line
             # Remove all but the last entry for each line
             entries = list({e[0]: e for e in entries}.values())

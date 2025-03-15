@@ -37,7 +37,7 @@ class AstTreeProfiler:
                 the objects can be specified using its dotted path or full path (if applicable).
 
             profile_imports (bool):
-                if True, when auto-profiling whole script, profile all imports aswell.
+                if True, when auto-profiling whole script, profile all imports as well.
 
             ast_transformer_class_handler (Type):
                 the AstProfileTransformer class that handles profiling the whole script.
@@ -120,7 +120,7 @@ class AstTreeProfiler:
                 if True, profile whole script.
 
             profile_imports (bool):
-                if True, and profile_full_script is True, profile all imports aswell.
+                if True, and profile_full_script is True, profile all imports as well.
 
         Returns:
             (_ast.Module): tree

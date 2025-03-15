@@ -171,7 +171,7 @@ class LineProfiler(CLineProfiler):
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
     def run(self, cmd):
-        """ Profile a single executable statment in the main namespace.
+        """ Profile a single executable statement in the main namespace.
         """
         import __main__
         main_dict = __main__.__dict__

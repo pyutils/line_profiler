@@ -61,7 +61,7 @@ class ProfmodExtractor:
         are added a list of modnames_to_profile.
         Then all subpackages and submodules under each valid path is fetched, converted to
         dotted path and also added to the list.
-        if script_file is in prof_mod it is skipped to avoid name collision with othe imports,
+        if script_file is in prof_mod it is skipped to avoid name collision with other imports,
         it will be processed elsewhere in the autoprofile pipeline.
 
         Args:
@@ -175,7 +175,7 @@ class ProfmodExtractor:
 
     @staticmethod
     def _find_modnames_in_tree_imports(modnames_to_profile, module_dict_list):
-        """Map modnames to imports from an abstract sytax tree.
+        """Map modnames to imports from an abstract syntax tree.
 
         Find imports in modue_dict_list, created from an abstract syntax tree, that match
         dotted paths in modnames_to_profile.

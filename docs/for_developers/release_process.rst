@@ -12,13 +12,13 @@ supported operating systems and machine architectures.
 
 The steps are as follows:
 
-1. Run ``./publish.sh``. 
+1. Run ``./publish.sh``.
 
 2. When given the prompt, ``Do you want to git tag and push version='{}'?``,
    confirm the new version looks correct and respond with "yes".
 
 3. When asked: ``do you need to build wheels?`` Respond "no". (The CI will take
-   care of this). 
+   care of this).
 
 4. When asked: ``Are you ready to directly publish version xxx?`` Answer no.
    Again, the CI will do this.
@@ -27,7 +27,7 @@ The steps are as follows:
    to create and push the new release tag.
 
 
-These options can be programatically given for a non-interactive interface. See
+These options can be programmatically given for a non-interactive interface. See
 the ``publish.sh`` script for details (and make a PR that adds that information
 here).
 

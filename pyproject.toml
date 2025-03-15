@@ -74,3 +74,9 @@ norecursedirs = ".git ignore build __pycache__ dev _skbuild docs agentx"
 filterwarnings = [
     "default",
 ]
+
+[tool.codespell]
+skip = ['./docs/build', './*.egg-info', './build', './htmlcov', './line_profiler/_line_profiler.cpp', './line_profiler/_line_profiler.html']
+count = true
+quiet-level = 3
+ignore-words-list = ['wont', 'cant', 'ANS', 'doesnt', 'arent', 'ans', 'thats', 'datas', 'isnt']

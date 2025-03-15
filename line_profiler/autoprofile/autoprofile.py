@@ -86,7 +86,7 @@ def run(script_file, ns, prof_mod, profile_imports=False):
             the objects can be specified using its dotted path or full path (if applicable).
 
         profile_imports (bool):
-            if True, when auto-profiling whole script, profile all imports aswell.
+            if True, when auto-profiling whole script, profile all imports as well.
     """
     tree_profiled = AstTreeProfiler(script_file, prof_mod, profile_imports).profile()
 
