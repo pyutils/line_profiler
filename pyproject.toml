@@ -23,7 +23,6 @@ exclude_lines =[
     "^ *pass *$",
     "if _debug:",
     "if __name__ == .__main__.:",
-    ".*if six.PY2:"
 ]
 
 omit =[

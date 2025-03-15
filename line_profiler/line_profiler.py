@@ -36,7 +36,7 @@ def is_coroutine(f):
     return inspect.iscoroutinefunction(f)
 
 
-CO_GENERATOR = 0x0020
+CO_GENERATOR = inspect.CO_GENERATOR
 
 
 def is_generator(f):

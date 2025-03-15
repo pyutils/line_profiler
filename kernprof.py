@@ -207,7 +207,7 @@ class ContextualProfile(Profile):
         self.disable_by_count()
 
 
-class RepeatedTimer(object):
+class RepeatedTimer:
     """
     Background timer for outputting file every n seconds.
 
