@@ -2,7 +2,6 @@
 Cython>=3.0.3
 
 setuptools>=68.2.2; python_version < '4.0'  and python_version >= '3.8'
-setuptools>=41.0.1; python_version < '3.8'  and python_version >= '3.6'
 
 scikit-build>=0.11.1
 cmake>=3.21.2
@@ -12,5 +11,3 @@ cibuildwheel>=2.11.2    ; python_version < '4.0'  and python_version >= '3.11'  
 cibuildwheel>=2.11.2    ; python_version < '3.11' and python_version >= '3.10'    # Python 3.10
 cibuildwheel>=2.11.2    ; python_version < '3.10' and python_version >= '3.9'     # Python 3.9
 cibuildwheel>=2.11.2    ; python_version < '3.9'  and python_version >= '3.8'     # Python 3.8
-cibuildwheel>=2.11.2    ; python_version < '3.8'  and python_version >= '3.7'     # Python 3.7
-cibuildwheel>=2.8.1     ; python_version < '3.7'  and python_version >= '3.6'     # Python 3.6

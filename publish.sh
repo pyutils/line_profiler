@@ -384,7 +384,7 @@ ls_array(){
     # shellcheck disable=SC2206
     array=($glob_pattern)
     shopt -u nullglob # Turn off nullglob to make sure it doesn't interfere with anything later
-    # FIXME; for some reason this doesnt always work properly
+    # FIXME; for some reason this does not always work properly
     # Copy the array into the dynamically named variable
     # shellcheck disable=SC2086
     readarray -t $arr_name < <(printf '%s\n' "${array[@]}")

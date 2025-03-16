@@ -22,7 +22,7 @@ except ImportError as ex:
     )
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
-__version__ = '4.2.1'
+__version__ = '4.3.0'
 
 
 def load_ipython_extension(ip):
@@ -36,7 +36,7 @@ def is_coroutine(f):
     return inspect.iscoroutinefunction(f)
 
 
-CO_GENERATOR = 0x0020
+CO_GENERATOR = inspect.CO_GENERATOR
 
 
 def is_generator(f):

@@ -91,7 +91,7 @@ from argparse import ArgumentError, ArgumentParser
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
-__version__ = '4.2.1'
+__version__ = '4.3.0'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.
@@ -207,7 +207,7 @@ class ContextualProfile(Profile):
         self.disable_by_count()
 
 
-class RepeatedTimer(object):
+class RepeatedTimer:
     """
     Background timer for outputting file every n seconds.
 

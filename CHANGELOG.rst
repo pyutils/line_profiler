@@ -1,7 +1,7 @@
 Changes
 =======
 
-4.2.1
+4.3.0
 ~~~~~
 * FIX: win32 encoding issues
 
