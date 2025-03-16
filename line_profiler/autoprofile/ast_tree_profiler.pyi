@@ -2,7 +2,7 @@ from typing import List
 from typing import Type
 import _ast
 
-from .ast_profle_transformer import AstProfileTransformer
+from .ast_profile_transformer import AstProfileTransformer
 from .profmod_extractor import ProfmodExtractor
 
 __docstubs__: str
