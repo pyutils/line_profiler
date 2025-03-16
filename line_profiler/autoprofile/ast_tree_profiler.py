@@ -1,12 +1,12 @@
 import ast
 import os
 
-from .ast_profle_transformer import (AstProfileTransformer,
-                                     ast_create_profile_node)
+from .ast_profile_transformer import (AstProfileTransformer,
+                                      ast_create_profile_node)
 from .profmod_extractor import ProfmodExtractor
 
 __docstubs__ = """
-from .ast_profle_transformer import AstProfileTransformer
+from .ast_profile_transformer import AstProfileTransformer
 from .profmod_extractor import ProfmodExtractor
 """
 

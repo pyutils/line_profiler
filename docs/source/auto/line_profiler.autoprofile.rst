@@ -7,7 +7,7 @@ Submodules
 .. toctree::
    :maxdepth: 4
 
-   line_profiler.autoprofile.ast_profle_transformer
+   line_profiler.autoprofile.ast_profile_transformer
    line_profiler.autoprofile.ast_tree_profiler
    line_profiler.autoprofile.autoprofile
    line_profiler.autoprofile.line_profiler_utils
