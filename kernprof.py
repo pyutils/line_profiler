@@ -51,7 +51,7 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports] script ...
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [-m] [--prof-imports] script ...
 
     Run and profile a python script.
 
@@ -77,6 +77,7 @@ which displays:
       -p PROF_MOD, --prof-mod PROF_MOD
                             List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
                             full script. Only works with line_profiler -l, --line-by-line
+      -m, --module          Treat `script` as a Python module, running it like `python -m script` (implies `-p script` if `-p` is not otherwise supplied)
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
@@ -87,6 +88,7 @@ import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import time
 from argparse import ArgumentError, ArgumentParser
+from runpy import run_module
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -331,17 +333,24 @@ def main(args=None):
     try:
         try:
             execfile_ = execfile
+            rmod_ = run_module
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                prof_mod = (options.prof_mod or '').split(',')
+                prof_mod = options.prof_mod.split(',')
                 autoprofile.run(script_file,
                                 ns,
                                 prof_mod=prof_mod,
                                 profile_imports=options.prof_imports,
                                 as_module=options.script if options.module else None)
+            elif options.module and options.builtin:
+                run_module(options.script, ns, '__main__')
             elif options.builtin:
                 execfile(script_file, ns, ns)
+            elif options.module:
+                prof.runctx(f'rmod_({options.script!r}, globals(), "__main__")',
+                            ns,
+                            ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
         except (KeyboardInterrupt, SystemExit):
