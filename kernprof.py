@@ -411,7 +411,11 @@ def main(args=None):
             elif options.builtin:
                 execfile(script_file, ns, ns)
             elif options.module:
-                prof.runctx(f'rmod_({options.script!r}, globals(), "__main__")',
+                # FIXME: weird CI bug when running this with `globals()`
+                # (like `execfile()` below) instead of `None`, saying
+                # that 'Another profiling tool is already active'...
+                # I thought `_kernprof_overwrite()` took care of that?
+                prof.runctx(f'rmod_({options.script!r}, None, "__main__")',
                             ns,
                             ns)
             else:
