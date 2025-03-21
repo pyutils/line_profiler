@@ -68,7 +68,7 @@ def _extend_line_profiler_for_profiling_imports(prof):
     prof.add_imported_function_or_module = types.MethodType(add_imported_function_or_module, prof)
 
 
-def run(script_file, ns, prof_mod, profile_imports=False, as_module=None):
+def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
     """Automatically profile a script and run it.
 
     Profile functions, classes & modules specified in prof_mod without needing to add
@@ -89,16 +89,11 @@ def run(script_file, ns, prof_mod, profile_imports=False, as_module=None):
         profile_imports (bool):
             if True, when auto-profiling whole script, profile all imports aswell.
 
-        as_module (str | None):
-            The module full (dotted) path if script_file is to be run as a module
+        as_module (bool):
+            Whether we're running script_file as a module
     """
-    if as_module:
-        profiler = AstTreeModuleProfiler(script_file,
-                                         as_module,
-                                         prof_mod,
-                                         profile_imports)
-    else:
-        profiler = AstTreeProfiler(script_file, prof_mod, profile_imports)
+    Profiler = AstTreeModuleProfiler if as_module else AstTreeProfiler
+    profiler = Profiler(script_file, prof_mod, profile_imports)
     tree_profiled = profiler.profile()
 
     _extend_line_profiler_for_profiling_imports(ns[PROFILER_LOCALS_NAME])
