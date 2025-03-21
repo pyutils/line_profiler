@@ -2,19 +2,17 @@ import ast
 import os
 
 from .ast_tree_profiler import AstTreeProfiler
-from .util_static import modname_to_modpath
+from .util_static import modname_to_modpath, modpath_to_modname
 
 
-def get_module_from_importfrom(node, module, main=False):
+def get_module_from_importfrom(node, module):
     r"""Resolve the full path of a relative import.
 
     Args:
         node (ast.ImportFrom)
             ImportFrom node
         module (str)
-            Full path relative to which the import is to occur
-        main (bool)
-            Whether the node originated from a '__main__.py' file
+            Full dotted path relative to which the import is to occur
 
     Return:
         modname (str)
@@ -36,45 +34,34 @@ def get_module_from_importfrom(node, module, main=False):
         ... '''.strip('\n'))).body
         >>>
         >>>
-        >>> get_submodule = functools.partial(
+        >>> get_module = functools.partial(
         ...     get_module_from_importfrom, module='foo.bar.foobar')
-        >>> get_module_main = functools.partial(
-        ...     get_module_from_importfrom,
-        ...     module='foo.bar',
-        ...     main=True)
-        >>> for get_module in get_submodule, get_module_main:
-        ...     assert get_module(abs_import) == 'a'
-        ...     assert get_module(rel_imports[0]) == 'foo.bar'
-        ...     assert get_module(rel_imports[1]) == 'foo'
-        ...     assert get_module(rel_imports[2]) == 'foo.bar.baz'
-        ...     assert get_module(rel_imports[3]) == 'foo.baz'
+        >>> assert get_module(abs_import) == 'a'
+        >>> assert get_module(rel_imports[0]) == 'foo.bar'
+        >>> assert get_module(rel_imports[1]) == 'foo'
+        >>> assert get_module(rel_imports[2]) == 'foo.bar.baz'
+        >>> assert get_module(rel_imports[3]) == 'foo.baz'
     """
     level = node.level
     if not level:
         return node.module
-    if main:
-        level -= 1
-    if level:
-        module = '.'.join(module.split('.')[:-level])
+    chunks = module.split('.')[:-level]
     if node.module:
-        return module + '.' + node.module
-    return module
+        chunks.append(node.module)
+    return '.'.join(chunks)
 
 
 class ImportFromTransformer(ast.NodeTransformer):
     """Turn all the relative imports into absolute imports."""
-    def __init__(self, module, main=False):
+    def __init__(self, module):
         self.module = module
-        self.main = main
 
     def visit_ImportFrom(self, node):
         level = node.level
         if not level:
             return self.generic_visit(node)
-        module = get_module_from_importfrom(node, self.module, self.main)
-        new_node = ast.ImportFrom(module=module,
-                                  names=node.names,
-                                  level=0)
+        module = get_module_from_importfrom(node, self.module)
+        new_node = ast.ImportFrom(module=module, names=node.names, level=0)
         return self.generic_visit(ast.copy_location(new_node, node))
 
 
@@ -86,27 +73,14 @@ class AstTreeModuleProfiler(AstTreeProfiler):
     and/or decorators to the AST that adds the specified functions/methods,
     classes & modules in prof_mod to the profiler to be profiled.
     """
-    def __init__(self, module_file, module_name, *args, **kwargs):
-        """Initializes the AST tree profiler instance with the executable module
-        file and module name.
-
-        Args:
-            module_file (str):
-                the module file or its `__main__.py` if a package.
-
-            module_name (str):
-                name of the module being profiled.
-
-            *args, **kwargs:
-                passed to `.ast_tree_profiler.AstTreeProfiler`.
-        """
-        self._module = module_name
-        self._main = self._is_main(module_file)
-        super().__init__(module_file, *args, **kwargs)
-
-    def _get_script_ast_tree(self, script_file):
+    @classmethod
+    def _get_script_ast_tree(cls, script_file):
         tree = super()._get_script_ast_tree(script_file)
-        return ImportFromTransformer(self._module, self._main).visit(tree)
+        # Note: don't drop the `.__init__` or `.__main__` suffix, lest
+        # the relative imports fail
+        module = modpath_to_modname(script_file,
+                                    hide_main=False, hide_init=False)
+        return ImportFromTransformer(module).visit(tree)
 
     @staticmethod
     def _is_main(fname):

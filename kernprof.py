@@ -342,7 +342,7 @@ def main(args=None):
                                 ns,
                                 prof_mod=prof_mod,
                                 profile_imports=options.prof_imports,
-                                as_module=options.script if options.module else None)
+                                as_module=options.module)
             elif options.module and options.builtin:
                 run_module(options.script, ns, '__main__')
             elif options.builtin:
