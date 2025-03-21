@@ -4,6 +4,7 @@ Changes
 4.3.0
 ~~~~~
 * FIX: win32 encoding issues
+* ENH: Added CLI argument ``-m`` to ``kernprof`` for (auto-)profiling module/package execution instead of that of scripts.
 
 4.2.0
 ~~~~~
