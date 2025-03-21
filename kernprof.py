@@ -99,9 +99,9 @@ try:
     from cProfile import Profile
 except ImportError:
     try:
-        from lsprof import Profile
+        from lsprof import Profile  # type: ignore[assignment,no-redef]
     except ImportError:
-        from profile import Profile
+        from profile import Profile  # type: ignore[assignment,no-redef]
 
 
 def execfile(filename, globals=None, locals=None):
@@ -134,8 +134,20 @@ class ContextualProfile(Profile):
         """ Enable the profiler if it hasn't been enabled before.
         """
         if self.enable_count == 0:
+            self.ensure_tool_id_availability()
             self.enable(subcalls=subcalls, builtins=builtins)
         self.enable_count += 1
+
+    @staticmethod
+    def ensure_tool_id_availability():
+        try:
+            profiler_id = sys.monitoring.PROFILER_ID
+        except AttributeError:  # Python < 3.12
+            return
+        tool_id = sys.monitoring.get_tool(profiler_id)
+        if tool_id is not None:
+            assert tool_id == 'cProfile'
+            sys.monitoring.free_tool_id(profiler_id)
 
     def disable_by_count(self):
         """ Disable the profiler if the number of disable requests matches the
