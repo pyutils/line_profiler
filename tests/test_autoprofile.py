@@ -1,6 +1,8 @@
-import tempfile
-import sys
 import os
+import subprocess
+import sys
+import tempfile
+
 import pytest
 import ubelt as ub
 
@@ -525,3 +527,96 @@ def test_autoprofile_exec_module(
     assert ('Function: add_four' in raw_output) == add_four
     assert ('Function: add_operator' in raw_output) == add_operator
     assert ('Function: _main' in raw_output) == main
+
+
+@pytest.mark.parametrize(
+    ('outfile', 'expected_outfile'),
+    [(None, 'kernprof-stdin-*.lprof'),
+     ('test-stdin.lprof', 'test-stdin.lprof')])
+def test_autoprofile_from_stdin(
+    outfile, expected_outfile,
+) -> None:
+    """
+    Test the profiling of a script read from stdin.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+
+        with ub.ChDir(temp_dpath):
+            script_fpath = _write_demo_module(ub.Path())
+
+            args = [sys.executable, '-m', 'kernprof',
+                    '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
+            if outfile:
+                args += ['-o', outfile]
+            args += ['-']
+            proc = subprocess.run(args,
+                                  input=script_fpath.read_text(),
+                                  text=True,
+                                  capture_output=True)
+            print(proc.stdout)
+            print(proc.stderr)
+            proc.check_returncode()
+
+        outfile, = temp_dpath.glob(expected_outfile)
+        args = [sys.executable, '-m', 'line_profiler', str(outfile)]
+        proc = ub.cmd(args)
+        raw_output = proc.stdout
+        print(raw_output)
+        proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: add_two' not in raw_output
+    assert 'Function: add_three' in raw_output
+    assert 'Function: main' not in raw_output
+
+
+@pytest.mark.parametrize(
+    ('outfile', 'expected_outfile'),
+    [(None, 'kernprof-command-*.lprof'),
+     ('test-command.lprof', 'test-command.lprof')])
+def test_autoprofile_from_inlined_script(
+    outfile, expected_outfile,
+) -> None:
+    """
+    Test the profiling of an inlined script (supplied with the `-c`
+    flag).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+
+        _write_demo_module(temp_dpath)
+
+        inlined_script = (
+            'from test_mod import submod1, submod2; '
+            'from test_mod.subpkg import submod3; '
+            'import statistics; '
+            'data = [1, 2, 3]; '
+            'val = submod1.add_one(data); '
+            'val = submod2.add_two(val); '
+            'val = submod3.add_three(val); '
+            'result = statistics.harmonic_mean(val); '
+            'print(result); '
+        )
+        prof_file = 'test-command.lprof'
+
+        args = [sys.executable, '-m', 'kernprof',
+                '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
+        if outfile:
+            args += ['-o', outfile]
+        args += ['-c', inlined_script]
+        proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+
+        outfile, = temp_dpath.glob(expected_outfile)
+        args = [sys.executable, '-m', 'line_profiler', str(outfile)]
+        proc = ub.cmd(args)
+        raw_output = proc.stdout
+        print(raw_output)
+        proc.check_returncode()
+
+    assert 'Function: add_one' in raw_output
+    assert 'Function: add_two' not in raw_output
+    assert 'Function: add_three' in raw_output
