@@ -1,6 +1,8 @@
 import tempfile
 import sys
 import os
+
+import pytest
 import ubelt as ub
 
 
@@ -137,24 +139,31 @@ def test_explicit_profile_with_cmdline():
     temp_dpath.delete()
 
 
-def test_explicit_profile_with_kernprof():
+@pytest.mark.parametrize('line_profile', [True, False])
+def test_explicit_profile_with_kernprof(line_profile: bool):
     """
     Test that explicit profiling works when using kernprof. In this case
     we should get as many output files.
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
+    base_cmd = [sys.executable, '-m', 'kernprof']
+    if line_profile:
+        base_cmd.append('-l')
+        outfile = 'script.py.lprof'
+    else:
+        outfile = 'script.py.prof'
 
     with ub.ChDir(temp_dpath):
         script_fpath = ub.Path('script.py')
         script_fpath.write_text(_demo_explicit_profile_script())
-        args = [sys.executable, '-m', 'kernprof', '-l', os.fspath(script_fpath)]
+        args = base_cmd + [os.fspath(script_fpath)]
         proc = ub.cmd(args)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
     assert not (temp_dpath / 'profile_output.txt').exists()
-    assert (temp_dpath / 'script.py.lprof').exists()
+    assert (temp_dpath / outfile).exists()
     temp_dpath.delete()
 
 
