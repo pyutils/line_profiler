@@ -14,13 +14,14 @@ def ast_create_profile_node(modname, profiler_name='profile', attr='add_imported
         >>> profile.add_imported_function_or_module(foo.bar)
 
     Args:
-        script_file (str):
-            path to script being profiled.
+        modname (str):
+            name of the imported module.
 
-        prof_mod (List[str]):
-            list of imports to profile in script.
-            passing the path to script will profile the whole script.
-            the objects can be specified using its dotted path or full path (if applicable).
+        profiler_name (str):
+            name of the LineProfiler object.
+
+        attr (str):
+            name of the method of the LineProfiler object to call on the imported module.
 
     Returns:
         (_ast.Expr): expr
