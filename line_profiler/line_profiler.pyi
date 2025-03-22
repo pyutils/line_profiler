@@ -9,7 +9,7 @@ def load_ipython_extension(ip) -> None:
     ...
 
 
-class LineProfiler(CLineProfiler):
+class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def dump_stats(self, filename) -> None:
         ...
