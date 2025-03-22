@@ -2,6 +2,7 @@ from typing import List
 from typing import Tuple
 import io
 from ._line_profiler import LineProfiler as CLineProfiler
+from .profiler_mixin import ByCountProfilerMixin
 from _typeshed import Incomplete
 
 
