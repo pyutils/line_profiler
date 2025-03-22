@@ -4,7 +4,7 @@ Changes
 4.3.0
 ~~~~~
 * FIX: win32 encoding issues
-* FIX: Fixed issue when calling ``kernprof`` with neither the ``-l`` nor ``-b`` flag
+* FIX: Fixed issue when calling ``kernprof`` with neither the ``-l`` nor ``-b`` flag; also refactored common methods to ``LineProfiler`` and ``ContextualProfile``
 
 4.2.0
 ~~~~~
