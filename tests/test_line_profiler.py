@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from line_profiler import LineProfiler
 
@@ -11,6 +13,10 @@ def f(x):
 def g(x):
     y = yield x + 10
     yield y + 20
+
+
+def h():
+    return sys.monitoring.get_tool(sys.monitoring.PROFILER_ID)
 
 
 class C:
@@ -29,7 +35,7 @@ def test_init():
     assert lp.code_map == {f.__code__: {}}
     lp = LineProfiler(f, g)
     assert lp.functions == [f, g]
-    assert lp.code_map ==  {
+    assert lp.code_map == {
         f.__code__: {},
         g.__code__: {},
     }
@@ -152,3 +158,17 @@ def test_show_func_column_formatting():
     print(text)
 
     # TODO: write a check to verify columns are aligned nicely
+
+
+@pytest.mark.skipif(not hasattr(sys, 'monitoring'),
+                    reason='no `sys.monitoring` in version '
+                    f'{".".join(str(v) for v in sys.version_info[:2])}')
+def test_sys_monitoring():
+    """
+    Test that `LineProfiler` is properly registered with
+    `sys.monitoring`.
+    """
+    profile = LineProfiler()
+    h_wrapped = profile(h)
+    assert h_wrapped() == 'line_profiler'
+    assert h() is None
