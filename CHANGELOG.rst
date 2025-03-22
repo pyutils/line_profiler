@@ -4,6 +4,7 @@ Changes
 4.3.0
 ~~~~~
 * FIX: win32 encoding issues
+* ENH: Add support for ``sys.monitoring`` (Python >= 3.12)
 
 4.2.0
 ~~~~~
