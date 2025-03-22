@@ -1,7 +1,11 @@
 import os
 import sys
 import tempfile
+
+import pytest
 import ubelt as ub
+
+
 LINUX = sys.platform.startswith('linux')
 
 
@@ -25,14 +29,7 @@ def test_complex_example_python_none():
     info.check_returncode()
 
 
-def test_varied_complex_invocations():
-    """
-    Tests variations of running the complex example:
-        with / without kernprof
-        with cProfile / LineProfiler backends
-        with / without explicit profiler
-    """
-
+def build_parametrizer():
     # Enumerate valid cases to test
     cases = []
     for runner in ['python',  'kernprof']:
@@ -85,64 +82,78 @@ def test_varied_complex_invocations():
             'outpath': 'complex_example.py.lprof',
         })
 
+    params = ('runner', 'kern_flags', 'env_line_profile', 'profile_type',
+              'outpath', 'ignore_checks')
+    return pytest.mark.parametrize(
+        params, [tuple(case.get(param) for param in params) for case in cases])
+
+
+@build_parametrizer()
+def test_varied_complex_invocations(
+        runner, kern_flags, env_line_profile, profile_type,
+        outpath, ignore_checks):
+    """
+    Tests variations of running the complex example:
+        with / without kernprof
+        with cProfile / LineProfiler backends
+        with / without explicit profiler
+    """
+
     complex_fpath = get_complex_example_fpath()
 
     results = []
 
-    for case in cases:
-        temp_dpath = tempfile.mkdtemp()
-        with ub.ChDir(temp_dpath):
-            env = {}
+    temp_dpath = tempfile.mkdtemp()
+    with ub.ChDir(temp_dpath):
+        env = {}
 
-            outpath = case['outpath']
-            if outpath:
-                outpath = ub.Path(outpath)
+        if outpath:
+            outpath = ub.Path(outpath)
 
-            # Construct the invocation for each case
-            if case['runner'] == 'kernprof':
-                kern_flags = case['kern_flags']
-                # FIXME:
-                # Note: kernprof doesn't seem to play well with multiprocessing
-                prog_flags = ' --process_size=0'
-                runner = f'{sys.executable} -m kernprof {kern_flags}'
-            else:
-                env['LINE_PROFILE'] = case["env_line_profile"]
-                runner = f'{sys.executable}'
-                prog_flags = ''
-            env['PROFILE_TYPE'] = case["profile_type"]
-            command = f'{runner} {complex_fpath}' + prog_flags
+        # Construct the invocation for each case
+        if runner == 'kernprof':
+            # FIXME:
+            # Note: kernprof doesn't seem to play well with multiprocessing
+            prog_flags = ' --process_size=0'
+            runner = f'{sys.executable} -m kernprof {kern_flags}'
+        else:
+            env['LINE_PROFILE'] = env_line_profile
+            runner = f'{sys.executable}'
+            prog_flags = ''
+        env['PROFILE_TYPE'] = profile_type
+        command = f'{runner} {complex_fpath}' + prog_flags
 
-            HAS_SHELL = LINUX
-            if HAS_SHELL:
-                # Use shell because it gives a indication of what is happening
-                environ_prefix = ' '.join([f'{k}={v}' for k, v in env.items()])
-                info = ub.cmd(environ_prefix + ' ' + command, shell=True, verbose=3)
-            else:
-                env = ub.udict(os.environ) | env
-                info = ub.cmd(command, env=env, verbose=3)
+        HAS_SHELL = LINUX
+        if HAS_SHELL:
+            # Use shell because it gives a indication of what is happening
+            environ_prefix = ' '.join([f'{k}={v}' for k, v in env.items()])
+            info = ub.cmd(environ_prefix + ' ' + command, shell=True, verbose=3)
+        else:
+            env = ub.udict(os.environ) | env
+            info = ub.cmd(command, env=env, verbose=3)
 
-            info.check_returncode()
+        info.check_returncode()
 
-            result = case.copy()
-            if outpath:
-                result['outsize'] = outpath.stat().st_size
-            else:
-                result['outsize'] = None
-            results.append(result)
+        result = {'outpath': outpath}
+        if outpath:
+            result['outsize'] = outpath.stat().st_size
+        else:
+            result['outsize'] = None
+        results.append(result)
 
-            if outpath:
-                assert outpath.exists()
-                assert outpath.is_file()
-                outpath.delete()
+        if outpath:
+            assert outpath.exists()
+            assert outpath.is_file()
+            outpath.delete()
 
-            if 0:
-                import pandas as pd
-                import rich
-                table = pd.DataFrame(results)
-                rich.print(table)
+        if 0:
+            import pandas as pd
+            import rich
+            table = pd.DataFrame(results)
+            rich.print(table)
 
-            # Ensure the scripts that produced output produced non-trivial output
-            if not case.get('ignore_checks', False):
-                for result in results:
-                    if result['outpath'] is not None:
-                        assert result['outsize'] > 100
+        # Ensure the scripts that produced output produced non-trivial output
+        if not ignore_checks:
+            for result in results:
+                if result['outpath'] is not None:
+                    assert result['outsize'] > 100
