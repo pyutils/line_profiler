@@ -2,6 +2,7 @@ from typing import List
 from typing import Tuple
 import io
 from ._line_profiler import LineProfiler as CLineProfiler
+from .profiler_mixin import ByCountProfilerMixin
 from _typeshed import Incomplete
 
 
@@ -9,37 +10,7 @@ def load_ipython_extension(ip) -> None:
     ...
 
 
-def is_coroutine(f):
-    ...
-
-
-CO_GENERATOR: int
-
-
-def is_generator(f):
-    ...
-
-
-def is_classmethod(f):
-    ...
-
-
-class LineProfiler(CLineProfiler):
-
-    def __call__(self, func):
-        ...
-
-    def wrap_classmethod(self, func):
-        ...
-
-    def wrap_coroutine(self, func):
-        ...
-
-    def wrap_generator(self, func):
-        ...
-
-    def wrap_function(self, func):
-        ...
+class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def dump_stats(self, filename) -> None:
         ...
@@ -52,15 +23,6 @@ class LineProfiler(CLineProfiler):
                     summarize: bool = ...,
                     sort: bool = ...,
                     rich: bool = ...) -> None:
-        ...
-
-    def run(self, cmd):
-        ...
-
-    def runctx(self, cmd, globals, locals):
-        ...
-
-    def runcall(self, func, *args, **kw):
         ...
 
     def add_module(self, mod):
