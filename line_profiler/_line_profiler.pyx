@@ -306,6 +306,12 @@ cdef class LineProfiler:
         self.disable_by_count()
 
     def enable(self):
+        try:
+            mon = sys.monitoring
+        except AttributeError:  # Python < 3.12
+            pass
+        else:
+            mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
         PyEval_SetTrace(python_trace_callback, self)
 
     @property
@@ -359,6 +365,12 @@ cdef class LineProfiler:
     cpdef disable(self):
         self._c_last_time[threading.get_ident()].clear()
         unset_trace()
+        try:
+            mon = sys.monitoring
+        except AttributeError:  # Python < 3.12
+            pass
+        else:
+            mon.free_tool_id(mon.PROFILER_ID)
 
     def get_stats(self):
         """
