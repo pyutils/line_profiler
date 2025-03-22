@@ -140,6 +140,13 @@ def label(code):
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
+def is_main_thread():
+    """
+    Return whether we're on the main thread.
+    """
+    return threading.current_thread() == threading.main_thread()
+
+
 cpdef _code_replace(func, co_code):
     """
     Implements CodeType.replace for Python < 3.8
@@ -306,12 +313,7 @@ cdef class LineProfiler:
         self.disable_by_count()
 
     def enable(self):
-        try:
-            mon = sys.monitoring
-        except AttributeError:  # Python < 3.12
-            pass
-        else:
-            mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
+        self._sys_monitoring_register()
         PyEval_SetTrace(python_trace_callback, self)
 
     @property
@@ -365,12 +367,28 @@ cdef class LineProfiler:
     cpdef disable(self):
         self._c_last_time[threading.get_ident()].clear()
         unset_trace()
-        try:
-            mon = sys.monitoring
-        except AttributeError:  # Python < 3.12
-            pass
-        else:
-            mon.free_tool_id(mon.PROFILER_ID)
+        self._sys_monitoring_deregister()
+
+    if hasattr(sys, 'monitoring'):
+        @staticmethod
+        def _sys_monitoring_register():
+            # Note: only interact with `sys.monitoring` on the main
+            # thread, lest we double-`use_tool_id()` on multiple threads
+            if is_main_thread():
+                mon = sys.monitoring
+                mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
+
+        @staticmethod
+        def _sys_monitoring_deregister():
+            if is_main_thread():
+                mon = sys.monitoring
+                mon.free_tool_id(mon.PROFILER_ID)
+
+    else:  # Python < 3.12
+        @staticmethod
+        def _no_op(): pass
+
+        _sys_monitoring_register = _sys_monitoring_deregister = _no_op
 
     def get_stats(self):
         """
