@@ -1,5 +1,4 @@
 import sys
-
 import pytest
 from line_profiler import LineProfiler
 
@@ -15,7 +14,7 @@ def g(x):
     yield y + 20
 
 
-def h():
+def get_profiling_tool_name():
     return sys.monitoring.get_tool(sys.monitoring.PROFILER_ID)
 
 
@@ -169,6 +168,17 @@ def test_sys_monitoring():
     `sys.monitoring`.
     """
     profile = LineProfiler()
-    h_wrapped = profile(h)
-    assert h_wrapped() == 'line_profiler'
-    assert h() is None
+    get_name_wrapped = profile(get_profiling_tool_name)
+    tool = get_profiling_tool_name()
+    assert tool is None, (
+        f'Expected no active profiling tool before profiling, got {tool!r}'
+    )
+    tool = get_name_wrapped()
+    assert tool == 'line_profiler', (
+        "Expected 'line_profiler' to be registered with `sys.monitoring` "
+        f'when a profiled function is run, got {tool!r}'
+    )
+    tool = get_profiling_tool_name()
+    assert tool is None, (
+        f'Expected no active profiling tool after profiling, got {tool!r}'
+    )
