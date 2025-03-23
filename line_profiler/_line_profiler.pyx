@@ -98,8 +98,98 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_RETURN
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
-    
 
+cdef extern from "Python.h":
+    """
+    // Check for 3.12.0b1
+    #if PY_VERSION_HEX >= 0x030c00b1
+      // This is codified in PEP 669
+      #define PY_MONITORING_PROFILER_ID 2
+      #ifndef PyImport_ImportModuleAttrString
+        // Apparently they'll add this in 3.14
+        static PyObject* PyImport_ImportModuleAttrString(
+            const char* mod_name, const char* attr_name)
+        {
+           PyObject* module = PyImport_ImportModule(mod_name);
+           if (!module) return NULL;
+           PyObject* attr = PyObject_GetAttrString(module, attr_name);
+           Py_DECREF(module);
+           return attr;
+        }
+      #endif
+      static int _is_main_thread()
+      {
+         PyObject* swap;
+         // Get the callables returning the thread objects
+         PyObject* tcurr = PyImport_ImportModuleAttrString(
+             "threading", "current_thread");
+         if (!tcurr) return 0;
+         PyObject* tmain = PyImport_ImportModuleAttrString(
+             "threading", "main_thread");
+         if (!tmain) {
+           Py_DECREF(tcurr);
+           return 0;
+         }
+         // Get the actual thread objects
+         // - Current thread
+         swap = PyObject_CallNoArgs(tcurr);
+         Py_DECREF(tcurr);
+         if (!swap) {
+           Py_DECREF(tmain);
+           return 0;
+         }
+         tcurr = swap;
+         // - Main thread
+         swap = PyObject_CallNoArgs(tmain);
+         Py_DECREF(tmain);
+         if (!swap) {
+           Py_DECREF(tcurr);
+           return 0;
+         }
+         tmain = swap;
+         // Compare
+         int result = PyObject_RichCompareBool(tcurr, tmain, Py_EQ);
+         Py_DECREF(tcurr);
+         Py_DECREF(tmain);
+         return result;
+      }
+      static void _sys_monitoring_register()
+      {  // Largely copied from `_lsprof.c`
+         if (_is_main_thread() != 1) return;
+         PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
+                                                                "monitoring");
+         if (!monitoring) return;
+         PyObject *check = PyObject_CallMethod(monitoring,
+                                               "use_tool_id",
+                                               "is",
+                                               PY_MONITORING_PROFILER_ID,
+                                               "line_profiler");
+         if (check == NULL) PyErr_Format(
+             PyExc_ValueError, "Another profiling tool is already active");
+         Py_DECREF(monitoring);
+         return;
+      }
+      static void _sys_monitoring_deregister()
+      {  // Largely copied from `_lsprof.c`
+         if (_is_main_thread() != 1) return;
+         PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
+                                                                "monitoring");
+         if (!monitoring) return;
+         PyObject *result = PyObject_CallMethod(monitoring,
+                                                "free_tool_id",
+                                                "i",
+                                                PY_MONITORING_PROFILER_ID);
+         Py_DECREF(monitoring);
+         return;
+      }
+    #else
+      static void _sys_monitoring_register() { return; }
+      static void _sys_monitoring_deregister() { return; }
+    #endif
+    """
+    cdef void _sys_monitoring_register() except *
+    cdef void _sys_monitoring_deregister()
+    
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
@@ -138,13 +228,6 @@ def label(code):
         return ('~', 0, code)    # built-in functions ('~' sorts at the end)
     else:
         return (code.co_filename, code.co_firstlineno, code.co_name)
-
-
-def is_main_thread():
-    """
-    Return whether we're on the main thread.
-    """
-    return threading.current_thread() == threading.main_thread()
 
 
 cpdef _code_replace(func, co_code):
@@ -313,7 +396,10 @@ cdef class LineProfiler:
         self.disable_by_count()
 
     def enable(self):
-        self._sys_monitoring_register()
+        # Register `line_profiler` with `sys.monitoring` in Python 3.12
+        # and above;
+        # see: https://docs.python.org/3/library/sys.monitoring.html
+        _sys_monitoring_register()
         PyEval_SetTrace(python_trace_callback, self)
 
     @property
@@ -367,28 +453,10 @@ cdef class LineProfiler:
     cpdef disable(self):
         self._c_last_time[threading.get_ident()].clear()
         unset_trace()
-        self._sys_monitoring_deregister()
-
-    if hasattr(sys, 'monitoring'):
-        @staticmethod
-        def _sys_monitoring_register():
-            # Note: only interact with `sys.monitoring` on the main
-            # thread, lest we double-`use_tool_id()` on multiple threads
-            if is_main_thread():
-                mon = sys.monitoring
-                mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
-
-        @staticmethod
-        def _sys_monitoring_deregister():
-            if is_main_thread():
-                mon = sys.monitoring
-                mon.free_tool_id(mon.PROFILER_ID)
-
-    else:  # Python < 3.12
-        @staticmethod
-        def _no_op(): pass
-
-        _sys_monitoring_register = _sys_monitoring_deregister = _no_op
+        # Deregister `line_profiler` with `sys.monitoring` in Python
+        # 3.12 and above;
+        # see: https://docs.python.org/3/library/sys.monitoring.html
+        _sys_monitoring_deregister()
 
     def get_stats(self):
         """
