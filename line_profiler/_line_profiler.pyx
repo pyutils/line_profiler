@@ -99,107 +99,6 @@ cdef extern from "Python.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
 
-cdef extern from "Python.h":
-    """
-    // Check for 3.12.0b1
-    #if PY_VERSION_HEX >= 0x030c00b1
-      // This is codified in PEP 669
-      #define PY_MONITORING_PROFILER_ID 2
-      #ifndef PyImport_ImportModuleAttrString
-        // Apparently they'll add this in 3.14
-        static PyObject* PyImport_ImportModuleAttrString(
-            const char* mod_name, const char* attr_name)
-        {
-           PyObject* module = PyImport_ImportModule(mod_name);
-           if (!module) return NULL;
-           PyObject* attr = PyObject_GetAttrString(module, attr_name);
-           Py_DECREF(module);
-           return attr;
-        }
-      #endif
-      static int _is_main_thread()
-      {
-         PyObject* swap;
-         // Get the callables returning the thread objects
-         PyObject* tcurr = PyImport_ImportModuleAttrString(
-             "threading", "current_thread");
-         if (!tcurr) return 0;
-         PyObject* tmain = PyImport_ImportModuleAttrString(
-             "threading", "main_thread");
-         if (!tmain) {
-           Py_DECREF(tcurr);
-           return 0;
-         }
-         // Get the actual thread objects
-         // - Current thread
-         swap = PyObject_CallNoArgs(tcurr);
-         Py_DECREF(tcurr);
-         if (!swap) {
-           Py_DECREF(tmain);
-           return 0;
-         }
-         tcurr = swap;
-         // - Main thread
-         swap = PyObject_CallNoArgs(tmain);
-         Py_DECREF(tmain);
-         if (!swap) {
-           Py_DECREF(tcurr);
-           return 0;
-         }
-         tmain = swap;
-         // Compare
-         int result = PyObject_RichCompareBool(tcurr, tmain, Py_EQ);
-         Py_DECREF(tcurr);
-         Py_DECREF(tmain);
-         return result;
-      }
-      static void _sys_monitoring_register()
-      {  // Largely copied from `_lsprof.c`
-         if (_is_main_thread() != 1) return;
-         PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
-                                                                "monitoring");
-         if (!monitoring) return;
-         PyObject* check = PyObject_CallMethod(monitoring,
-                                               "use_tool_id",
-                                               "is",
-                                               PY_MONITORING_PROFILER_ID,
-                                               "line_profiler");
-         if (!check) {
-            PyErr_Format(PyExc_ValueError,
-                         "Another profiling tool is already active");
-         } else {
-            Py_DECREF(check);
-         }
-         Py_DECREF(monitoring);
-         return;
-      }
-      static void _sys_monitoring_deregister()
-      {  // Largely copied from `_lsprof.c`
-         if (_is_main_thread() != 1) return;
-         PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
-                                                                "monitoring");
-         if (!monitoring) return;
-         PyObject* result = PyObject_CallMethod(monitoring,
-                                                "free_tool_id",
-                                                "i",
-                                                PY_MONITORING_PROFILER_ID);
-         if (!result) {
-            PyErr_Format(PyExc_RuntimeError,
-                         "Error freeing the profiling tool ID");
-         } else {
-            Py_DECREF(result);
-         }
-         Py_DECREF(monitoring);
-         return;
-      }
-    #else
-      static void _sys_monitoring_register() { return; }
-      static void _sys_monitoring_deregister() { return; }
-    #endif
-    """
-    cdef void _sys_monitoring_register() except *
-    cdef void _sys_monitoring_deregister() except *
-    
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
@@ -227,6 +126,26 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     # linenum doesn't need to be int64 but it's really a temporary value
     # so it doesn't matter
     return block_hash ^ linenum
+
+
+if PY_VERSION_HEX < 0x030c00b1:  # 3.12.0b1
+    def _sys_monitoring_register() -> None: ...
+    def _sys_monitoring_deregister() -> None: ...
+else:
+    def _is_main_thread() -> bool:
+        return threading.current_thread() == threading.main_thread()
+
+    def _sys_monitoring_register() -> None:
+        if not _is_main_thread():
+            return
+        mon = sys.monitoring
+        mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
+
+    def _sys_monitoring_deregister() -> None:
+        if not _is_main_thread():
+            return
+        mon = sys.monitoring
+        mon.free_tool_id(mon.PROFILER_ID)
 
 def label(code):
     """
