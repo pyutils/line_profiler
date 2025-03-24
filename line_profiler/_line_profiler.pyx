@@ -129,9 +129,15 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
 
 
 if PY_VERSION_HEX < 0x030c00b1:  # 3.12.0b1
-    def _sys_monitoring_register() -> None: ...
-    def _sys_monitoring_deregister() -> None: ...
+
+    def _sys_monitoring_register() -> None: 
+        ...
+
+    def _sys_monitoring_deregister() -> None: 
+        ...
+
 else:
+
     def _is_main_thread() -> bool:
         return threading.current_thread() == threading.main_thread()
 
@@ -476,5 +482,3 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
                 self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
     return 0
-
-
