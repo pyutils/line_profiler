@@ -98,7 +98,6 @@ cdef extern from "Python.h":
     cdef int PyTrace_C_RETURN
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
-    
 
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
@@ -127,6 +126,32 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     # linenum doesn't need to be int64 but it's really a temporary value
     # so it doesn't matter
     return block_hash ^ linenum
+
+
+if PY_VERSION_HEX < 0x030c00b1:  # 3.12.0b1
+
+    def _sys_monitoring_register() -> None: 
+        ...
+
+    def _sys_monitoring_deregister() -> None: 
+        ...
+
+else:
+
+    def _is_main_thread() -> bool:
+        return threading.current_thread() == threading.main_thread()
+
+    def _sys_monitoring_register() -> None:
+        if not _is_main_thread():
+            return
+        mon = sys.monitoring
+        mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
+
+    def _sys_monitoring_deregister() -> None:
+        if not _is_main_thread():
+            return
+        mon = sys.monitoring
+        mon.free_tool_id(mon.PROFILER_ID)
 
 def label(code):
     """
@@ -306,6 +331,10 @@ cdef class LineProfiler:
         self.disable_by_count()
 
     def enable(self):
+        # Register `line_profiler` with `sys.monitoring` in Python 3.12
+        # and above;
+        # see: https://docs.python.org/3/library/sys.monitoring.html
+        _sys_monitoring_register()
         PyEval_SetTrace(python_trace_callback, self)
 
     @property
@@ -359,6 +388,10 @@ cdef class LineProfiler:
     cpdef disable(self):
         self._c_last_time[threading.get_ident()].clear()
         unset_trace()
+        # Deregister `line_profiler` with `sys.monitoring` in Python
+        # 3.12 and above;
+        # see: https://docs.python.org/3/library/sys.monitoring.html
+        _sys_monitoring_deregister()
 
     def get_stats(self):
         """
@@ -449,5 +482,3 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
                 self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
     return 0
-
-
