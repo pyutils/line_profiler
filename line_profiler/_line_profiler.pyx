@@ -159,13 +159,17 @@ cdef extern from "Python.h":
          PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
                                                                 "monitoring");
          if (!monitoring) return;
-         PyObject *check = PyObject_CallMethod(monitoring,
+         PyObject* check = PyObject_CallMethod(monitoring,
                                                "use_tool_id",
                                                "is",
                                                PY_MONITORING_PROFILER_ID,
                                                "line_profiler");
-         if (check == NULL) PyErr_Format(
-             PyExc_ValueError, "Another profiling tool is already active");
+         if (!check) {
+            PyErr_Format(PyExc_ValueError,
+                         "Another profiling tool is already active");
+         } else {
+            Py_DECREF(check);
+         }
          Py_DECREF(monitoring);
          return;
       }
@@ -175,10 +179,16 @@ cdef extern from "Python.h":
          PyObject* monitoring = PyImport_ImportModuleAttrString("sys",
                                                                 "monitoring");
          if (!monitoring) return;
-         PyObject *result = PyObject_CallMethod(monitoring,
+         PyObject* result = PyObject_CallMethod(monitoring,
                                                 "free_tool_id",
                                                 "i",
                                                 PY_MONITORING_PROFILER_ID);
+         if (!result) {
+            PyErr_Format(PyExc_RuntimeError,
+                         "Error freeing the profiling tool ID");
+         } else {
+            Py_DECREF(result);
+         }
          Py_DECREF(monitoring);
          return;
       }
@@ -188,7 +198,7 @@ cdef extern from "Python.h":
     #endif
     """
     cdef void _sys_monitoring_register() except *
-    cdef void _sys_monitoring_deregister()
+    cdef void _sys_monitoring_deregister() except *
     
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
