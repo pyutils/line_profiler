@@ -80,7 +80,6 @@ which displays:
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
-import functools
 import os
 import sys
 import threading
@@ -98,10 +97,9 @@ __version__ = '4.3.0'
 try:
     from cProfile import Profile
 except ImportError:
-    try:
-        from lsprof import Profile
-    except ImportError:
-        from profile import Profile
+    from profile import Profile  # type: ignore[assignment,no-redef]
+
+from line_profiler.profiler_mixin import ByCountProfilerMixin
 
 
 def execfile(filename, globals=None, locals=None):
@@ -111,24 +109,16 @@ def execfile(filename, globals=None, locals=None):
 # =====================================
 
 
-CO_GENERATOR = 0x0020
-
-
-def is_generator(f):
-    """ Return True if a function is a generator.
-    """
-    isgen = (f.__code__.co_flags & CO_GENERATOR) != 0
-    return isgen
-
-
-class ContextualProfile(Profile):
+class ContextualProfile(ByCountProfilerMixin, Profile):
     """ A subclass of Profile that adds a context manager for Python
     2.5 with: statements and a decorator.
     """
-
     def __init__(self, *args, **kwds):
-        super().__init__(*args, **kwds)
+        super(ByCountProfilerMixin, self).__init__(*args, **kwds)
         self.enable_count = 0
+
+    def __call__(self, func):
+        return self.wrap_callable(func)
 
     def enable_by_count(self, subcalls=True, builtins=True):
         """ Enable the profiler if it hasn't been enabled before.
@@ -146,65 +136,9 @@ class ContextualProfile(Profile):
             if self.enable_count == 0:
                 self.disable()
 
-    def __call__(self, func):
-        """ Decorate a function to start the profiler on function entry and stop
-        it on function exit.
-        """
-        # FIXME: refactor this into a utility function so that both it and
-        # line_profiler can use it.
-        if is_generator(func):
-            wrapper = self.wrap_generator(func)
-        else:
-            wrapper = self.wrap_function(func)
-        return wrapper
-
-    # FIXME: refactor this stuff so that both LineProfiler and
-    # ContextualProfile can use the same implementation.
-    def wrap_generator(self, func):
-        """ Wrap a generator to profile it.
-        """
-        @functools.wraps(func)
-        def wrapper(*args, **kwds):
-            g = func(*args, **kwds)
-            # The first iterate will not be a .send()
-            self.enable_by_count()
-            try:
-                item = next(g)
-            except StopIteration:
-                return
-            finally:
-                self.disable_by_count()
-            input = (yield item)
-            # But any following one might be.
-            while True:
-                self.enable_by_count()
-                try:
-                    item = g.send(input)
-                except StopIteration:
-                    return
-                finally:
-                    self.disable_by_count()
-                input = (yield item)
-        return wrapper
-
-    def wrap_function(self, func):
-        """ Wrap a function to profile it.
-        """
-        @functools.wraps(func)
-        def wrapper(*args, **kwds):
-            self.enable_by_count()
-            try:
-                result = func(*args, **kwds)
-            finally:
-                self.disable_by_count()
-            return result
-        return wrapper
-
-    def __enter__(self):
-        self.enable_by_count()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disable_by_count()
+    # FIXME: `profile.Profile` is fundamentally incompatible with the
+    # by-count paradigm we use, as it can't be `.enable()`-ed nor
+    # `.disable()`-ed
 
 
 class RepeatedTimer:
@@ -343,6 +277,9 @@ def main(args=None):
         import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
+    elif Profile.__module__ == 'profile':
+        raise RuntimeError('non-line-by-line profiling depends on cProfile, '
+                           'which is not available on this platform')
     else:
         prof = ContextualProfile()
 
