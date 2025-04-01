@@ -114,7 +114,7 @@ class ContextualProfile(ByCountProfilerMixin, Profile):
     2.5 with: statements and a decorator.
     """
     def __init__(self, *args, **kwds):
-        Profile.__init__(self, *args, **kwds)
+        super(ByCountProfilerMixin, self).__init__(*args, **kwds)
         self.enable_count = 0
 
     def __call__(self, func):
