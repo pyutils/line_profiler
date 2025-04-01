@@ -114,8 +114,11 @@ class ContextualProfile(ByCountProfilerMixin, Profile):
     2.5 with: statements and a decorator.
     """
     def __init__(self, *args, **kwds):
-        super(ByCountProfilerMixin, self).__init__(*args, **kwds)
+        Profile.__init__(self, *args, **kwds)
         self.enable_count = 0
+
+    def __call__(self, func):
+        return self.wrap_callable(func)
 
     def enable_by_count(self, subcalls=True, builtins=True):
         """ Enable the profiler if it hasn't been enabled before.
@@ -136,11 +139,6 @@ class ContextualProfile(ByCountProfilerMixin, Profile):
     # FIXME: `profile.Profile` is fundamentally incompatible with the
     # by-count paradigm we use, as it can't be `.enable()`-ed nor
     # `.disable()`-ed
-    if Profile.__module__ == 'profile':
-        def __init__(self, *args, **kwds):  # noqa: F811
-            raise AssertionError('non-line-by-line profiling depends on '
-                                 'cProfile, which is not available on this '
-                                 'platform')
 
 
 class RepeatedTimer:
@@ -279,6 +277,9 @@ def main(args=None):
         import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
+    elif Profile.__module__ == 'profile':
+        raise RuntimeError('non-line-by-line profiling depends on cProfile, '
+                           'which is not available on this platform')
     else:
         prof = ContextualProfile()
 

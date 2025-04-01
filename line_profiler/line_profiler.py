@@ -55,7 +55,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         it on function exit.
         """
         self.add_function(func)
-        return ByCountProfilerMixin.__call__(self, func)
+        return self.wrap_callable(func)
 
     def dump_stats(self, filename):
         """ Dump a representation of the data to a file as a pickled LineStats

@@ -19,7 +19,7 @@ class ByCountProfilerMixin:
     Used by `line_profiler.line_profiler.LineProfiler` and
     `kernprof.ContextualProfile`.
     """
-    def __call__(self, func):
+    def wrap_callable(self, func):
         """ Decorate a function to start the profiler on function entry and stop
         it on function exit.
         """
