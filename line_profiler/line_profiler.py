@@ -230,11 +230,11 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
         time_disp = '%5.1f' % (time * scalar)
         if len(time_disp) > default_column_sizes['time']:
-            time_disp = '%5.1g' % (time * scalar)
+            time_disp = '%5.3g' % (time * scalar)
 
         perhit_disp = '%5.1f' % (float(time) * scalar / nhits)
         if len(perhit_disp) > default_column_sizes['perhit']:
-            perhit_disp = '%5.1g' % (float(time) * scalar / nhits)
+            perhit_disp = '%5.3g' % (float(time) * scalar / nhits)
 
         nhits_disp = "%d" % nhits
         if len(nhits_disp) > default_column_sizes['hits']:
