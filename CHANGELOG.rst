@@ -6,6 +6,7 @@ Changes
 * FIX: win32 encoding issues
 * ENH: Add support for ``sys.monitoring`` (Python >= 3.12)
 * FIX: Fixed issue when calling ``kernprof`` with neither the ``-l`` nor ``-b`` flag; also refactored common methods to ``LineProfiler`` and ``ContextualProfile``
+* ENH: Added CLI argument ``-m`` to ``kernprof`` for (auto-)profiling module/package execution instead of that of scripts.
 
 4.2.0
 ~~~~~
