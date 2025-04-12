@@ -81,6 +81,7 @@ which displays:
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
+import contextlib
 import os
 import sys
 import threading
@@ -223,6 +224,37 @@ def _python_command():
         return sys.executable
 
 
+@contextlib.contextmanager
+def _restore_list(l):
+    """
+    Restore a list like `sys.path` after running code which potentially
+    modifies it.
+
+    Example
+    -------
+    >>> l = [1, 2, 3]
+    >>>
+    >>>
+    >>> with _restore_list(l):
+    ...     print(l)
+    ...     l.append(4)
+    ...     print(l)
+    ...     l[:] = 5, 6
+    ...     print(l)
+    ...
+    [1, 2, 3]
+    [1, 2, 3, 4]
+    [5, 6]
+    >>> l
+    [1, 2, 3]
+    """
+    old = l.copy()
+    yield
+    l[:] = old
+
+
+@_restore_list(sys.argv)
+@_restore_list(sys.path)
 def main(args=None):
     """
     Runs the command line interface
@@ -311,10 +343,14 @@ def main(args=None):
     # If line_profiler is installed, then overwrite the explicit decorator
     try:
         import line_profiler
-    except ImportError:
-        ...
+    except ImportError:  # Shouldn't happen
+        install_profiler = global_profiler = None
     else:
-        line_profiler.profile._kernprof_overwrite(prof)
+        global_profiler = line_profiler.profile
+        install_profiler = global_profiler._kernprof_overwrite
+
+    if global_profiler:
+        install_profiler(prof)
 
     if options.builtin:
         builtins.__dict__['profile'] = prof
@@ -379,6 +415,9 @@ def main(args=None):
                 print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+        # Restore the state of the global `@line_profiler.profile`
+        if global_profiler:
+            install_profiler(None)
 
 
 if __name__ == '__main__':
