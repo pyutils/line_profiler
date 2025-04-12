@@ -18,7 +18,11 @@ class AstProfileTransformer(ast.NodeTransformer):
                  profiler_name: str = 'profile') -> None:
         ...
 
-    def visit_FunctionDef(self, node) -> (_ast.FunctionDef):
+    def visit_FunctionDef(self, node: _ast.FunctionDef) -> (_ast.FunctionDef):
+        ...
+
+    def visit_AsyncFunctionDef(
+            self, node: _ast.AsyncFunctionDef) -> (_ast.AsyncFunctionDef):
         ...
 
     def visit_Import(

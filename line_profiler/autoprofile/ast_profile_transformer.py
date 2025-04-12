@@ -62,7 +62,7 @@ class AstProfileTransformer(ast.NodeTransformer):
         self._profiled_imports = profiled_imports if profiled_imports is not None else []
         self._profiler_name = profiler_name
 
-    def visit_FunctionDef(self, node):
+    def _visit_func_def(self, node):
         """Decorate functions/methods with profiler.
 
         Checks if the function/method already has a profile_name decorator, if not, it will append
@@ -71,11 +71,11 @@ class AstProfileTransformer(ast.NodeTransformer):
         e.g. @staticmethod.
 
         Args:
-            (_ast.FunctionDef): node
+            node (Union[_ast.FunctionDef, _ast.AsyncFunctionDef]):
                 function/method in the AST
 
         Returns:
-            (_ast.FunctionDef): node
+            (Union[_ast.FunctionDef, _ast.AsyncFunctionDef]): node
                 function/method with profiling decorator
         """
         decor_ids = set()
@@ -87,6 +87,8 @@ class AstProfileTransformer(ast.NodeTransformer):
         if self._profiler_name not in decor_ids:
             node.decorator_list.append(ast.Name(id=self._profiler_name, ctx=ast.Load()))
         return self.generic_visit(node)
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _visit_func_def
 
     def _visit_import(self, node):
         """Add a node that profiles an import
