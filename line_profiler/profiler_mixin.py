@@ -1,5 +1,6 @@
 import functools
 import inspect
+import types
 
 
 is_coroutine = inspect.iscoroutinefunction
@@ -8,6 +9,30 @@ is_generator = inspect.isgeneratorfunction
 
 def is_classmethod(f):
     return isinstance(f, classmethod)
+
+
+def is_staticmethod(f):
+    return isinstance(f, staticmethod)
+
+
+def is_boundmethod(f):
+    return isinstance(f, types.MethodType)
+
+
+def is_partialmethod(f):
+    return isinstance(f, functools.partialmethod)
+
+
+def is_partial(f):
+    return isinstance(f, functools.partial)
+
+
+def is_property(f):
+    return isinstance(f, property)
+
+
+def is_cached_property(f):
+    return isinstance(f, functools.cached_property)
 
 
 class ByCountProfilerMixin:
@@ -25,6 +50,18 @@ class ByCountProfilerMixin:
         """
         if is_classmethod(func):
             wrapper = self.wrap_classmethod(func)
+        elif is_staticmethod(func):
+            wrapper = self.wrap_staticmethod(func)
+        elif is_boundmethod(func):
+            wrapper = self.wrap_boundmethod(func)
+        elif is_partialmethod(func):
+            wrapper = self.wrap_partialmethod(func)
+        elif is_partial(func):
+            wrapper = self.wrap_partial(func)
+        elif is_property(func):
+            wrapper = self.wrap_property(func)
+        elif is_cached_property(func):
+            wrapper = self.wrap_cached_property(func)
         elif is_coroutine(func):
             wrapper = self.wrap_coroutine(func)
         elif is_generator(func):
@@ -33,19 +70,125 @@ class ByCountProfilerMixin:
             wrapper = self.wrap_function(func)
         return wrapper
 
-    def wrap_classmethod(self, func):
+    def _wrap_callable_wrapper(self, wrapper, impl_attrs, *,
+                               args=None, kwargs=None, name_attr=None):
         """
-        Wrap a classmethod to profile it.
+        Create a profiled wrapper object around callables based on an
+        existing wrapper.
+
+        Args:
+            wrapper (W):
+                Wrapper object around regular callables, like
+                `property`, `staticmethod`, `functools.partial`, etc.
+            impl_attrs (Sequence[str]):
+                Attribute names whence to retrieve the individual
+                callables to be wrapped and profiled, like `.fget`,
+                `.fset`, and `.fdel` for `property`;
+                the retrieved values are wrapped and passed as
+                positional arguments to the wrapper constructor.
+            args (Optional[str | Sequence[str]]):
+                Optional attribute name or names whence to retrieve
+                extra positional arguments to pass to the wrapper
+                constructor;
+                if a single name, the retrieved value is unpacked;
+                else, each name corresponds to one extra positional arg.
+            kwargs (Optional[str | Mapping[str, str]]):
+                Optional attribute name or name mapping whence to
+                retrieve extra keyword arguments to pass to the wrapper
+                constructor;
+                if a single name, the retrieved values is unpacked;
+                else, the attribute of `wrapper` at the mapping value is
+                used to populate the keyword arg at the mapping key.
+            name_attr (Optional[str]):
+                Optional attribute name whence to retrieve the name of
+                `wrapper` to be carried over in the new wrapper, like
+                `__name__` for `property` (Python 3.13+) and `attrname`
+                for `functools.cached_property`.
+
+        Returns:
+            (W): new wrapper of the type of `wrapper`
         """
-        @functools.wraps(func)
-        def wrapper(*args, **kwds):
-            self.enable_by_count()
+        # Wrap implementations
+        impls = [getattr(wrapper, attr) for attr in impl_attrs]
+        new_impls = [None if impl is None else self.wrap_callable(impl)
+                     for impl in impls]
+
+        # Get additional init args for the constructor
+        if args is None:
+            init_args = ()
+        elif isinstance(args, str):
+            init_args = getattr(wrapper, args)
+        else:
+            init_args = [getattr(wrapper, attr) for attr in args]
+        if kwargs is None:
+            init_kwargs = {}
+        elif isinstance(kwargs, str):
+            init_kwargs = getattr(wrapper, kwargs)
+        else:
+            init_kwargs = {}
+            for name, attr in kwargs.items():
+                try:
+                    init_kwargs[name] = getattr(wrapper, attr)
+                except AttributeError:
+                    pass
+
+        new_wrapper = type(wrapper)(*new_impls, *init_args, **init_kwargs)
+
+        # Metadata: descriptor name, instance dict
+        if name_attr:
             try:
-                result = func.__func__(func.__class__, *args, **kwds)
-            finally:
-                self.disable_by_count()
-            return result
-        return wrapper
+                setattr(new_wrapper, name_attr, getattr(wrapper, name_attr))
+            except AttributeError:
+                pass
+        try:
+            old_vars = vars(wrapper)
+            new_vars = vars(new_wrapper)
+        except TypeError:  # Object doesn't necessarily have a dict
+            pass
+        else:
+            for key, value in old_vars.items():
+                new_vars.setdefault(key, value)
+
+        return new_wrapper
+
+    def _wrap_class_and_static_method(self, func):
+        """
+        Wrap a class/static method to profile it.
+        """
+        return self._wrap_callable_wrapper(func, ('__func__',))
+
+    wrap_classmethod = wrap_staticmethod = _wrap_class_and_static_method
+
+    def wrap_boundmethod(self, func):
+        """
+        Wrap a bound method to profile it.
+        """
+        return self._wrap_callable_wrapper(func, ('__func__',),
+                                           args=('__self__',))
+
+    def _wrap_partial(self, func):
+        """
+        Wrap a `functools.partial[method]` to profile it.
+        """
+        return self._wrap_callable_wrapper(func, ('func',),
+                                           args='args', kwargs='keywords')
+
+    wrap_partial = wrap_partialmethod = _wrap_partial
+
+    def wrap_property(self, func):
+        """
+        Wrap a property to profile it.
+        """
+        return self._wrap_callable_wrapper(func, ('fget', 'fset', 'fdel'),
+                                           kwargs={'doc': '__doc__'},
+                                           name_attr='__name__')
+
+    def wrap_cached_property(self, func):
+        """
+        Wrap a `functools.cached_property` to profile it.
+        """
+        return self._wrap_callable_wrapper(func, ('func',),
+                                           name_attr='attrname')
 
     def wrap_coroutine(self, func):
         """
