@@ -430,20 +430,26 @@ def test_autoprofile_script_with_prof_imports():
 
 
 @pytest.mark.parametrize(
-    ['prof_mod', 'prof_imports', 'add_one', 'add_two', 'add_operator', 'main'],
-    [('test_mod.submod1', False, True, False, False, False),
-     ('test_mod.submod2', True, False, True, True, False),
-     ('test_mod', True, True, True, True, True),
-     (None, True, False, False, False, False)])
+    ['use_kernprof_exec', 'prof_mod', 'prof_imports',
+     'add_one', 'add_two', 'add_operator', 'main'],
+    [(False, 'test_mod.submod1', False, True, False, False, False),
+     (False, 'test_mod.submod2', True, False, True, True, False),
+     (False, 'test_mod', True, True, True, True, True),
+     (False, None, True, False, False, False, False),
+     (True, None, True, False, False, False, False)])
 def test_autoprofile_exec_package(
-        prof_mod, prof_imports, add_one, add_two, add_operator, main):
+        use_kernprof_exec, prof_mod, prof_imports,
+        add_one, add_two, add_operator, main):
     """
     Test the execution of a package.
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
     _write_demo_module(temp_dpath)
 
-    args = [sys.executable, '-m', 'kernprof']
+    if use_kernprof_exec:
+        args = ['kernprof']
+    else:
+        args = [sys.executable, '-m', 'kernprof']
     if prof_mod is not None:
         args.extend(['-p', prof_mod])
     if prof_imports:
@@ -469,21 +475,26 @@ def test_autoprofile_exec_package(
 
 
 @pytest.mark.parametrize(
-    ['prof_mod', 'prof_imports', 'add_one', 'add_two', 'add_four',
-     'add_operator', 'main'],
-    [('test_mod.submod2', False, False, True, False, False, False),
-     ('test_mod.submod1', False, True, False, False, True, False),
-     ('test_mod.subpkg.submod4', True, True, True, True, True, True),
-     (None, True, False, False, False, False, False)])
+    ['use_kernprof_exec', 'prof_mod', 'prof_imports',
+     'add_one', 'add_two', 'add_four', 'add_operator', 'main'],
+    [(False, 'test_mod.submod2', False, False, True, False, False, False),
+     (False, 'test_mod.submod1', False, True, False, False, True, False),
+     (False, 'test_mod.subpkg.submod4', True, True, True, True, True, True),
+     (False, None, True, False, False, False, False, False),
+     (True, None, True, False, False, False, False, False)])
 def test_autoprofile_exec_module(
-        prof_mod, prof_imports, add_one, add_two, add_four, add_operator, main):
+        use_kernprof_exec, prof_mod, prof_imports,
+        add_one, add_two, add_four, add_operator, main):
     """
     Test the execution of a module.
     """
     temp_dpath = ub.Path(tempfile.mkdtemp())
     _write_demo_module(temp_dpath)
 
-    args = [sys.executable, '-m', 'kernprof']
+    if use_kernprof_exec:
+        args = ['kernprof']
+    else:
+        args = [sys.executable, '-m', 'kernprof']
     if prof_mod is not None:
         args.extend(['-p', prof_mod])
     if prof_imports:
