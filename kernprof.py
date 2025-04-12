@@ -315,8 +315,6 @@ def main(args=None):
 
     if options.module:
         script_file = find_module_script(options.script)
-        if options.prof_mod is None:
-            options.prof_mod = options.script
     else:
         script_file = find_script(options.script)
     __file__ = script_file

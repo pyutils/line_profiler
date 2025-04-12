@@ -433,8 +433,8 @@ def test_autoprofile_script_with_prof_imports():
     ['prof_mod', 'prof_imports', 'add_one', 'add_two', 'add_operator', 'main'],
     [('test_mod.submod1', False, True, False, False, False),
      ('test_mod.submod2', True, False, True, True, False),
-     # `prof_mod = None` -> `-p test_mod`
-     (None, True, True, True, True, True)])
+     ('test_mod', True, True, True, True, True),
+     (None, True, False, False, False, False)])
 def test_autoprofile_exec_package(
         prof_mod, prof_imports, add_one, add_two, add_operator, main):
     """
@@ -474,8 +474,7 @@ def test_autoprofile_exec_package(
     [('test_mod.submod2', False, False, True, False, False, False),
      ('test_mod.submod1', False, True, False, False, True, False),
      ('test_mod.subpkg.submod4', True, True, True, True, True, True),
-     # `prof_mod = None` -> `-p test_mod.subpkg.submod4`
-     (None, True, True, True, True, True, True)])
+     (None, True, False, False, False, False, False)])
 def test_autoprofile_exec_module(
         prof_mod, prof_imports, add_one, add_two, add_four, add_operator, main):
     """
