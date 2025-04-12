@@ -280,6 +280,12 @@ def main(args=None):
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
 
     sys.argv = [options.script] + options.args
+    if options.module:
+        # Make sure the current directory is on `sys.path` to emulate
+        # `python -m`
+        # Note: this NEEDS to happen here, before the setup script (or
+        # any other code) has a chance to `os.chdir()`
+        sys.path.insert(0, os.path.abspath(os.curdir))
     if options.setup is not None:
         # Run some setup code outside of the profiler. This is good for large
         # imports.
@@ -317,11 +323,11 @@ def main(args=None):
         script_file = find_module_script(options.script)
     else:
         script_file = find_script(options.script)
+        # Make sure the script's directory is on sys.path instead of
+        # just kernprof.py's.
+        sys.path.insert(0, os.path.dirname(script_file))
     __file__ = script_file
     __name__ = '__main__'
-    # Make sure the script's directory is on sys.path instead of just
-    # kernprof.py's.
-    sys.path.insert(0, os.path.dirname(script_file))
 
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
