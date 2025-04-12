@@ -132,6 +132,61 @@ def test_duplicate_function_autoprofile():
     temp_dpath.delete()
 
 
+def test_async_func_autoprofile():
+    """
+    Test the profiling of async functions when autoprofile is enabled.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    code = ub.codeblock(
+        '''
+        import asyncio
+
+
+        async def foo(l, x, delay=.0625):
+            delay *= x
+            result = (await asyncio.sleep(delay, result=x))
+            l.append(result)
+            return result
+
+
+        async def bar():
+            l = []
+            coroutines = [foo(l, x) for x in range(5, -1, -1)]
+            return (await asyncio.gather(*coroutines)), l
+
+
+        def main(debug=None):
+            (in_scheduling_order,
+             in_finishing_order) = asyncio.run(bar(), debug=debug)
+            print(in_scheduling_order,  # [5, 4, 3, 2, 1, 0]
+                  in_finishing_order)  # [0, 1, 2, 3, 4, 5]
+
+
+        if __name__ == '__main__':
+            main(debug=True)
+        ''')
+    with ub.ChDir(temp_dpath):
+
+        script_fpath = ub.Path('script.py')
+        script_fpath.write_text(code)
+
+        args = [sys.executable, '-m', 'kernprof',
+                '-p', 'script.py', '-v', '-l', os.fspath(script_fpath)]
+        proc = ub.cmd(args)
+        raw_output = proc.stdout
+        print(raw_output)
+        print(proc.stderr)
+        proc.check_returncode()
+        assert raw_output.startswith('[5, 4, 3, 2, 1, 0] '
+                                     '[0, 1, 2, 3, 4, 5]')
+    temp_dpath.delete()
+
+    assert 'Function: main' in raw_output
+    assert 'Function: foo' in raw_output
+    assert 'Function: bar' in raw_output
+
+
 def _write_demo_module(temp_dpath):
     """
     Make a dummy test module structure

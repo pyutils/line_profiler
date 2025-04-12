@@ -6,6 +6,7 @@ Changes
 * FIX: win32 encoding issues
 * ENH: Add support for ``sys.monitoring`` (Python >= 3.12)
 * FIX: Fixed issue when calling ``kernprof`` with neither the ``-l`` nor ``-b`` flag; also refactored common methods to ``LineProfiler`` and ``ContextualProfile``
+* FIX: Fixed auto-profiling of async function definitions #330
 
 4.2.0
 ~~~~~
