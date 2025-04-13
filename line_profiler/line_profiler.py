@@ -19,7 +19,11 @@ except ImportError as ex:
         'The line_profiler._line_profiler c-extension is not importable. '
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
-from .profiler_mixin import ByCountProfilerMixin
+from .profiler_mixin import (ByCountProfilerMixin,
+                             is_property, is_cached_property,
+                             is_boundmethod, is_classmethod, is_staticmethod,
+                             is_partial, is_partialmethod)
+
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
@@ -54,8 +58,24 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         """ Decorate a function to start the profiler on function entry and stop
         it on function exit.
         """
-        self.add_function(func)
+        if is_property(func):
+            self.add_property(func)
+        elif any(check(func)
+                 for check in (is_boundmethod,
+                               is_classmethod, is_staticmethod)):
+            self.add_function(func.__func__)
+        elif any(check(func) for check in (is_partial, is_partialmethod,
+                                           is_cached_property)):
+            self.add_function(func.func)
+        else:
+            self.add_function(func)
         return self.wrap_callable(func)
+
+    def add_property(self, func):
+        for impl in func.fget, func.fset, func.fdel:
+            if impl is None:
+                continue
+            self.add_function(impl)
 
     def dump_stats(self, filename):
         """ Dump a representation of the data to a file as a pickled LineStats

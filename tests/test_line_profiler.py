@@ -1,4 +1,9 @@
+import functools
+import inspect
+import io
 import sys
+import textwrap
+import types
 import pytest
 from line_profiler import LineProfiler
 
@@ -18,11 +23,8 @@ def get_profiling_tool_name():
     return sys.monitoring.get_tool(sys.monitoring.PROFILER_ID)
 
 
-class C:
-    @classmethod
-    def c(self, value):
-        print(value)
-        return 0
+def strip(s):
+    return textwrap.dedent(s).strip('\n')
 
 
 def test_init():
@@ -101,13 +103,280 @@ def test_gen_decorator():
 
 
 def test_classmethod_decorator():
+    """
+    Test for `LineProfiler.wrap_classmethod()`.
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
     profile = LineProfiler()
-    c_wrapped = profile(C.c)
-    assert c_wrapped.__name__ == 'c'
+
+    class Object:
+        @profile
+        @classmethod
+        def foo(cls) -> str:
+            return cls.__name__ * 2
+
+    assert isinstance(inspect.getattr_static(Object, 'foo'), classmethod)
     assert profile.enable_count == 0
-    val = c_wrapped('test')
+    assert len(profile.functions) == 1
+    assert Object.foo() == Object().foo() == 'ObjectObject'
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo()`
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    # Check that it has been run twice
+    assert int(line.split()[1]) == 2
     assert profile.enable_count == 0
-    assert val == C.c('test')
+
+
+def test_staticmethod_decorator():
+    """
+    Test for `LineProfiler.wrap_staticmethod()`.
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    class Object:
+        @profile
+        @staticmethod
+        def foo(x: int) -> int:
+            return x * 2
+
+    assert isinstance(inspect.getattr_static(Object, 'foo'), staticmethod)
+    assert profile.enable_count == 0
+    assert len(profile.functions) == 1
+    assert Object.foo(3) == Object().foo(3) == 6
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo()`
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    # Check that it has been run twice
+    assert int(line.split()[1]) == 2
+    assert profile.enable_count == 0
+
+
+def test_boundmethod_decorator():
+    """
+    Test for `LineProfiler.wrap_boundmethod()`.
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    class Object:
+        def foo(self, x: int) -> int:
+            return id(self) * x
+
+    obj = Object()
+    # Check that calls are aggregated
+    profiled_foo_1 = profile(obj.foo)
+    profiled_foo_2 = profile(obj.foo)
+    assert isinstance(profiled_foo_1, types.MethodType)
+    assert isinstance(profiled_foo_2, types.MethodType)
+    assert profile.enable_count == 0
+    # XXX: should we try do remove duplicates?
+    assert profile.functions == [Object.foo, Object.foo]
+    assert (profiled_foo_1(2)
+            == profiled_foo_2(2)
+            == obj.foo(2)
+            == id(obj) * 2)
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo()`
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('* x'))
+    # Check that the wrapped methods has been run twice in total
+    assert int(line.split()[1]) == 2
+    assert profile.enable_count == 0
+
+
+def test_partialmethod_decorator():
+    """
+    Test for `LineProfiler.wrap_partialmethod()`
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator in a function definition, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    class Object:
+        def foo(self, x: int) -> int:
+            return id(self) * x
+
+        bar = profile(functools.partialmethod(foo, 1))
+
+    assert isinstance(inspect.getattr_static(Object, 'bar'),
+                      functools.partialmethod)
+    obj = Object()
+    assert profile.enable_count == 0
+    assert profile.functions == [Object.foo]
+    assert obj.foo(1) == obj.bar() == id(obj)
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo()` (via `.bar()`)
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('* x'))
+    # Check that the wrapped method has been run once
+    assert int(line.split()[1]) == 1
+    assert profile.enable_count == 0
+
+
+def test_partial_decorator() -> None:
+    """
+    Test for `LineProfiler.wrap_partial()`.
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    def foo(x: int, y: int) -> int:
+        return x + y
+
+    bar = functools.partial(foo, 2)
+    profiled_bar_1 = profile(bar)
+    profiled_bar_2 = profile(bar)
+    assert isinstance(profiled_bar_1, functools.partial)
+    assert isinstance(profiled_bar_2, functools.partial)
+    assert profile.enable_count == 0
+    # XXX: should we try do remove duplicates?
+    assert profile.functions == [foo, foo]
+    assert (profiled_bar_1(3)
+            == profiled_bar_2(3)
+            == bar(3)
+            == foo(2, 3)
+            == 5)
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `foo()`
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('x + y'))
+    # Check that the wrapped partials has been run twice in total
+    assert int(line.split()[1]) == 2
+    assert profile.enable_count == 0
+
+
+def test_property_decorator():
+    """
+    Test for `LineProfiler.wrap_property()`.
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    with pytest.warns(UserWarning,
+                      match='Adding a function with a __wrapped__ attribute'):
+        class Object:
+            def __init__(self, x: int) -> None:
+                self.x = x
+
+            @profile
+            @property
+            def foo(self) -> int:
+                return self.x * 2
+
+            @profile
+            @foo.setter
+            def foo(self, foo) -> None:
+                self.x = foo // 2
+
+    assert isinstance(Object.foo, property)
+    assert profile.enable_count == 0
+    # XXX: should we try do remove duplicates? (getter added twice here)
+    # (that's also why there is the warning)
+    assert len(profile.functions) == 3
+    obj = Object(3)
+    assert obj.foo == 6  # Use getter
+    obj.foo = 10  # Use setter
+    assert obj.x == 5
+    assert obj.foo == 10  # Use getter
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo`
+    assert output.endswith('- foo')
+    getter_line, = (line for line in output.splitlines()
+                    if line.endswith('* 2'))
+    setter_line, = (line for line in output.splitlines()
+                    if line.endswith('// 2'))
+    # Check that the getter has been run twice and the setter once
+    assert int(getter_line.split()[1]) == 2
+    assert int(setter_line.split()[1]) == 1
+    assert profile.enable_count == 0
+
+
+def test_cached_property_decorator():
+    """
+    Test for `LineProfiler.wrap_cached_property()`
+
+    Notes
+    -----
+    This is testing for an edge case;
+    for the best result, always use `@profile` as the innermost
+    decorator, as auto-profile normally does.
+    """
+    profile = LineProfiler()
+
+    class Object:
+        def __init__(self, x: int) -> None:
+            self.x = x
+
+        @profile
+        @functools.cached_property
+        def foo(self) -> int:
+            return self.x * 2
+
+    assert isinstance(Object.foo, functools.cached_property)
+    assert profile.enable_count == 0
+    assert len(profile.functions) == 1
+    obj = Object(3)
+    assert obj.foo == 6  # Use getter
+    assert obj.foo == 6  # Getter not called because it's cached
+    with io.StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        output = strip(sio.getvalue())
+    print(output)
+    # Check that we have profiled `Object.foo`
+    assert output.endswith('- foo')
+    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    # Check that the getter has been run once
+    assert int(line.split()[1]) == 1
     assert profile.enable_count == 0
 
 
