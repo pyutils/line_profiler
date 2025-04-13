@@ -195,8 +195,12 @@ class ByCountProfilerMixin:
 
     def wrap_async_generator(self, func):
         """
-        Wrap an async generator to profile it.
+        Wrap an async generator function to profile it.
         """
+        # Prevent double-wrap
+        if self._already_wrapped(func):
+            return func
+
         @functools.wraps(func)
         async def wrapper(*args, **kwds):
             g = func(*args, **kwds)
@@ -212,12 +216,16 @@ class ByCountProfilerMixin:
                     self.disable_by_count()
                 input_ = (yield item)
 
-        return wrapper
+        return self._mark_wrapped(wrapper)
 
     def wrap_coroutine(self, func):
         """
-        Wrap a Python 3.5 coroutine to profile it.
+        Wrap a coroutine function to profile it.
         """
+        # Prevent double-wrap
+        if self._already_wrapped(func):
+            return func
+
         @functools.wraps(func)
         async def wrapper(*args, **kwds):
             self.enable_by_count()
@@ -227,12 +235,16 @@ class ByCountProfilerMixin:
                 self.disable_by_count()
             return result
 
-        return wrapper
+        return self._mark_wrapped(wrapper)
 
     def wrap_generator(self, func):
         """
-        Wrap a generator to profile it.
+        Wrap a generator function to profile it.
         """
+        # Prevent double-wrap
+        if self._already_wrapped(func):
+            return func
+
         @functools.wraps(func)
         def wrapper(*args, **kwds):
             g = func(*args, **kwds)
@@ -248,11 +260,16 @@ class ByCountProfilerMixin:
                     self.disable_by_count()
                 input_ = (yield item)
 
-        return wrapper
+        return self._mark_wrapped(wrapper)
 
     def wrap_function(self, func):
-        """ Wrap a function to profile it.
         """
+        Wrap a function to profile it.
+        """
+        # Prevent double-wrap
+        if self._already_wrapped(func):
+            return func
+
         @functools.wraps(func)
         def wrapper(*args, **kwds):
             self.enable_by_count()
@@ -261,7 +278,15 @@ class ByCountProfilerMixin:
             finally:
                 self.disable_by_count()
             return result
-        return wrapper
+
+        return self._mark_wrapped(wrapper)
+
+    def _already_wrapped(self, func):
+        return getattr(func, self._profiler_wrapped_marker, None) == id(self)
+
+    def _mark_wrapped(self, func):
+        setattr(func, self._profiler_wrapped_marker, id(self))
+        return func
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.
@@ -295,3 +320,5 @@ class ByCountProfilerMixin:
 
     def __exit__(self, *_, **__):
         self.disable_by_count()
+
+    _profiler_wrapped_marker = '__line_profiler_id__'

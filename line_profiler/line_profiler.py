@@ -28,12 +28,42 @@ from .profiler_mixin import (ByCountProfilerMixin,
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
 
+is_function = inspect.isfunction
+
 
 def load_ipython_extension(ip):
     """ API for IPython to recognize this module as an IPython extension.
     """
     from .ipython_extension import LineProfilerMagics
     ip.register_magics(LineProfilerMagics)
+
+
+def _get_underlying_functions(func):
+    """
+    Get the underlying function objects of a callable or an adjacent
+    object.
+
+    Returns:
+        funcs (list[Callable])
+    """
+    if any(check(func)
+           for check in (is_boundmethod, is_classmethod, is_staticmethod)):
+        return _get_underlying_functions(func.__func__)
+    if any(check(func)
+           for check in (is_partial, is_partialmethod, is_cached_property)):
+        return _get_underlying_functions(func.func)
+    if is_property(func):
+        result = []
+        for impl in func.fget, func.fset, func.fdel:
+            if impl is not None:
+                result.extend(_get_underlying_functions(impl))
+        return result
+    if not callable(func):
+        raise TypeError(f'func = {func!r}: '
+                        f'cannot get functions from {type(func)} objects')
+    if is_function(func):
+        return [func]
+    return [type(func).__call__]
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -60,6 +90,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         start the profiler on function entry and stop it on function
         exit.
         """
+        # Note: if `func` is a `types.FunctionType` which is already
+        # decorated by the profiler, the same object is returned;
+        # otherwise, wrapper objects are always returned.
         self.add_callable(func)
         return self.wrap_callable(func)
 
@@ -67,28 +100,20 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         """
         Register a function, method, property, partial object, etc. with
         the underlying Cython profiler.
-        """
-        if is_property(func):
-            self.add_property(func)
-        elif any(check(func)
-                 for check in (is_boundmethod,
-                               is_classmethod, is_staticmethod)):
-            self.add_function(func.__func__)
-        elif any(check(func) for check in (is_partial, is_partialmethod,
-                                           is_cached_property)):
-            self.add_function(func.func)
-        else:
-            self.add_function(func)
 
-    def add_property(self, func):
+        Returns:
+            1 if any function is added to the profiler, 0 otherwise
         """
-        Register a `property`'s getter, setter, and deleter
-        implementations with the underlying Cython profiler.
-        """
-        for impl in func.fget, func.fset, func.fdel:
-            if impl is None:
+        guard = self._already_wrapped
+
+        nadded = 0
+        for impl in _get_underlying_functions(func):
+            if guard(impl):
                 continue
             self.add_function(impl)
+            nadded += 1
+
+        return 1 if nadded else 0
 
     def dump_stats(self, filename):
         """ Dump a representation of the data to a file as a pickled LineStats
@@ -110,16 +135,16 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     def add_module(self, mod):
         """ Add all the functions in a module and its classes.
         """
-        from inspect import isclass, isfunction
+        from inspect import isclass
 
         nfuncsadded = 0
         for item in mod.__dict__.values():
             if isclass(item):
                 for k, v in item.__dict__.items():
-                    if isfunction(v):
+                    if is_function(v):
                         self.add_function(v)
                         nfuncsadded += 1
-            elif isfunction(item):
+            elif is_function(item):
                 self.add_function(item)
                 nfuncsadded += 1
 

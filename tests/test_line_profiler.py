@@ -102,6 +102,25 @@ def test_enable_disable():
     assert lp.last_time == {}
 
 
+def test_double_decoration():
+    """
+    Test that wrapping the same function twice does not result in
+    spurious profiling entries.
+    """
+    profile = LineProfiler()
+    f_wrapped = profile(f)
+    f_double_wrapped = profile(f_wrapped)
+    assert f_double_wrapped is f_wrapped
+
+    with check_timings(profile):
+        assert profile.enable_count == 0
+        value = f_wrapped(10)
+        assert profile.enable_count == 0
+        assert value == f(10)
+
+    assert len(profile.get_stats().timings) == 1
+
+
 def test_function_decorator():
     """
     Test for `LineProfiler.wrap_function()`.
@@ -398,27 +417,26 @@ def test_property_decorator():
     """
     profile = LineProfiler()
 
-    with pytest.warns(UserWarning,
-                      match='Adding a function with a __wrapped__ attribute'):
-        class Object:
-            def __init__(self, x: int) -> None:
-                self.x = x
+    class Object:
+        def __init__(self, x: int) -> None:
+            self.x = x
 
-            @profile
-            @property
-            def foo(self) -> int:
-                return self.x * 2
+        @profile
+        @property
+        def foo(self) -> int:
+            return self.x * 2
 
-            @profile
-            @foo.setter
-            def foo(self, foo) -> None:
-                self.x = foo // 2
+        # The profiler sees both the setter and the already-wrapped
+        # getter here, but it shouldn't re-wrap the getter
+
+        @profile
+        @foo.setter
+        def foo(self, foo) -> None:
+            self.x = foo // 2
 
     assert isinstance(Object.foo, property)
     assert profile.enable_count == 0
-    # XXX: should we try do remove duplicates? (getter added twice here)
-    # (that's also why there is the warning)
-    assert len(profile.functions) == 3
+    assert len(profile.functions) == 2
     obj = Object(3)
     assert obj.foo == 6  # Use getter
     obj.foo = 10  # Use setter
