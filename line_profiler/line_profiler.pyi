@@ -15,9 +15,6 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     def add_callable(self, func) -> None:
         ...
 
-    def add_property(self, func) -> None:
-        ...
-
     def dump_stats(self, filename) -> None:
         ...
 
