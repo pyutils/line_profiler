@@ -45,18 +45,18 @@ To view kernprof help run:
 
 .. code:: bash
 
-    kenprof --help
+    kernprof --help
 
 which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports] script ...
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [-m] [--prof-imports] {script | -m module} ...
 
     Run and profile a python script.
 
     positional arguments:
-      script                The python script file to run
+      {script | -m module}  The python script file or module to run
       args                  Optional script arguments
 
     options:
@@ -74,12 +74,14 @@ which displays:
       -z, --skip-zero       Hide functions which have not been called
       -i [OUTPUT_INTERVAL], --output-interval [OUTPUT_INTERVAL]
                             Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to disabled.
-      -p PROF_MOD, --prof-mod PROF_MOD
+      -p, --prof-mod PROF_MOD
                             List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
-                            full script. Only works with line_profiler -l, --line-by-line
+                            the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
+import contextlib
+import functools
 import os
 import sys
 import threading
@@ -87,6 +89,7 @@ import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import time
 from argparse import ArgumentError, ArgumentParser
+from runpy import run_module
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -176,6 +179,19 @@ class RepeatedTimer:
         self.is_running = False
 
 
+def find_module_script(module_name):
+    """Find the path to the executable script for a module or package."""
+    from line_profiler.autoprofile.util_static import modname_to_modpath
+
+    for suffix in '.__main__', '':
+        fname = modname_to_modpath(module_name + suffix)
+        if fname:
+            return fname
+
+    sys.stderr.write('Could not find module %s\n' % module_name)
+    raise SystemExit(1)
+
+
 def find_script(script_name):
     """ Find the script.
 
@@ -208,6 +224,97 @@ def _python_command():
         return sys.executable
 
 
+@contextlib.contextmanager
+def _restore_list(lst):
+    """
+    Restore a list like `sys.path` after running code which potentially
+    modifies it.
+
+    Example
+    -------
+    >>> l = [1, 2, 3]
+    >>>
+    >>>
+    >>> with _restore_list(l):
+    ...     print(l)
+    ...     l.append(4)
+    ...     print(l)
+    ...     l[:] = 5, 6
+    ...     print(l)
+    ...
+    [1, 2, 3]
+    [1, 2, 3, 4]
+    [5, 6]
+    >>> l
+    [1, 2, 3]
+    """
+    old = lst.copy()
+    yield
+    lst[:] = old
+
+
+def pre_parse_single_arg_directive(args, flag, sep='--'):
+    """
+    Pre-parse high-priority single-argument directives like `-m module`
+    to emulate the behavior of `python [...]`.
+
+    Examples
+    --------
+    >>> import functools
+    >>> pre_parse = functools.partial(pre_parse_single_arg_directive,
+    ...                               flag='-m')
+
+    Normal parsing:
+
+    >>> pre_parse(['foo', 'bar', 'baz'])
+    (['foo', 'bar', 'baz'], None, [])
+    >>> pre_parse(['foo', 'bar', '-m', 'baz'])
+    (['foo', 'bar'], 'baz', [])
+    >>> pre_parse(['foo', 'bar', '-m', 'baz', 'foobar'])
+    (['foo', 'bar'], 'baz', ['foobar'])
+
+    Erroneous case:
+
+    >>> pre_parse(['foo', 'bar', '-m'])
+    Traceback (most recent call last):
+      ...
+    ValueError: argument expected for the -m option
+
+    Prevent erroneous consumption of the flag by passing it `'--'`:
+
+    >>> pre_parse(['foo', '--', 'bar', '-m', 'baz'])
+    (['foo', '--'], None, ['bar', '-m', 'baz'])
+    >>> pre_parse(['foo', '-m', 'spam',
+    ...            'eggs', '--', 'bar', '-m', 'baz'])
+    (['foo'], 'spam', ['eggs', '--', 'bar', '-m', 'baz'])
+    """
+    args = list(args)
+    pre = []
+    post = []
+    try:
+        i_sep = args.index(sep)
+    except ValueError:  # No such element
+        pass
+    else:
+        pre[:] = args[:i_sep]
+        post[:] = args[i_sep + 1:]
+        pre_pre, arg, pre_post = pre_parse_single_arg_directive(pre, flag)
+        if arg is None:
+            assert not pre_post
+            return pre_pre + [sep], arg, post
+        else:
+            return pre_pre, arg, [*pre_post, sep, *post]
+    try:
+        i_flag = args.index(flag)
+    except ValueError:  # No such element
+        return args, None, []
+    if i_flag == len(args) - 1:  # Last element
+        raise ValueError(f'argument expected for the {flag} option')
+    return args[:i_flag], args[i_flag + 1], args[i_flag + 2:]
+
+
+@_restore_list(sys.argv)
+@_restore_list(sys.path)
 def main(args=None):
     """
     Runs the command line interface
@@ -218,49 +325,96 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    parser = ArgumentParser(description='Run and profile a python script.')
-    parser.add_argument('-V', '--version', action='version', version=__version__)
-    parser.add_argument('-l', '--line-by-line', action='store_true',
-                        help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
-    parser.add_argument('-b', '--builtin', action='store_true',
-                        help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
-                        "'@profile' to decorate functions, or 'with profile:' to profile a "
-                        'section of code.')
-    parser.add_argument('-o', '--outfile',
-                        help="Save stats to <outfile> (default: 'scriptname.lprof' with "
-                        "--line-by-line, 'scriptname.prof' without)")
-    parser.add_argument('-s', '--setup',
-                        help='Code to execute before the code to profile')
-    parser.add_argument('-v', '--view', action='store_true',
-                        help='View the results of the profile in addition to saving it')
-    parser.add_argument('-r', '--rich', action='store_true',
-                        help='Use rich formatting if viewing output')
-    parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-                        help='Output unit (in seconds) in which the timing info is '
-                        'displayed (default: 1e-6)')
-    parser.add_argument('-z', '--skip-zero', action='store_true',
-                        help="Hide functions which have not been called")
-    parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
-                        "Minimum value is 1 (second). Defaults to disabled.")
-    parser.add_argument('-p', '--prof-mod', type=str, default='',
-                        help="List of modules, functions and/or classes to profile specified by their name or path. "
-                        "List is comma separated, adding the current script path profiles full script. "
-                        "Only works with line_profiler -l, --line-by-line")
-    parser.add_argument('--prof-imports', action='store_true',
-                        help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
-                        "Only works with line_profiler -l, --line-by-line")
+    create_parser = functools.partial(
+        ArgumentParser,
+        description='Run and profile a python script.')
 
-    parser.add_argument('script', help='The python script file to run')
-    parser.add_argument('args', nargs='...', help='Optional script arguments')
+    if args is None:
+        args = sys.argv[1:]
 
-    options = parser.parse_args(args)
+    # Special case: `kernprof [...] -m <module>` should terminate the
+    # parsing of all subsequent options
+    args, module, post_args = pre_parse_single_arg_directive(args, '-m')
+
+    if module is None:  # Normal execution
+        real_parser, = parsers = [create_parser()]
+        help_parser = None
+    else:
+        # We've already consumed the `-m <module>`, so we need a dummy
+        # parser for generating the help text;
+        # but the real parser should not consume the `options.script`
+        # positional arg, and it it got the `--help` option, it should
+        # hand off the the dummy parser
+        real_parser = create_parser(add_help=False)
+        real_parser.add_argument('-h', '--help', action='store_true')
+        help_parser = create_parser()
+        parsers = [real_parser, help_parser]
+    for parser in parsers:
+        parser.add_argument('-V', '--version', action='version', version=__version__)
+        parser.add_argument('-l', '--line-by-line', action='store_true',
+                            help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
+        parser.add_argument('-b', '--builtin', action='store_true',
+                            help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
+                            "'@profile' to decorate functions, or 'with profile:' to profile a "
+                            'section of code.')
+        parser.add_argument('-o', '--outfile',
+                            help="Save stats to <outfile> (default: 'scriptname.lprof' with "
+                            "--line-by-line, 'scriptname.prof' without)")
+        parser.add_argument('-s', '--setup',
+                            help='Code to execute before the code to profile')
+        parser.add_argument('-v', '--view', action='store_true',
+                            help='View the results of the profile in addition to saving it')
+        parser.add_argument('-r', '--rich', action='store_true',
+                            help='Use rich formatting if viewing output')
+        parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
+                            help='Output unit (in seconds) in which the timing info is '
+                            'displayed (default: 1e-6)')
+        parser.add_argument('-z', '--skip-zero', action='store_true',
+                            help="Hide functions which have not been called")
+        parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
+                            help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
+                            "Minimum value is 1 (second). Defaults to disabled.")
+        parser.add_argument('-p', '--prof-mod', action='append', type=str,
+                            help="List of modules, functions and/or classes to profile specified by their name or path. "
+                            "List is comma separated, adding the current script path profiles the full script. "
+                            "Multiple copies of this flag can be supplied and the.list is extended. "
+                            "Only works with line_profiler -l, --line-by-line")
+        parser.add_argument('--prof-imports', action='store_true',
+                            help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
+                            "Only works with line_profiler -l, --line-by-line")
+
+        if parser is help_parser or module is None:
+            parser.add_argument('script',
+                                metavar='{script | -m module}',
+                                help='The python script file or module to run')
+        parser.add_argument('args', nargs='...', help='Optional script arguments')
+
+    # Hand off to the dummy parser if necessary to generate the help
+    # text
+    options = real_parser.parse_args(args)
+    if help_parser and getattr(options, 'help', False):
+        # This should raise a `SystemExit`
+        help_parser.parse_args([*args, '-m', module])
+    try:
+        del options.help
+    except AttributeError:
+        pass
+    # Add in the pre-partitioned arguments cut off by `-m <module>`
+    options.args += post_args
+    if module is not None:
+        options.script = module
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
 
     sys.argv = [options.script] + options.args
+    if module:
+        # Make sure the current directory is on `sys.path` to emulate
+        # `python -m`
+        # Note: this NEEDS to happen here, before the setup script (or
+        # any other code) has a chance to `os.chdir()`
+        sys.path.insert(0, os.path.abspath(os.curdir))
     if options.setup is not None:
         # Run some setup code outside of the profiler. This is good for large
         # imports.
@@ -286,20 +440,27 @@ def main(args=None):
     # If line_profiler is installed, then overwrite the explicit decorator
     try:
         import line_profiler
-    except ImportError:
-        ...
+    except ImportError:  # Shouldn't happen
+        install_profiler = global_profiler = None
     else:
-        line_profiler.profile._kernprof_overwrite(prof)
+        global_profiler = line_profiler.profile
+        install_profiler = global_profiler._kernprof_overwrite
+
+    if global_profiler:
+        install_profiler(prof)
 
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
-    script_file = find_script(options.script)
+    if module:
+        script_file = find_module_script(options.script)
+    else:
+        script_file = find_script(options.script)
+        # Make sure the script's directory is on sys.path instead of
+        # just kernprof.py's.
+        sys.path.insert(0, os.path.dirname(script_file))
     __file__ = script_file
     __name__ = '__main__'
-    # Make sure the script's directory is on sys.path instead of just
-    # kernprof.py's.
-    sys.path.insert(0, os.path.dirname(script_file))
 
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
@@ -309,13 +470,30 @@ def main(args=None):
     try:
         try:
             execfile_ = execfile
+            rmod_ = run_module
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                prof_mod = options.prof_mod.split(',')
-                autoprofile.run(script_file, ns, prof_mod=prof_mod, profile_imports=options.prof_imports)
+                # Note: `prof_mod` entries can be filenames (which can
+                # contain commas), so check against existing filenames
+                # before splitting them
+                prof_mod = sum(
+                    ([spec] if os.path.exists(spec) else spec.split(',')
+                     for spec in options.prof_mod),
+                    [])
+                autoprofile.run(script_file,
+                                ns,
+                                prof_mod=prof_mod,
+                                profile_imports=options.prof_imports,
+                                as_module=module is not None)
+            elif module and options.builtin:
+                run_module(options.script, ns, '__main__')
             elif options.builtin:
                 execfile(script_file, ns, ns)
+            elif module:
+                prof.runctx(f'rmod_({options.script!r}, globals(), "__main__")',
+                            ns,
+                            ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
         except (KeyboardInterrupt, SystemExit):
@@ -340,6 +518,9 @@ def main(args=None):
                 print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+        # Restore the state of the global `@line_profiler.profile`
+        if global_profiler:
+            install_profiler(None)
 
 
 if __name__ == '__main__':

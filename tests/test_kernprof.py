@@ -1,4 +1,10 @@
+import sys
+import tempfile
 import unittest
+
+import pytest
+import ubelt as ub
+
 from kernprof import ContextualProfile
 
 
@@ -12,6 +18,57 @@ def g(x):
     """ A generator. """
     y = yield x + 10
     yield y + 20
+
+
+@pytest.mark.parametrize(
+    'use_kernprof_exec, args, expected_output, expect_error',
+    [([False, ['-m'], '', True]),
+     # `python -m kernprof`
+     (False, ['-m', 'mymod'], "['mymod']", False),
+     # `kernprof`
+     (True, ['-m', 'mymod'], "['mymod']", False),
+     (False, ['-m', 'mymod', '-p', 'bar'], "['mymod', '-p', 'bar']", False),
+     # `-p bar` consumed by `kernprof`, `-p baz` are not
+     (False,
+      ['-p', 'bar', '-m', 'mymod', '-p', 'baz'],
+      "['mymod', '-p', 'baz']",
+      False),
+     # Separator `--` broke off the remainder, so the requisite arg for
+     # `-m` is not found and we error out
+     (False, ['-p', 'bar', '-m', '--', 'mymod', '-p', 'baz'], '', True),
+     # Separator `--` broke off the remainder, so `-m` is passed to the
+     # script instead of being parsed as the module to execute
+     (False,
+      ['-p', 'bar', 'mymod.py', '--', '-m', 'mymod', '-p', 'baz'],
+      "['mymod.py', '-m', 'mymod', '-p', 'baz']",
+      False)])
+def test_kernprof_m_parsing(
+        use_kernprof_exec, args, expected_output, expect_error):
+    """
+    Test that `kernprof -m` behaves like `python -m` in that it requires
+    an argument and cuts off everything after it, passing that along
+    to the module to be executed.
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+    (temp_dpath / 'mymod.py').write_text(ub.codeblock(
+        '''
+        import sys
+
+
+        if __name__ == '__main__':
+            print(sys.argv)
+        '''))
+    if use_kernprof_exec:
+        cmd = ['kernprof']
+    else:
+        cmd = [sys.executable, '-m', 'kernprof']
+    proc = ub.cmd(cmd + args, cwd=temp_dpath, verbose=2)
+    if expect_error:
+        assert proc.returncode
+        return
+    else:
+        proc.check_returncode()
+    assert proc.stdout.startswith(expected_output)
 
 
 class TestKernprof(unittest.TestCase):

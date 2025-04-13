@@ -1,6 +1,7 @@
-import tempfile
-import sys
 import os
+import re
+import sys
+import tempfile
 
 import pytest
 import ubelt as ub
@@ -167,6 +168,101 @@ def test_explicit_profile_with_kernprof(line_profile: bool):
     temp_dpath.delete()
 
 
+@pytest.mark.parametrize('package', [True, False])
+@pytest.mark.parametrize('builtin', [True, False])
+def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
+    """
+    Test that explicit (non-line) profiling works when using
+    `kernprof -m` to run packages and/or submodules with relative
+    imports.
+
+    Parameters:
+        builtin (bool)
+            Whether to slip `@profile` into the globals with `--builtin`
+            (true) or to require importing it from `line_profiler` in
+            the profiled source code (false)
+
+        package (bool)
+            Whether to add the code to a package's `__main__.py` and
+            `kernprof -m {<package>}` (true), or to add it to a
+            submodule and `kernprof -m {<package>}.{<submodule>}`
+            (false)
+    """
+    temp_dpath = ub.Path(tempfile.mkdtemp())
+
+    lib_code = ub.codeblock(
+        '''
+        @profile
+        def func1(a):
+            return a + 1
+
+        @profile
+        def func2(a):
+            return a + 1
+
+        def func3(a):
+            return a + 1
+
+        def func4(a):
+            return a + 1
+        ''').strip()
+    if not builtin:
+        lib_code = 'from line_profiler import profile\n' + lib_code
+    target_code = ub.codeblock(
+        '''
+        from ._lib import func1, func2, func3, func4
+
+        if __name__ == '__main__':
+            func1(1)
+            func2(1)
+            func3(1)
+            func4(1)
+        ''').strip()
+
+    if package:
+        target_module = 'package'
+        target_fname = '__main__.py'
+    else:
+        target_module = 'package.api'
+        target_fname = 'api.py'
+
+    args = ['kernprof', '-v', '-m', target_module]
+    if builtin:
+        args.insert(2, '--builtin')  # Insert before the `-m` flag
+
+    if 'PYTHONPATH' in os.environ:
+        python_path = '{}:{}'.format(os.environ['PYTHONPATH'], os.curdir)
+    else:
+        python_path = os.curdir
+    env = {**os.environ, 'PYTHONPATH': python_path}
+
+    with ub.ChDir(temp_dpath):
+        package_dir = ub.Path('package').mkdir()
+
+        lib_fpath = package_dir / '_lib.py'
+        lib_fpath.write_text(lib_code)
+
+        target_fpath = package_dir / target_fname
+        target_fpath.write_text(target_code)
+
+        (package_dir / '__init__.py').touch()
+
+        proc = ub.cmd(args, env=env)
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+
+    # Note: in non-builtin mode, the entire script is profiled
+    for func, profiled in [('func1', True), ('func2', True),
+                           ('func3', not builtin), ('func4', not builtin)]:
+        result = re.search(r'lib\.py:[0-9]+\({}\)'.format(func), proc.stdout)
+        assert bool(result) == profiled
+
+    assert not (temp_dpath / 'profile_output.txt').exists()
+    assert (temp_dpath / (target_module + '.prof')).exists()
+    temp_dpath.delete()
+
+
 def test_explicit_profile_with_in_code_enable():
     """
     Test that the user can enable the profiler explicitly from within their
@@ -309,6 +405,7 @@ def test_explicit_profile_with_duplicate_functions():
     assert output_fpath.exists()
     assert (temp_dpath / 'profile_output.lprof').exists()
     temp_dpath.delete()
+
 
 if __name__ == '__main__':
     ...
