@@ -4,6 +4,7 @@ import typing
 
 is_coroutine = inspect.iscoroutinefunction
 is_generator = inspect.isgeneratorfunction
+is_async_generator = inspect.isasyncgenfunction
 
 
 def is_classmethod(f) -> bool:
@@ -58,6 +59,9 @@ class ByCountProfilerMixin:
         ...
 
     def wrap_cached_property(self, func):
+        ...
+
+    def wrap_async_generator(self, func):
         ...
 
     def wrap_coroutine(self, func):

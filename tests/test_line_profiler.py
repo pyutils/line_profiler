@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import functools
 import inspect
 import io
@@ -19,12 +21,38 @@ def g(x):
     yield y + 20
 
 
+async def ag(delay, start=()):
+    i = 0
+    for x in start:
+        yield i
+        i += x
+    while True:
+        received = await asyncio.sleep(delay, (yield i))
+        if received is None:
+            return
+        i += received
+
+
 def get_profiling_tool_name():
     return sys.monitoring.get_tool(sys.monitoring.PROFILER_ID)
 
 
 def strip(s):
     return textwrap.dedent(s).strip('\n')
+
+
+@contextlib.contextmanager
+def check_timings(prof):
+    """
+    Verify that the profiler starts without timing data and ends with
+    some.
+    """
+    timings = prof.get_stats().timings
+    assert not any(timings.values()), ('Expected no timing entries, '
+                                       f'got {timings!r}')
+    yield prof
+    timings = prof.get_stats().timings
+    assert any(timings.values()), f'Expected timing entries, got {timings!r}'
 
 
 def test_init():
@@ -75,31 +103,102 @@ def test_enable_disable():
 
 
 def test_function_decorator():
+    """
+    Test for `LineProfiler.wrap_function()`.
+    """
     profile = LineProfiler()
     f_wrapped = profile(f)
+    assert f in profile.functions
     assert f_wrapped.__name__ == 'f'
 
-    assert profile.enable_count == 0
-    value = f_wrapped(10)
-    assert profile.enable_count == 0
-    assert value == f(10)
+    with check_timings(profile):
+        assert profile.enable_count == 0
+        value = f_wrapped(10)
+        assert profile.enable_count == 0
+        assert value == f(10)
 
 
 def test_gen_decorator():
+    """
+    Test for `LineProfiler.wrap_generator()`.
+    """
     profile = LineProfiler()
     g_wrapped = profile(g)
+    assert inspect.isgeneratorfunction(g_wrapped)
+    assert g in profile.functions
     assert g_wrapped.__name__ == 'g'
 
-    assert profile.enable_count == 0
-    i = g_wrapped(10)
-    assert profile.enable_count == 0
-    assert next(i) == 20
-    assert profile.enable_count == 0
-    assert i.send(30) == 50
-    assert profile.enable_count == 0
-    with pytest.raises(StopIteration):
-        next(i)
-    assert profile.enable_count == 0
+    with check_timings(profile):
+        assert profile.enable_count == 0
+        i = g_wrapped(10)
+        assert profile.enable_count == 0
+        assert next(i) == 20
+        assert profile.enable_count == 0
+        assert i.send(30) == 50
+        assert profile.enable_count == 0
+        with pytest.raises(StopIteration):
+            next(i)
+        assert profile.enable_count == 0
+
+
+def test_coroutine_decorator():
+    """
+    Test for `LineProfiler.wrap_coroutine()`.
+    """
+    async def coro(delay=.015625):
+        return (await asyncio.sleep(delay, 1))
+
+    profile = LineProfiler()
+    coro_wrapped = profile(coro)
+    assert inspect.iscoroutinefunction(coro)
+    assert coro in profile.functions
+
+    with check_timings(profile):
+        assert profile.enable_count == 0
+        assert asyncio.run(coro_wrapped()) == 1
+        assert profile.enable_count == 0
+
+
+def test_async_gen_decorator():
+    """
+    Test for `LineProfiler.wrap_async_generator()`.
+    """
+    delay = .015625
+
+    async def use_agen_complex(*args, delay=delay):
+        results = []
+        agen = ag_wrapped(delay)
+        results.append(await agen.asend(None))  # Start the generator
+        for send in args:
+            with (pytest.raises(StopAsyncIteration)
+                  if send is None else
+                  contextlib.nullcontext()):
+                results.append(await agen.asend(send))
+            if send is None:
+                break
+        return results
+
+    async def use_agen_simple(*args, delay=delay):
+        results = []
+        async for i in ag_wrapped(delay, args):
+            results.append(i)
+        return results
+
+    profile = LineProfiler()
+    ag_wrapped = profile(ag)
+    assert inspect.isasyncgenfunction(ag_wrapped)
+    assert ag in profile.functions
+
+    with check_timings(profile):
+        assert profile.enable_count == 0
+        assert asyncio.run(use_agen_simple()) == [0]
+        assert profile.enable_count == 0
+        assert asyncio.run(use_agen_simple(1, 2, 3)) == [0, 1, 3, 6]
+        assert profile.enable_count == 0
+        assert asyncio.run(use_agen_complex(1, 2, 3)) == [0, 1, 3, 6]
+        assert profile.enable_count == 0
+        assert asyncio.run(use_agen_complex(1, 2, 3, None, 4)) == [0, 1, 3, 6]
+        assert profile.enable_count == 0
 
 
 def test_classmethod_decorator():

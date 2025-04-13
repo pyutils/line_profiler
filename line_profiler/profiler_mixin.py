@@ -5,6 +5,7 @@ import types
 
 is_coroutine = inspect.iscoroutinefunction
 is_generator = inspect.isgeneratorfunction
+is_async_generator = inspect.isasyncgenfunction
 
 
 def is_classmethod(f):
@@ -62,6 +63,8 @@ class ByCountProfilerMixin:
             wrapper = self.wrap_property(func)
         elif is_cached_property(func):
             wrapper = self.wrap_cached_property(func)
+        elif is_async_generator(func):
+            wrapper = self.wrap_async_generator(func)
         elif is_coroutine(func):
             wrapper = self.wrap_coroutine(func)
         elif is_generator(func):
@@ -190,11 +193,31 @@ class ByCountProfilerMixin:
         return self._wrap_callable_wrapper(func, ('func',),
                                            name_attr='attrname')
 
+    def wrap_async_generator(self, func):
+        """
+        Wrap an async generator to profile it.
+        """
+        @functools.wraps(func)
+        async def wrapper(*args, **kwds):
+            g = func(*args, **kwds)
+            # Async generators are started by `.asend(None)`
+            input_ = None
+            while True:
+                self.enable_by_count()
+                try:
+                    item = (await g.asend(input_))
+                except StopAsyncIteration:
+                    return
+                finally:
+                    self.disable_by_count()
+                input_ = (yield item)
+
+        return wrapper
+
     def wrap_coroutine(self, func):
         """
         Wrap a Python 3.5 coroutine to profile it.
         """
-
         @functools.wraps(func)
         async def wrapper(*args, **kwds):
             self.enable_by_count()
@@ -207,21 +230,14 @@ class ByCountProfilerMixin:
         return wrapper
 
     def wrap_generator(self, func):
-        """ Wrap a generator to profile it.
+        """
+        Wrap a generator to profile it.
         """
         @functools.wraps(func)
         def wrapper(*args, **kwds):
             g = func(*args, **kwds)
-            # The first iterate will not be a .send()
-            self.enable_by_count()
-            try:
-                item = next(g)
-            except StopIteration:
-                return
-            finally:
-                self.disable_by_count()
-            input_ = (yield item)
-            # But any following one might be.
+            # Generators are started by `.send(None)`
+            input_ = None
             while True:
                 self.enable_by_count()
                 try:
@@ -231,6 +247,7 @@ class ByCountProfilerMixin:
                 finally:
                     self.disable_by_count()
                 input_ = (yield item)
+
         return wrapper
 
     def wrap_function(self, func):
