@@ -51,12 +51,12 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [-m] [--prof-imports] script ...
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [-m] [--prof-imports] {script | -m module} ...
 
     Run and profile a python script.
 
     positional arguments:
-      script                The python script file to run
+      {script | -m module}  The python script file or module to run
       args                  Optional script arguments
 
     options:
@@ -77,11 +77,11 @@ which displays:
       -p, --prof-mod PROF_MOD
                             List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
                             the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
-      -m, --module          Treat `script` as a Python module, running it like `python -m script`
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
 import contextlib
+import functools
 import os
 import sys
 import threading
@@ -225,7 +225,7 @@ def _python_command():
 
 
 @contextlib.contextmanager
-def _restore_list(l):
+def _restore_list(lst):
     """
     Restore a list like `sys.path` after running code which potentially
     modifies it.
@@ -248,9 +248,69 @@ def _restore_list(l):
     >>> l
     [1, 2, 3]
     """
-    old = l.copy()
+    old = lst.copy()
     yield
-    l[:] = old
+    lst[:] = old
+
+
+def pre_parse_single_arg_directive(args, flag, sep='--'):
+    """
+    Pre-parse high-priority single-argument directives like `-m module`
+    to emulate the behavior of `python [...]`.
+
+    Examples
+    --------
+    >>> import functools
+    >>> pre_parse = functools.partial(pre_parse_single_arg_directive,
+    ...                               flag='-m')
+
+    Normal parsing:
+
+    >>> pre_parse(['foo', 'bar', 'baz'])
+    (['foo', 'bar', 'baz'], None, [])
+    >>> pre_parse(['foo', 'bar', '-m', 'baz'])
+    (['foo', 'bar'], 'baz', [])
+    >>> pre_parse(['foo', 'bar', '-m', 'baz', 'foobar'])
+    (['foo', 'bar'], 'baz', ['foobar'])
+
+    Erroneous case:
+
+    >>> pre_parse(['foo', 'bar', '-m'])
+    Traceback (most recent call last):
+      ...
+    ValueError: argument expected for the -m option
+
+    Prevent erroneous consumption of the flag by passing it `'--'`:
+
+    >>> pre_parse(['foo', '--', 'bar', '-m', 'baz'])
+    (['foo', '--'], None, ['bar', '-m', 'baz'])
+    >>> pre_parse(['foo', '-m', 'spam',
+    ...            'eggs', '--', 'bar', '-m', 'baz'])
+    (['foo'], 'spam', ['eggs', '--', 'bar', '-m', 'baz'])
+    """
+    args = list(args)
+    pre = []
+    post = []
+    try:
+        i_sep = args.index(sep)
+    except ValueError:  # No such element
+        pass
+    else:
+        pre[:] = args[:i_sep]
+        post[:] = args[i_sep + 1:]
+        pre_pre, arg, pre_post = pre_parse_single_arg_directive(pre, flag)
+        if arg is None:
+            assert not pre_post
+            return pre_pre + [sep], arg, post
+        else:
+            return pre_pre, arg, [*pre_post, sep, *post]
+    try:
+        i_flag = args.index(flag)
+    except ValueError:  # No such element
+        return args, None, []
+    if i_flag == len(args) - 1:  # Last element
+        raise ValueError(f'argument expected for the {flag} option')
+    return args[:i_flag], args[i_flag + 1], args[i_flag + 2:]
 
 
 @_restore_list(sys.argv)
@@ -265,54 +325,91 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    parser = ArgumentParser(description='Run and profile a python script.')
-    parser.add_argument('-V', '--version', action='version', version=__version__)
-    parser.add_argument('-l', '--line-by-line', action='store_true',
-                        help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
-    parser.add_argument('-b', '--builtin', action='store_true',
-                        help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
-                        "'@profile' to decorate functions, or 'with profile:' to profile a "
-                        'section of code.')
-    parser.add_argument('-o', '--outfile',
-                        help="Save stats to <outfile> (default: 'scriptname.lprof' with "
-                        "--line-by-line, 'scriptname.prof' without)")
-    parser.add_argument('-s', '--setup',
-                        help='Code to execute before the code to profile')
-    parser.add_argument('-v', '--view', action='store_true',
-                        help='View the results of the profile in addition to saving it')
-    parser.add_argument('-r', '--rich', action='store_true',
-                        help='Use rich formatting if viewing output')
-    parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-                        help='Output unit (in seconds) in which the timing info is '
-                        'displayed (default: 1e-6)')
-    parser.add_argument('-z', '--skip-zero', action='store_true',
-                        help="Hide functions which have not been called")
-    parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
-                        "Minimum value is 1 (second). Defaults to disabled.")
-    parser.add_argument('-p', '--prof-mod', action='append', type=str,
-                        help="List of modules, functions and/or classes to profile specified by their name or path. "
-                        "List is comma separated, adding the current script path profiles the full script. "
-                        "Multiple copies of this flag can be supplied and the.list is extended. "
-                        "Only works with line_profiler -l, --line-by-line")
-    parser.add_argument('-m', '--module', action='store_true',
-                        help="Treat `script` as a Python module, running it like "
-                        "`python -m script`")
-    parser.add_argument('--prof-imports', action='store_true',
-                        help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
-                        "Only works with line_profiler -l, --line-by-line")
+    create_parser = functools.partial(
+        ArgumentParser,
+        description='Run and profile a python script.')
 
-    parser.add_argument('script', help='The python script file to run')
-    parser.add_argument('args', nargs='...', help='Optional script arguments')
+    if args is None:
+        args = sys.argv[1:]
 
-    options = parser.parse_args(args)
+    # Special case: `kernprof [...] -m <module>` should terminate the
+    # parsing of all subsequent options
+    args, module, post_args = pre_parse_single_arg_directive(args, '-m')
+
+    if module is None:  # Normal execution
+        real_parser, = parsers = [create_parser()]
+        help_parser = None
+    else:
+        # We've already consumed the `-m <module>`, so we need a dummy
+        # parser for generating the help text;
+        # but the real parser should not consume the `options.script`
+        # positional arg, and it it got the `--help` option, it should
+        # hand off the the dummy parser
+        real_parser = create_parser(add_help=False)
+        real_parser.add_argument('-h', '--help', action='store_true')
+        help_parser = create_parser()
+        parsers = [real_parser, help_parser]
+    for parser in parsers:
+        parser.add_argument('-V', '--version', action='version', version=__version__)
+        parser.add_argument('-l', '--line-by-line', action='store_true',
+                            help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
+        parser.add_argument('-b', '--builtin', action='store_true',
+                            help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
+                            "'@profile' to decorate functions, or 'with profile:' to profile a "
+                            'section of code.')
+        parser.add_argument('-o', '--outfile',
+                            help="Save stats to <outfile> (default: 'scriptname.lprof' with "
+                            "--line-by-line, 'scriptname.prof' without)")
+        parser.add_argument('-s', '--setup',
+                            help='Code to execute before the code to profile')
+        parser.add_argument('-v', '--view', action='store_true',
+                            help='View the results of the profile in addition to saving it')
+        parser.add_argument('-r', '--rich', action='store_true',
+                            help='Use rich formatting if viewing output')
+        parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
+                            help='Output unit (in seconds) in which the timing info is '
+                            'displayed (default: 1e-6)')
+        parser.add_argument('-z', '--skip-zero', action='store_true',
+                            help="Hide functions which have not been called")
+        parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
+                            help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
+                            "Minimum value is 1 (second). Defaults to disabled.")
+        parser.add_argument('-p', '--prof-mod', action='append', type=str,
+                            help="List of modules, functions and/or classes to profile specified by their name or path. "
+                            "List is comma separated, adding the current script path profiles the full script. "
+                            "Multiple copies of this flag can be supplied and the.list is extended. "
+                            "Only works with line_profiler -l, --line-by-line")
+        parser.add_argument('--prof-imports', action='store_true',
+                            help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
+                            "Only works with line_profiler -l, --line-by-line")
+
+        if parser is help_parser or module is None:
+            parser.add_argument('script',
+                                metavar='{script | -m module}',
+                                help='The python script file or module to run')
+        parser.add_argument('args', nargs='...', help='Optional script arguments')
+
+    # Hand off to the dummy parser if necessary to generate the help
+    # text
+    options = real_parser.parse_args(args)
+    if help_parser and getattr(options, 'help', False):
+        # This should raise a `SystemExit`
+        help_parser.parse_args([*args, '-m', module])
+    try:
+        del options.help
+    except AttributeError:
+        pass
+    # Add in the pre-partitioned arguments cut off by `-m <module>`
+    options.args += post_args
+    if module is not None:
+        options.script = module
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
 
     sys.argv = [options.script] + options.args
-    if options.module:
+    if module:
         # Make sure the current directory is on `sys.path` to emulate
         # `python -m`
         # Note: this NEEDS to happen here, before the setup script (or
@@ -355,7 +452,7 @@ def main(args=None):
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
-    if options.module:
+    if module:
         script_file = find_module_script(options.script)
     else:
         script_file = find_script(options.script)
@@ -388,12 +485,12 @@ def main(args=None):
                                 ns,
                                 prof_mod=prof_mod,
                                 profile_imports=options.prof_imports,
-                                as_module=options.module)
-            elif options.module and options.builtin:
+                                as_module=module is not None)
+            elif module and options.builtin:
                 run_module(options.script, ns, '__main__')
             elif options.builtin:
                 execfile(script_file, ns, ns)
-            elif options.module:
+            elif module:
                 prof.runctx(f'rmod_({options.script!r}, globals(), "__main__")',
                             ns,
                             ns)

@@ -226,9 +226,9 @@ def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
         target_module = 'package.api'
         target_fname = 'api.py'
 
-    args = ['kernprof', '-m', '-v', target_module]
+    args = ['kernprof', '-v', '-m', target_module]
     if builtin:
-        args.insert(-1, '--builtin')
+        args.insert(2, '--builtin')  # Insert before the `-m` flag
 
     if 'PYTHONPATH' in os.environ:
         python_path = '{}:{}'.format(os.environ['PYTHONPATH'], os.curdir)
