@@ -55,8 +55,18 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     """
 
     def __call__(self, func):
-        """ Decorate a function to start the profiler on function entry and stop
-        it on function exit.
+        """
+        Decorate a function, method, property, partial object etc. to
+        start the profiler on function entry and stop it on function
+        exit.
+        """
+        self.add_callable(func)
+        return self.wrap_callable(func)
+
+    def add_callable(self, func):
+        """
+        Register a function, method, property, partial object, etc. with
+        the underlying Cython profiler.
         """
         if is_property(func):
             self.add_property(func)
@@ -69,9 +79,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             self.add_function(func.func)
         else:
             self.add_function(func)
-        return self.wrap_callable(func)
 
     def add_property(self, func):
+        """
+        Register a `property`'s getter, setter, and deleter
+        implementations with the underlying Cython profiler.
+        """
         for impl in func.fget, func.fset, func.fdel:
             if impl is None:
                 continue
