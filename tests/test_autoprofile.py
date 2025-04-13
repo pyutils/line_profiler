@@ -435,6 +435,10 @@ def test_autoprofile_script_with_prof_imports():
     [(False, 'test_mod.submod1', False, True, False, False, False),
      (False, 'test_mod.submod2', True, False, True, True, False),
      (False, 'test_mod', True, True, True, True, True),
+     # Explicitly add all the modules via multiple `-p` flags, without
+     # using the `--prof-imports` flag
+     (False, ['test_mod', 'test_mod.submod1,test_mod.submod2'], False,
+      True, True, True, True),
      (False, None, True, False, False, False, False),
      (True, None, True, False, False, False, False)])
 def test_autoprofile_exec_package(
@@ -451,7 +455,10 @@ def test_autoprofile_exec_package(
     else:
         args = [sys.executable, '-m', 'kernprof']
     if prof_mod is not None:
-        args.extend(['-p', prof_mod])
+        if isinstance(prof_mod, str):
+            prof_mod = [prof_mod]
+        for pm in prof_mod:
+            args.extend(['-p', pm])
     if prof_imports:
         args.append('--prof-imports')
     args.extend(['-l', '-m', 'test_mod', '1', '2', '3'])

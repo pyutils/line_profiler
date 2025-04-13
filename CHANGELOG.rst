@@ -7,7 +7,7 @@ Changes
 * ENH: Add support for ``sys.monitoring`` (Python >= 3.12)
 * FIX: Fixed issue when calling ``kernprof`` with neither the ``-l`` nor ``-b`` flag; also refactored common methods to ``LineProfiler`` and ``ContextualProfile``
 * FIX: Fixed auto-profiling of async function definitions #330
-* ENH: Added CLI argument ``-m`` to ``kernprof`` for running a library module as a script```
+* ENH: Added CLI argument ``-m`` to ``kernprof`` for running a library module as a script; also made it possible for profiling targets to be supplied across multiple ``-p`` flags
 
 4.2.0
 ~~~~~

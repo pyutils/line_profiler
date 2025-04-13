@@ -74,10 +74,10 @@ which displays:
       -z, --skip-zero       Hide functions which have not been called
       -i [OUTPUT_INTERVAL], --output-interval [OUTPUT_INTERVAL]
                             Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to disabled.
-      -p PROF_MOD, --prof-mod PROF_MOD
+      -p, --prof-mod PROF_MOD
                             List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
-                            full script. Only works with line_profiler -l, --line-by-line
-      -m, --module          Treat `script` as a Python module, running it like `python -m script` (implies `-p script` if `-p` is not otherwise supplied)
+                            the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
+      -m, --module          Treat `script` as a Python module, running it like `python -m script`
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
@@ -290,14 +290,14 @@ def main(args=None):
     parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
                         help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                         "Minimum value is 1 (second). Defaults to disabled.")
-    parser.add_argument('-p', '--prof-mod', type=str,
+    parser.add_argument('-p', '--prof-mod', action='append', type=str,
                         help="List of modules, functions and/or classes to profile specified by their name or path. "
-                        "List is comma separated, adding the current script path profiles full script. "
+                        "List is comma separated, adding the current script path profiles the full script. "
+                        "Multiple copies of this flag can be supplied and the.list is extended. "
                         "Only works with line_profiler -l, --line-by-line")
     parser.add_argument('-m', '--module', action='store_true',
                         help="Treat `script` as a Python module, running it like "
-                        "`python -m script` "
-                        "(implies `-p script` if `-p` is not otherwise provided)")
+                        "`python -m script`")
     parser.add_argument('--prof-imports', action='store_true',
                         help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                         "Only works with line_profiler -l, --line-by-line")
@@ -377,7 +377,13 @@ def main(args=None):
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                prof_mod = options.prof_mod.split(',')
+                # Note: `prof_mod` entries can be filenames (which can
+                # contain commas), so check against existing filenames
+                # before splitting them
+                prof_mod = sum(
+                    ([spec] if os.path.exists(spec) else spec.split(',')
+                     for spec in options.prof_mod),
+                    [])
                 autoprofile.run(script_file,
                                 ns,
                                 prof_mod=prof_mod,
