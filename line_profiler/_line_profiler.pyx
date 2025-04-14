@@ -11,8 +11,7 @@ Ignore:
     # Assuming the cwd is the repo root.
     cythonize --annotate --inplace \
         ./line_profiler/_line_profiler.pyx \
-        ./line_profiler/timers.c \
-        ./line_profiler/unset_trace.c
+        ./line_profiler/timers.c
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
@@ -65,7 +64,42 @@ cdef extern from "Python.h":
       #include "cpython/code.h"
       #include "pyframe.h"
     #endif
+    """
+    ctypedef struct PyFrameObject
+    ctypedef struct PyCodeObject
+    ctypedef long long PY_LONG_LONG
+    cdef bint PyCFunction_Check(object obj)
+    cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
+    cdef void PyEval_SetProfile(Py_tracefunc func, object arg)
+    cdef void PyEval_SetTrace(Py_tracefunc func, object arg)
+
+    ctypedef object (*PyCFunction)(object self, object args)
+
+    ctypedef struct PyMethodDef:
+        char *ml_name
+        PyCFunction ml_meth
+        int ml_flags
+        char *ml_doc
+
+    ctypedef struct PyCFunctionObject:
+        PyMethodDef *m_ml
+        PyObject *m_self
+        PyObject *m_module
+
+    # They're actually #defines, but whatever.
+    cdef int PyTrace_CALL
+    cdef int PyTrace_EXCEPTION
+    cdef int PyTrace_LINE
+    cdef int PyTrace_RETURN
+    cdef int PyTrace_C_CALL
+    cdef int PyTrace_C_EXCEPTION
+    cdef int PyTrace_C_RETURN
+
+    cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
+
+cdef extern from *:
+    """
     typedef struct CTraceState {
         Py_tracefunc c_tracefunc; PyObject *c_traceobj;
     } CTraceState;
@@ -105,28 +139,6 @@ cdef extern from "Python.h":
         return (state->c_tracefunc)(state->c_traceobj, py_frame, what, arg);
     }
     """
-    ctypedef struct PyFrameObject
-    ctypedef struct PyCodeObject
-    ctypedef long long PY_LONG_LONG
-    cdef bint PyCFunction_Check(object obj)
-    cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
-
-    cdef void PyEval_SetProfile(Py_tracefunc func, object arg)
-    cdef void PyEval_SetTrace(Py_tracefunc func, object arg)
-
-    ctypedef object (*PyCFunction)(object self, object args)
-
-    ctypedef struct PyMethodDef:
-        char *ml_name
-        PyCFunction ml_meth
-        int ml_flags
-        char *ml_doc
-
-    ctypedef struct PyCFunctionObject:
-        PyMethodDef *m_ml
-        PyObject *m_self
-        PyObject *m_module
-
     ctypedef struct CTraceState:
         Py_tracefunc c_tracefunc
         PyObject *c_traceobj
@@ -138,23 +150,9 @@ cdef extern from "Python.h":
                                      int what,
                                      PyObject *arg)
 
-    # They're actually #defines, but whatever.
-    cdef int PyTrace_CALL
-    cdef int PyTrace_EXCEPTION
-    cdef int PyTrace_LINE
-    cdef int PyTrace_RETURN
-    cdef int PyTrace_C_CALL
-    cdef int PyTrace_C_EXCEPTION
-    cdef int PyTrace_C_RETURN
-
-    cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
-
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
-
-cdef extern from "unset_trace.c":
-    void unset_trace()
 
 cdef struct LineTime:
     int64 code
