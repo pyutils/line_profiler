@@ -65,6 +65,45 @@ cdef extern from "Python.h":
       #include "cpython/code.h"
       #include "pyframe.h"
     #endif
+
+    typedef struct CTraceState {
+        Py_tracefunc c_tracefunc; PyObject *c_traceobj;
+    } CTraceState;
+
+    CTraceState *fetch_c_trace_state() {
+        // No need to `Py_DECREF()` the thread state, since it isn't a
+        // `PyObject`
+        PyThreadState *thread_state = PyThreadState_Get();
+        CTraceState *trace_state = (CTraceState*)malloc(sizeof(CTraceState));
+        trace_state->c_tracefunc = thread_state->c_tracefunc;
+        trace_state->c_traceobj = thread_state->c_traceobj;
+        // No need for NULL check with `Py_XINCREF()`
+        Py_XINCREF(trace_state->c_traceobj);
+        return trace_state;
+    }
+
+    void restore_c_trace_state(CTraceState *state) {
+        // No-op if there isn't a stored state
+        if (state == NULL) return;
+        PyEval_SetTrace(state->c_tracefunc, state->c_traceobj);
+        // No need for NULL check with `Py_XDECREF()`
+        Py_XDECREF(state->c_traceobj);
+        free(state);
+        return;
+    }
+
+    int call_c_trace_state_hook(CTraceState *state,
+                                PyFrameObject *py_frame,
+                                int what,
+                                PyObject *arg) {
+        // No stored state
+        if (state == NULL) return 0;
+        // There is a stored state, but no associated tracer
+        if (state->c_tracefunc == NULL || state->c_traceobj == NULL) {
+            return 0;
+        }
+        return (state->c_tracefunc)(state->c_traceobj, py_frame, what, arg);
+    }
     """
     ctypedef struct PyFrameObject
     ctypedef struct PyCodeObject
@@ -87,6 +126,17 @@ cdef extern from "Python.h":
         PyMethodDef *m_ml
         PyObject *m_self
         PyObject *m_module
+
+    ctypedef struct CTraceState:
+        Py_tracefunc c_tracefunc
+        PyObject *c_traceobj
+
+    cdef CTraceState *fetch_c_trace_state()
+    cdef void restore_c_trace_state(CTraceState *state)
+    cdef int call_c_trace_state_hook(CTraceState *state,
+                                     PyFrameObject *py_frame,
+                                     int what,
+                                     PyObject *arg)
 
     # They're actually #defines, but whatever.
     cdef int PyTrace_CALL
@@ -237,12 +287,14 @@ cdef class LineProfiler:
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
     # Mapping between thread-id and map of LastTime
     cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
+    cdef CTraceState *_prev_trace_state
+    cdef public int _call_existing_trace
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
     cdef public object threaddata
 
-    def __init__(self, *functions):
+    def __init__(self, *functions, call_existing_trace=None):
         self.functions = []
         self.code_hash_map = {}
         self.dupes_map = {}
@@ -250,6 +302,11 @@ cdef class LineProfiler:
         # Create a data store for thread-local objects
         # https://docs.python.org/3/library/threading.html#thread-local-data
         self.threaddata = threading.local()
+        if call_existing_trace is None:
+            import os
+            call_existing_trace = os.environ.get(
+                'LINE_PROFILER_CALL_EXISTING_TRACE')
+        self.call_existing_trace = call_existing_trace
 
         for func in functions:
             self.add_function(func)
@@ -330,12 +387,21 @@ cdef class LineProfiler:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disable_by_count()
 
-    def enable(self):
+    cpdef enable(self):
         # Register `line_profiler` with `sys.monitoring` in Python 3.12
         # and above;
         # see: https://docs.python.org/3/library/sys.monitoring.html
         _sys_monitoring_register()
+        self._prev_trace_state = fetch_c_trace_state()
         PyEval_SetTrace(python_trace_callback, self)
+
+    @property
+    def call_existing_trace(self):
+        return bool(self._call_existing_trace)
+
+    @call_existing_trace.setter
+    def call_existing_trace(self, call_existing_trace):
+        self._call_existing_trace = 1 if call_existing_trace else 0
 
     @property
     def c_code_map(self):
@@ -387,7 +453,8 @@ cdef class LineProfiler:
 
     cpdef disable(self):
         self._c_last_time[threading.get_ident()].clear()
-        unset_trace()
+        restore_c_trace_state(self._prev_trace_state)
+        self._prev_trace_state = NULL
         # Deregister `line_profiler` with `sys.monitoring` in Python
         # 3.12 and above;
         # see: https://docs.python.org/3/library/sys.monitoring.html
@@ -481,4 +548,8 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
                 # are profiling a generator that is being pumped past its end.
                 self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
+    # Call the tracer that we're wrapping
+    if self._call_existing_trace:
+        return call_c_trace_state_hook(self._prev_trace_state,
+                                       py_frame, what, arg)
     return 0

@@ -112,6 +112,60 @@ def test_enable_disable():
     assert lp.last_time == {}
 
 
+def test_trace_callback_preservation():
+    """
+    Test that the profiler restores the active tracing function after
+    it's disabled.
+
+    Notes
+    -----
+    This test is run inside a subprocess if there's an active tracing
+    function, so as not to disrupt tracing.
+    """
+    code = strip("""
+    import sys
+    from typing import Any, Callable, Literal, Union
+    from types import FrameType
+
+    from line_profiler import LineProfiler
+
+
+    Event = Literal['call', 'line', 'return', 'exception', 'opcode']
+    TracingFunc = Callable[[FrameType, Event, Any], Union['TracingFunc', None]]
+
+
+    def test_no_tracing(tracer: Union[TracingFunc, None]) -> None:
+        sys.settrace(tracer)
+        assert sys.gettrace() is tracer
+        profile = LineProfiler()
+        profile.enable_by_count()
+        assert sys.gettrace() is profile
+        profile.disable_by_count()
+        assert sys.gettrace() is tracer
+        sys.settrace(None)
+
+
+    def main() -> None:
+        test_no_tracing(None)
+        test_no_tracing(lambda frame, event, arg: None)
+
+
+    if __name__ == '__main__':
+        main()
+    """)
+    if sys.gettrace() is None:
+        # No fear of clobbering an existing trace callback, run
+        # in-process
+        namespace = {}
+        exec(code, namespace, namespace)
+        namespace['main']()
+        return
+
+    import subprocess
+
+    subprocess.run([sys.executable, '-c', code]).check_returncode()
+
+
 def test_double_decoration():
     """
     Test that wrapping the same function twice does not result in
