@@ -116,6 +116,14 @@ cdef extern from *:
         return trace_state;
     }
 
+    int c_trace_state_has_hook(CTraceState *state) {
+        // No stored state
+        if (state == NULL) return 0;
+        // There is a stored state, but no associated tracer
+        if (state->c_tracefunc == NULL || state->c_traceobj == NULL) return 0;
+        return 1;
+    }
+
     void restore_c_trace_state(CTraceState *state) {
         // No-op if there isn't a stored state
         if (state == NULL) return;
@@ -130,13 +138,22 @@ cdef extern from *:
                                 PyFrameObject *py_frame,
                                 int what,
                                 PyObject *arg) {
-        // No stored state
-        if (state == NULL) return 0;
-        // There is a stored state, but no associated tracer
-        if (state->c_tracefunc == NULL || state->c_traceobj == NULL) {
-            return 0;
-        }
+        if (!c_trace_state_has_hook(state)) return 0;
         return (state->c_tracefunc)(state->c_traceobj, py_frame, what, arg);
+    }
+
+    inline PyObject *get_optional_attr(PyObject *obj, const char *attr) {
+        if (!PyObject_HasAttrString(obj, attr)) return NULL;
+        return PyObject_GetAttrString(obj, attr);
+    }
+
+    inline int set_optional_attr(PyObject *obj,
+                                 const char *attr,
+                                 PyObject *value) {
+        int hasattr = PyObject_HasAttrString(obj, attr);
+        if (!hasattr && value == NULL) return 0;  // No-op
+        if (value == NULL) return PyObject_DelAttrString(obj, attr);
+        return PyObject_SetAttrString(obj, attr, value);
     }
     """
     ctypedef struct CTraceState:
@@ -144,11 +161,14 @@ cdef extern from *:
         PyObject *c_traceobj
 
     cdef CTraceState *fetch_c_trace_state()
+    cdef int c_trace_state_has_hook(CTraceState *state)
     cdef void restore_c_trace_state(CTraceState *state)
     cdef int call_c_trace_state_hook(CTraceState *state,
                                      PyFrameObject *py_frame,
                                      int what,
                                      PyObject *arg)
+    cdef PyObject *get_optional_attr(PyObject *obj, const char *attr)
+    cdef int set_optional_attr(PyObject *obj, const char *attr, PyObject *value)
 
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
@@ -264,6 +284,30 @@ cdef class LineProfiler:
     This is the Cython base class for
     :class:`line_profiler.line_profiler.LineProfiler`.
 
+    Arguments:
+        *functions (types.FunctionType)
+            Function objects to be profiled.
+        wrap_trace (Optional[bool])
+            What to do if there is an existing (non-profiling) `sys`
+            trace callback when the profiler is `.enable()`-ed:
+            True:
+                WRAP AROUND said callback: at the end of running our
+                trace callback, also run the existing callback.
+            False:
+                REPLACE said callback as long as the profiler is
+                enabled.
+            None (default):
+                If the environment variable `${LINE_PROFILE_WRAP_TRACE}`
+                is undefined, or if it matches any of
+                `{'', '0', 'off', 'false', 'no'}` (case-insensitive):
+                  -> `False`;
+                Otherwise
+                  -> `True`.
+            In any case, when the profiler is `.disable()`-ed, it tries
+            to restore the `sys` trace callback (or the lack thereof) to
+            the state it was in from when the profiler was
+            `.enable()`-ed.
+
     Example:
         >>> import copy
         >>> import line_profiler
@@ -281,18 +325,26 @@ cdef class LineProfiler:
         >>> self.last_time
         >>> # Print stats
         >>> self.print_stats()
+
+    Notes:
+        - `wrap_trace = True` helps with using `LineProfiler`
+          cooperatively with other tools, like coverage and debugging
+          tools.
+        - However, it should be considered experimental and to be used
+          at one's own risk -- because tools generally assume that they
+          have sole control over system-wide tracing.
     """
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
     # Mapping between thread-id and map of LastTime
     cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
     cdef CTraceState *_prev_trace_state
-    cdef public int _call_existing_trace
+    cdef public int _wrap_trace
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
     cdef public object threaddata
 
-    def __init__(self, *functions, call_existing_trace=None):
+    def __init__(self, *functions, wrap_trace=None):
         self.functions = []
         self.code_hash_map = {}
         self.dupes_map = {}
@@ -300,11 +352,11 @@ cdef class LineProfiler:
         # Create a data store for thread-local objects
         # https://docs.python.org/3/library/threading.html#thread-local-data
         self.threaddata = threading.local()
-        if call_existing_trace is None:
+        if wrap_trace is None:
             import os
-            call_existing_trace = os.environ.get(
-                'LINE_PROFILER_CALL_EXISTING_TRACE')
-        self.call_existing_trace = call_existing_trace
+            wrap_trace = (os.environ.get('LINE_PROFILE_WRAP_TRACE', '').lower()
+                          not in {'', '0', 'off', 'false', 'no'})
+        self.wrap_trace = wrap_trace
 
         for func in functions:
             self.add_function(func)
@@ -394,12 +446,12 @@ cdef class LineProfiler:
         PyEval_SetTrace(python_trace_callback, self)
 
     @property
-    def call_existing_trace(self):
-        return bool(self._call_existing_trace)
+    def wrap_trace(self):
+        return bool(self._wrap_trace)
 
-    @call_existing_trace.setter
-    def call_existing_trace(self, call_existing_trace):
-        self._call_existing_trace = 1 if call_existing_trace else 0
+    @wrap_trace.setter
+    def wrap_trace(self, wrap_trace):
+        self._wrap_trace = 1 if wrap_trace else 0
 
     @property
     def c_code_map(self):
@@ -495,6 +547,55 @@ cdef class LineProfiler:
             stats[key] = entries
         return LineStats(stats, self.timer_unit)
 
+
+cdef int call_c_trace_state_hook_safe(CTraceState *state,
+                                      PyFrameObject *py_frame,
+                                      int what, PyObject *arg):
+    """
+    Call the wrapped trace callback where appropriate, and in a "safe"
+    way so that the following therein are guarded against:
+    1. Altering of the `sys` trace callback
+    2. Altering of the frame's `.f_trace`
+    3. Altering of the frame's `.f_trace_lines`
+    Item (3) is particularly important, since line events are turned off
+    if `.f_trace_lines = False`, effectively neutering line profiling.
+
+    Notes
+    -----
+    - Against (1), it may seem to suffice to set
+      `PyEval_SetTrace(python_trace_callback, self)`;
+      however, that presumes that this trace function is always the
+      "active" one, instead of being possibly wrapped by another
+      function, like how it wraps around the old trace callback.
+      Hence we do another fetch-restore cycle of the `CTraceState` here.
+    - For (2) and (3), Cython manages the refcounts for the
+      `get_optional_attr()` results, like it does for `get_frame_code()`
+      in `python_trace_callback()`, so it shouldn't be necessary to call
+      `Py_[X]DECREF()` thereon.
+    """
+    cdef CTraceState *current_state
+    cdef PyObject *f_obj, *f_trace, *f_trace_lines
+
+    f_obj = <PyObject *>py_frame
+
+    if not c_trace_state_has_hook(state):
+        return 0
+
+    current_state = fetch_c_trace_state()
+    f_trace = get_optional_attr(f_obj, 'f_trace')
+    f_trace_lines = get_optional_attr(f_obj, 'f_trace_lines')
+
+    result = call_c_trace_state_hook(state, py_frame, what, arg)
+
+    restore_c_trace_state(current_state)
+    if get_optional_attr(f_obj, 'f_trace') != f_trace:
+        set_optional_attr(f_obj, 'f_trace', f_trace)
+    if get_optional_attr(f_obj, 'f_trace_lines') != f_trace_lines:
+        set_optional_attr(f_obj, 'f_trace_lines', f_trace_lines)
+
+    return result
+
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
@@ -506,8 +607,6 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
        https://github.com/python/cpython/blob/de2a4036/Include/cpython/pystate.h#L16 
     """
     cdef LineProfiler self
-    cdef object code
-    cdef LineTime entry
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
@@ -546,8 +645,9 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
                 # are profiling a generator that is being pumped past its end.
                 self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
-    # Call the tracer that we're wrapping
-    if self._call_existing_trace:
-        return call_c_trace_state_hook(self._prev_trace_state,
-                                       py_frame, what, arg)
+    # Call the trace callback that we're wrapping around where
+    # appropriate
+    if self._wrap_trace:
+        return call_c_trace_state_hook_safe(self._prev_trace_state,
+                                            py_frame, what, arg)
     return 0
