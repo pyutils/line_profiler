@@ -12,6 +12,9 @@ def load_ipython_extension(ip) -> None:
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
+    def add_callable(self, func) -> None:
+        ...
+
     def dump_stats(self, filename) -> None:
         ...
 

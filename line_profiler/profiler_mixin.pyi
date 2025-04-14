@@ -1,11 +1,37 @@
 import inspect
+import typing
 
 
 is_coroutine = inspect.iscoroutinefunction
 is_generator = inspect.isgeneratorfunction
+is_async_generator = inspect.isasyncgenfunction
 
 
 def is_classmethod(f) -> bool:
+    ...
+
+
+def is_staticmethod(f) -> bool:
+    ...
+
+
+def is_boundmethod(f) -> bool:
+    ...
+
+
+def is_partialmethod(f) -> bool:
+    ...
+
+
+def is_partial(f) -> bool:
+    ...
+
+
+def is_property(f) -> bool:
+    ...
+
+
+def is_cached_property(f) -> bool:
     ...
 
 
@@ -15,6 +41,27 @@ class ByCountProfilerMixin:
         ...
 
     def wrap_classmethod(self, func):
+        ...
+
+    def wrap_staticmethod(self, func):
+        ...
+
+    def wrap_boundmethod(self, func):
+        ...
+
+    def wrap_partialmethod(self, func):
+        ...
+
+    def wrap_partial(self, func):
+        ...
+
+    def wrap_property(self, func):
+        ...
+
+    def wrap_cached_property(self, func):
+        ...
+
+    def wrap_async_generator(self, func):
         ...
 
     def wrap_coroutine(self, func):
