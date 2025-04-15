@@ -101,10 +101,27 @@ cdef extern from "Python.h":
 cdef extern from *:
     """
     typedef struct CTraceState {
+        /* Notes:
+         *     - These are synonymous with the corresponding fields in a
+         *       `PyThreadState` object;
+         *       however, note that `PyThreadState.c_tracefunc` is
+         *       considered a CPython implementation detail.
+         *     - It is necessary to reach into the thread-state
+         *       internals like this, because `sys.gettrace()` only
+         *       retrieves `.c_traceobj`, and is thus only valid for
+         *       Python-level trace callables set via `sys.settrace()`
+         *       (which implicitly sets `.c_tracefunc` to
+         *       `Python/sysmodule.c::trace_trampoline()`).
+         */
         Py_tracefunc c_tracefunc; PyObject *c_traceobj;
     } CTraceState;
 
     CTraceState *fetch_c_trace_state() {
+        /* Returns:
+         *     `malloc()`-ed pointer to a `CTraceState`, which contains
+         *     the members `.c_tracefunc` and `.c_traceobj` of the
+         *     current thread.
+         */
         // No need to `Py_DECREF()` the thread state, since it isn't a
         // `PyObject`
         PyThreadState *thread_state = PyThreadState_Get();
@@ -117,6 +134,11 @@ cdef extern from *:
     }
 
     int c_trace_state_has_hook(CTraceState *state) {
+        /* Returns:
+         *     Whether the pointer `state` is non-`NULL` and points
+         *     towards a `CTraceState` with non-`NULL` `.c_tracefunc`
+         *     and `.c_traceobj`
+         */
         // No stored state
         if (state == NULL) return 0;
         // There is a stored state, but no associated tracer
@@ -125,6 +147,11 @@ cdef extern from *:
     }
 
     void restore_c_trace_state(CTraceState *state) {
+        /* If `state` is a non-`NULL` pointer to a `CTraceState`:
+         * - Use `PyEval_SetTrace()` to set the trace callback on the
+         *   current thread to be consistent with the `state`, and
+         * - `free()`-s the `state`
+         */
         // No-op if there isn't a stored state
         if (state == NULL) return;
         PyEval_SetTrace(state->c_tracefunc, state->c_traceobj);
@@ -138,11 +165,30 @@ cdef extern from *:
                                 PyFrameObject *py_frame,
                                 int what,
                                 PyObject *arg) {
+        /* Returns:
+         *     0 if `state` doesn't correspond to a valid and non-`null`
+         *     trace callback, the result of calling said callback
+         *     otherwise
+         *
+         * Notes:
+         *     Use the Cython wrapper `call_c_trace_state_hook_safe()`
+         *     instead of this directly to avoid having the `state`
+         *     callback interfering with the current `sys` trace
+         *     callback.
+         */
         if (!c_trace_state_has_hook(state)) return 0;
         return (state->c_tracefunc)(state->c_traceobj, py_frame, what, arg);
     }
 
     inline PyObject *get_optional_attr(PyObject *obj, const char *attr) {
+        /* Returns:
+         *     `<PyObject *>getattr(obj, attr)` if `obj` has `attr`,
+         *     `NULL` otherwise
+         *
+         * Notes:
+         *     Ref-counts are not managed here;
+         *     the function is inlined and we let Cython deal with that.
+         */
         if (!PyObject_HasAttrString(obj, attr)) return NULL;
         return PyObject_GetAttrString(obj, attr);
     }
@@ -150,6 +196,17 @@ cdef extern from *:
     inline int set_optional_attr(PyObject *obj,
                                  const char *attr,
                                  PyObject *value) {
+        /* Returns:
+         *     - 0 if `value` is `NULL` and `obj` doesn't have `attr`
+         *     - The result of `PyObject_DelAttrString(obj, attr)` if
+         *       `value` is `NULL`
+         *     - The result of
+         *       `PyObject_SetAttrString(obj, attr, value)` otherwise
+         *
+         * Notes:
+         *     Ref-counts are not managed here;
+         *     the function is inlined and we let Cython deal with that.
+         */
         int hasattr = PyObject_HasAttrString(obj, attr);
         if (!hasattr && value == NULL) return 0;  // No-op
         if (value == NULL) return PyObject_DelAttrString(obj, attr);
@@ -552,44 +609,48 @@ cdef int call_c_trace_state_hook_safe(CTraceState *state,
                                       PyFrameObject *py_frame,
                                       int what, PyObject *arg):
     """
-    Call the wrapped trace callback where appropriate, and in a "safe"
-    way so that the following therein are guarded against:
+    Call the cached trace callback `state` where appropriate, and in a
+    "safe" way so that the following therein are guarded against:
     1. Altering of the `sys` trace callback
-    2. Altering of the frame's `.f_trace`
-    3. Altering of the frame's `.f_trace_lines`
-    Item (3) is particularly important, since line events are turned off
-    if `.f_trace_lines = False`, effectively neutering line profiling.
+    2. Altering of the frame's `.f_trace_lines`
+    The latter is particularly important, since line events are turned
+    off if `.f_trace_lines = False`, effectively neutering line
+    profiling.
 
-    Notes
-    -----
-    - Against (1), it may seem to suffice to set
-      `PyEval_SetTrace(python_trace_callback, self)`;
-      however, that presumes that this trace function is always the
-      "active" one, instead of being possibly wrapped by another
-      function, like how it wraps around the old trace callback.
-      Hence we do another fetch-restore cycle of the `CTraceState` here.
-    - For (2) and (3), Cython manages the refcounts for the
-      `get_optional_attr()` results, like it does for `get_frame_code()`
-      in `python_trace_callback()`, so it shouldn't be necessary to call
-      `Py_[X]DECREF()` thereon.
+    Returns:
+        0 if `state` doesn't correspond to a valid and non-`null` trace
+        callback, the result of calling said callback otherwise
+
+    Notes:
+        - Against (1), it may seem to suffice to set
+          `PyEval_SetTrace(python_trace_callback, self)`;
+          however, that presumes that this trace function is always the
+          "active" one, instead of being possibly wrapped by another
+          function, like how it wraps around the old trace callback.
+          Hence we do a fetch-restore cycle of the `CTraceState` here.
+        - For (2), Cython manages the refcounts for the
+          `get_optional_attr()` results, like it does for
+          `get_frame_code()` in `python_trace_callback()`, so it
+          shouldn't be necessary to call `Py_[X]DECREF()` thereon.
+        - Unlike `.f_trace_lines`, `.f_trace` is not restored since
+          frame-local event tracing for Python-level tracing callbacks
+          (which uses `Python/sysmodule.c::trace_trampoline()`) depends
+          on it being set.
     """
     cdef CTraceState *current_state
-    cdef PyObject *f_obj, *f_trace, *f_trace_lines
+    cdef PyObject *f_obj, *f_trace_lines
 
     f_obj = <PyObject *>py_frame
 
-    if not c_trace_state_has_hook(state):
+    if not c_trace_state_has_hook(state):  # No existing callback
         return 0
 
     current_state = fetch_c_trace_state()
-    f_trace = get_optional_attr(f_obj, 'f_trace')
     f_trace_lines = get_optional_attr(f_obj, 'f_trace_lines')
 
     result = call_c_trace_state_hook(state, py_frame, what, arg)
 
     restore_c_trace_state(current_state)
-    if get_optional_attr(f_obj, 'f_trace') != f_trace:
-        set_optional_attr(f_obj, 'f_trace', f_trace)
     if get_optional_attr(f_obj, 'f_trace_lines') != f_trace_lines:
         set_optional_attr(f_obj, 'f_trace_lines', f_trace_lines)
 
