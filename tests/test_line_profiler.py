@@ -3,7 +3,9 @@ import contextlib
 import functools
 import inspect
 import io
+import subprocess
 import sys
+import tempfile
 import textwrap
 import types
 import pytest
@@ -65,6 +67,27 @@ class check_timings:
         return self.prof.get_stats().timings
 
 
+def run_in_subproc(code):
+    """
+    Run Python code in a subprocess so that it doesn't pollute the
+    state of the current interpretor.
+
+    Notes
+    -----
+    The code is written to a tempfile and run in a subprocess;
+    compared with using `runpy.run_path()`, this results in more
+    informative error messages.
+    """
+    code = strip(code)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py') as fobj:
+        print(code, file=fobj, flush=True)
+        proc = subprocess.run([sys.executable, fobj.name],
+                              capture_output=True, text=True)
+    print(proc.stdout)
+    print(proc.stderr, file=sys.stderr)
+    proc.check_returncode()
+
+
 def test_init():
     lp = LineProfiler()
     assert lp.functions == []
@@ -114,15 +137,10 @@ def test_enable_disable():
 
 def test_trace_callback_preservation():
     """
-    Test that the profiler restores the active tracing function after
-    it's disabled.
-
-    Notes
-    -----
-    This test is run inside a subprocess if there's an active tracing
-    function, so as not to disrupt tracing.
+    Test in a subprocess that the profiler restores the active trace
+    callback after it's disabled.
     """
-    code = strip("""
+    run_in_subproc(r"""
     import sys
     from typing import Any, Callable, Literal, Union
     from types import FrameType
@@ -134,36 +152,134 @@ def test_trace_callback_preservation():
     TracingFunc = Callable[[FrameType, Event, Any], Union['TracingFunc', None]]
 
 
-    def test_no_tracing(tracer: Union[TracingFunc, None]) -> None:
-        sys.settrace(tracer)
-        assert sys.gettrace() is tracer
-        profile = LineProfiler()
+    def test_restoring_trace_callback(call: Union[TracingFunc, None]) -> None:
+        sys.settrace(call)
+        assert sys.gettrace() is call, f'can\'t set trace to {call!r}'
+        profile = LineProfiler(wrap_trace=False)
         profile.enable_by_count()
-        assert sys.gettrace() is profile
+        assert sys.gettrace() is profile, f'can\'t set trace to the profiler'
         profile.disable_by_count()
-        assert sys.gettrace() is tracer
+        assert sys.gettrace() is call, f'trace not restored to {call!r}'
         sys.settrace(None)
 
 
     def main() -> None:
-        test_no_tracing(None)
-        test_no_tracing(lambda frame, event, arg: None)
+        test_restoring_trace_callback(None)
+        test_restoring_trace_callback(lambda frame, event, arg: None)
 
 
     if __name__ == '__main__':
         main()
     """)
-    if sys.gettrace() is None:
-        # No fear of clobbering an existing trace callback, run
-        # in-process
-        namespace = {}
-        exec(code, namespace, namespace)
-        namespace['main']()
-        return
 
-    import subprocess
 
-    subprocess.run([sys.executable, '-c', code]).check_returncode()
+@pytest.mark.parametrize('wrap_trace', [True, False])
+def test_trace_callback_wrapping(wrap_trace: bool) -> None:
+    """
+    Test in a subprocess that the profiler can wrap around an existing
+    trace callback such that we both profile the code and do whatever
+    the existing callback does.
+    """
+    code = strip(r"""
+    import contextlib
+    import sys
+    from io import StringIO
+    from types import FrameType
+    from typing import Any, Callable, Generator, List, Literal, Union
+
+    from line_profiler import LineProfiler
+
+
+    DEBUG = False
+
+    Event = Literal['call', 'line', 'return', 'exception', 'opcode']
+    TracingFunc = Callable[[FrameType, Event, Any], Union['TracingFunc', None]]
+
+
+    def foo(n: int) -> int:
+        result = 0
+        for i in range(1, n + 1):
+            result += i
+        return result
+
+
+    def get_logger(logs: List[str]) -> TracingFunc:
+        '''
+        Append a `foo: i = <...>` message whenever we hit the line in
+        `foo()` containing the incrementation of `result`.
+        '''
+        def callback(frame: FrameType, event: Event,
+                     _) -> Union[TracingFunc, None]:
+            if DEBUG and callback.emit_debug:
+                print('{0.co_filename}:{1.f_lineno} - {0.co_name} ({2})'
+                      .format(frame.f_code, frame, event))
+            if event == 'call':
+                # Set up tracing for nested scopes
+                return callback
+            if event != 'line':
+                return  # Only trace line events
+            if frame.f_code.co_name == 'foo' and frame.f_lineno == _LINENO_:
+                # Add log entry whenever the target line is hit
+                logs.append(f'foo: i = {frame.f_locals.get("i")}')
+            return callback
+
+        callback.emit_debug = False
+        return callback
+
+
+    def main(wrap_trace: bool = _WRAP_TRACE_) -> None:
+        logs = []
+        my_callback = get_logger(logs)
+        sys.settrace(my_callback)
+
+        profile = LineProfiler(wrap_trace=wrap_trace)
+        foo_wrapped = profile(foo)
+
+        for stage, wrap, expect_output in [
+                ('sanity check, no profiling', False, True),
+                ('profiled', True, wrap_trace)]:
+            assert sys.gettrace() is my_callback, (
+                stage + ': can\'t set custom trace')
+            foo_like = profile(foo) if wrap else foo
+            my_callback.emit_debug = True
+            x = foo_like(5)
+            my_callback.emit_debug = False
+            assert x == 15, f'{stage}: expected `foo(5) = 15`, got {x!r}'
+            print(f'Logs ({stage}): {logs!r}')
+            assert sys.gettrace() is my_callback, (
+                stage + ': trace not restored afterwards')
+
+            # Check that the existing trace function has been called
+            # where appropriate
+            expected = [f'foo: i = {i}' for i in range(1, 6)]
+            if expect_output:
+                assert logs == expected, (
+                    f'{stage}: expected logs = {expected!r}, '
+                    f'got {logs!r}')
+            else:
+                assert not logs, f'{stage}: expected no logs, got {logs!r}'
+            logs.clear()
+        sys.settrace(None)
+
+        # Check that the profiling is as expected: 5 hits on the
+        # incrementation line
+        with StringIO() as sio:
+            profile.print_stats(stream=sio, summarize=True)
+            out = sio.getvalue()
+        print(out)
+        line, = (line for line in out.splitlines() if '+=' in line)
+        nhits = int(line.split()[1])
+        assert nhits == 5, f'expected 5 profiler hits, got {nhits!r}'
+
+
+    if __name__ == '__main__':
+        main()
+    """)
+    incr_lineno = 1 + next(i for i, line in enumerate(code.splitlines())
+                           if line.endswith('result += i'))
+    run_in_subproc(code
+                   .replace('_LINENO_', str(incr_lineno))
+                   .replace('_WRAP_TRACE_', str(wrap_trace)))
 
 
 def test_double_decoration():
