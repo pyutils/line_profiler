@@ -3,6 +3,7 @@ import contextlib
 import functools
 import inspect
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -79,10 +80,17 @@ def run_in_subproc(code):
     informative error messages.
     """
     code = strip(code)
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py') as fobj:
-        print(code, file=fobj, flush=True)
-        proc = subprocess.run([sys.executable, fobj.name],
-                              capture_output=True, text=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        curdir = os.path.abspath(os.curdir)
+        os.chdir(tmpdir)
+        try:
+            fname = 'my_test.py'
+            with open(fname, mode='w') as fobj:
+                print(code, file=fobj)
+            proc = subprocess.run([sys.executable, fname],
+                                  capture_output=True, text=True)
+        finally:
+            os.chdir(curdir)
     print(proc.stdout)
     print(proc.stderr, file=sys.stderr)
     proc.check_returncode()
