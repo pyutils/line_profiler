@@ -12,6 +12,7 @@ Changes
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
 * FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
 * ENH: Added CLI arguments ``-c`` to ``kernprof`` for (auto-)profiling module/package/inline-script execution instead of that of script files; passing ``'-'`` as the script-file name now also reads from and profiles ``stdin``
+* FIX: ``LineProfiler`` now caches the existing ``sys`` trace callback in ``.enable()`` and restores it in ``.disable()``, instead of always discarding it on the way out; also added experimental support for calling (instead of suspending) said callback during profiling #333
 
 4.2.0
 ~~~~~
