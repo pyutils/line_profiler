@@ -10,20 +10,22 @@ Notes
 - However, there effects are isolated since each test is run in a
   separate Python subprocess.
 """
-import contextlib
+import concurrent.futures
 import functools
 import inspect
 import linecache
 import os
 import subprocess
 import sys
+import time
 import tempfile
 import textwrap
+import threading
 import pytest
 from ast import literal_eval
 from io import StringIO
 from types import FrameType
-from typing import Any, Callable, Generator, List, Optional, Literal, Union
+from typing import Any, Callable, List, Literal, Union
 from line_profiler import LineProfiler
 
 
@@ -226,7 +228,7 @@ class MyException(Exception):
     pass
 
 
-# Test: callbacks preserved before/after using the profiler
+# Tests
 
 
 def _test_helper_callback_preservation(
@@ -235,7 +237,7 @@ def _test_helper_callback_preservation(
     assert sys.gettrace() is callback, f'can\'t set trace to {callback!r}'
     profile = LineProfiler(wrap_trace=False)
     profile.enable_by_count()
-    assert sys.gettrace() is profile, f'can\'t set trace to the profiler'
+    assert sys.gettrace() is profile, 'can\'t set trace to the profiler'
     profile.disable_by_count()
     assert sys.gettrace() is callback, f'trace not restored to {callback!r}'
     sys.settrace(None)
@@ -249,9 +251,6 @@ def test_callback_preservation():
     """
     _test_helper_callback_preservation(None)
     _test_helper_callback_preservation(lambda frame, event, arg: None)
-
-
-# Test: profiler can wrap around an existing callback and use it
 
 
 @pytest.mark.parametrize(
@@ -279,9 +278,9 @@ def test_callback_wrapping(
         foo_like = foo
         trace_preserved = True
     if trace_preserved:
-        exp_output = [f'foo: spam = {spam}' for spam in range(1, 6)]
+        exp_logs = [f'foo: spam = {spam}' for spam in range(1, 6)]
     else:
-        exp_output = []
+        exp_logs = []
 
     assert sys.gettrace() is my_callback, 'can\'t set custom trace'
     my_callback.emit_debug = True
@@ -293,7 +292,7 @@ def test_callback_wrapping(
     # Check that the existing trace function has been called where
     # appropriate
     print(f'Logs: {logs!r}')
-    assert logs == exp_output, f'expected logs = {exp_output!r}, got {logs!r}'
+    assert logs == exp_logs, f'expected logs = {exp_logs!r}, got {logs!r}'
 
     # Check that the profiling is as expected: 5 hits on the
     # incrementation line
@@ -306,10 +305,6 @@ def test_callback_wrapping(
     line, = (line for line in out.splitlines() if '+=' in line)
     nhits = int(line.split()[1])
     assert nhits == 5, f'expected 5 profiler hits, got {nhits!r}'
-
-
-# Test: if the wrapped existing callback unsets itself, the profiler's
-# callback stops calling it, but profiling continues
 
 
 @pytest.mark.parametrize(
@@ -396,10 +391,6 @@ def test_wrapping_throwing_callback(
                                     f'profiler hits, got {nhits!r}')
 
 
-# Test: if the wrapped existing callback set `frame.f_trace_lines`, the
-# profiler's callback catches and reverts that
-
-
 @pytest.mark.parametrize(('label', 'use_profiler'),
                          [('base case', False), ('profiled', True)])
 @isolate_test_in_subproc
@@ -432,8 +423,8 @@ def test_wrapping_line_event_disabling_callback(label: str,
     # Check that the trace function has been called exactly once on the
     # line event, and once on the return event
     print(f'Logs: {logs!r}')
-    exp_output = [f'foo: spam = 1', 'Returning from `foo()`']
-    assert logs == exp_output, f'expected logs = {exp_output!r}, got {logs!r}'
+    exp_logs = ['foo: spam = 1', 'Returning from `foo()`']
+    assert logs == exp_logs, f'expected logs = {exp_logs!r}, got {logs!r}'
 
     # Check that the profiling is as expected: 5 hits on the
     # incrementation line
@@ -446,3 +437,82 @@ def test_wrapping_line_event_disabling_callback(label: str,
     line, = (line for line in out.splitlines() if '+=' in line)
     nhits = int(line.split()[1])
     assert nhits == 5, f'expected 5 profiler hits, got {nhits!r}'
+
+
+def _test_helper_wrapping_thread_local_callbacks(
+        profile: Union[LineProfiler, None], sleep: float = .0625) -> str:
+    logs = []
+    if threading.current_thread() == threading.main_thread():
+        thread_label = 'main'
+        func = foo
+        my_callback = get_incr_logger(logs, func)
+        exp_logs = [f'foo: spam = {spam}' for spam in range(1, 6)]
+    else:
+        thread_label = 'side'
+        func = bar
+        my_callback = get_return_logger(logs)
+        exp_logs = ['Returning from `bar()`']
+    if profile is None:
+        func_like = func
+    else:
+        func_like = profile(func)
+    print(f'Thread: {threading.get_ident()} ({thread_label})')
+
+    # Check result
+    sys.settrace(my_callback)
+    assert sys.gettrace() is my_callback, 'can\'t set custom trace'
+    my_callback.emit_debug = True
+    x = func_like(5)
+    my_callback.emit_debug = False
+    assert x == 15, f'expected `{func.__name__}(5) = 15`, got {x!r}'
+    assert sys.gettrace() is my_callback, 'trace not restored afterwards'
+
+    # Check logs
+    print(f'Logs ({thread_label} thread): {logs!r}')
+    assert logs == exp_logs, f'expected logs = {exp_logs!r}, got {logs!r}'
+    time.sleep(sleep)
+    return '\n'.join(logs)
+
+
+@pytest.mark.parametrize(('label', 'use_profiler'),
+                         [('base case', False), ('profiled', True)])
+@isolate_test_in_subproc
+def test_wrapping_thread_local_callbacks(label: str,
+                                         use_profiler: bool) -> None:
+    """
+    Test in a subprocess that the profiler properly handles thread-local
+    `sys` trace callbacks.
+    """
+    profile = LineProfiler(wrap_trace=True) if use_profiler else None
+    expected_results = {
+        # From the main thread
+        '\n'.join(f'foo: spam = {spam}' for spam in range(1, 6)),
+        # From the other thread
+        'Returning from `bar()`',
+    }
+
+    # Run tasks (and so some basic checks)
+    results = set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        tasks = []
+        tasks.append(executor.submit(  # This is run on a side thread
+            _test_helper_wrapping_thread_local_callbacks, profile))
+        # This is run on the main thread
+        results.add(_test_helper_wrapping_thread_local_callbacks(profile))
+        results.update(future.result()
+            for future in concurrent.futures.as_completed(tasks))
+    assert results == expected_results, (f'expected {expected_results!r}, '
+                                         f'got {results!r}')
+
+    # Check profiling
+    if profile is None:
+        return
+    with StringIO() as sio:
+        profile.print_stats(stream=sio, summarize=True)
+        out = sio.getvalue()
+    print(out)
+    for var in 'spam', 'ham':
+        line, = (line for line in out.splitlines()
+                 if line.endswith('+= ' + var))
+        nhits = int(line.split()[1])
+        assert nhits == 5, f'expected 5 profiler hits, got {nhits!r}'
