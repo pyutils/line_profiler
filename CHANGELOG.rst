@@ -9,6 +9,7 @@ Changes
 * FIX: Fixed auto-profiling of async function definitions #330
 * ENH: Added CLI argument ``-m`` to ``kernprof`` for running a library module as a script; also made it possible for profiling targets to be supplied across multiple ``-p`` flags
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
+* FIX: ``LineProfiler`` now caches the existing ``sys`` trace callback in ``.enable()`` and restores it in ``.disable()``, instead of always discarding it on the way out; also added experimental support for calling (instead of suspending) said callback during profiling #333
 
 4.2.0
 ~~~~~
