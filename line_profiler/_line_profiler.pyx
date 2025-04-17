@@ -101,7 +101,7 @@ cdef extern from "Python.h":
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
 
 cdef extern from *:
-    """
+    r"""
     typedef struct TraceCallback {
         /* Notes:
          *     - These fields are synonymous with the corresponding
@@ -171,6 +171,27 @@ cdef extern from *:
                 || callback->c_traceobj == NULL);
     }
 
+    #if PY_VERSION_HEX >= 0x030D00a1  // 3.13.0a0
+        #define add_module_ref PyImport_AddModuleRef
+    #else
+        inline PyObject *add_module_ref(const char *name) {
+            PyObject *mod = NULL, *name_str = NULL;
+            name_str = PyUnicode_FromString(name);
+            if (name_str == NULL) goto cleanup;
+            mod = PyImport_AddModuleObject(name_str);
+            Py_XINCREF(mod);
+        cleanup:
+            Py_XDECREF(name_str);
+            return mod;
+        }
+    #endif
+    #define RAISE_IN_CALL(xc, const_msg) \
+        PyErr_SetString(xc,\
+                        "in `line_profiler._line_profiler.call_callback()`: " \
+                        const_msg)
+    #define THIS_MODULE "line_profiler._line_profiler"
+    #define DISABLE_CALLBACK "disable_line_events"
+
     int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
                       int what, PyObject *arg) {
         /* Call the cached trace callback `callback` where appropriate,
@@ -222,33 +243,36 @@ cdef extern from *:
         nullify_callback(&after);
         restore_callback(&before);
 
-        // Check if a frame-local callback has disabled future line
-        // events, and revert the change in such a case (while
-        // withholding future line events from the callback)
+        // Check if a callback has disabled future line events for the
+        // frame, and if so, revert the change while withholding future
+        // line events from the callback
         if (!(py_frame->f_trace_lines)
                 && f_trace_lines != py_frame->f_trace_lines) {
             py_frame->f_trace_lines = f_trace_lines;
             if (py_frame->f_trace != NULL && py_frame->f_trace != Py_None) {
-                mod = PyImport_ImportModule("line_profiler._line_profiler");
+                // FIXME: can we get more performance by stashing a
+                // somewhat permanent reference to
+                // `line_profiler._line_profiler.disable_line_events()`
+                // somewhere?
+                mod = add_module_ref(THIS_MODULE);
                 if (mod == NULL) {
-                    PyErr_SetString(PyExc_ImportError,
-                                    "cannot import "
-                                    "`line_profiler._line_profiler`");
+                    RAISE_IN_CALL(PyExc_ImportError,
+                                  "cannot import `" THIS_MODULE "`");
                     result = -1;
                     goto cleanup;
                 }
-                dle = PyObject_GetAttrString(mod, "disable_line_events");
+                dle = PyObject_GetAttrString(mod, DISABLE_CALLBACK);
                 if (dle == NULL) {
-                    PyErr_SetString(PyExc_AttributeError,
-                                    "`line_profiler._line_profiler` has no "
-                                    "attribute `disable_line_events`");
+                    RAISE_IN_CALL(PyExc_AttributeError,
+                                  "`line_profiler._line_profiler` has no "
+                                  "attribute `" DISABLE_CALLBACK "`");
                     result = -1;
                     goto cleanup;
                 }
-                // Note: don't DECREF the pointer! Nothing else is
-                // holding a reference to it.
-                f_trace = PyObject_CallFunctionObjArgs(dle, py_frame->f_trace,
-                                                       NULL);
+                // Note: DON'T `Py_[X]DECREF()` the pointer! Nothing
+                // else is holding a reference to it.
+                f_trace = PyObject_CallFunctionObjArgs(
+                    dle, py_frame->f_trace, NULL);
                 if (f_trace == NULL) {
                     // No need to raise another exception, it's already
                     // raised in the call
