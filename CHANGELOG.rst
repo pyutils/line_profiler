@@ -11,6 +11,7 @@ Changes
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
 * FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
+* FIX: ``LineProfiler`` now caches the existing ``sys`` trace callback in ``.enable()`` and restores it in ``.disable()``, instead of always discarding it on the way out; also added experimental support for calling (instead of suspending) said callback during profiling #333
 
 4.2.0
 ~~~~~

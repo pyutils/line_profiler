@@ -102,6 +102,27 @@ cdef extern from "Python.h":
 
 cdef extern from *:
     r"""
+    #if PY_VERSION_HEX >= 0x030D00a1  // 3.13.0a0
+        #define add_module_ref PyImport_AddModuleRef
+    #else
+        inline PyObject *add_module_ref(const char *name) {
+            PyObject *mod = NULL, *name_str = NULL;
+            name_str = PyUnicode_FromString(name);
+            if (name_str == NULL) goto cleanup;
+            mod = PyImport_AddModuleObject(name_str);
+            Py_XINCREF(mod);
+        cleanup:
+            Py_XDECREF(name_str);
+            return mod;
+        }
+    #endif
+    #define THIS_MODULE "line_profiler._line_profiler"
+    #define DISABLE_CALLBACK "disable_line_events"
+    #define RAISE_IN_CALL(func_name, xc, const_msg) \
+        PyErr_SetString(xc, \
+                        "in `" THIS_MODULE "." func_name "()`: " \
+                        const_msg)
+
     typedef struct TraceCallback {
         /* Notes:
          *     - These fields are synonymous with the corresponding
@@ -120,7 +141,15 @@ cdef extern from *:
 
     TraceCallback *alloc_callback() {
         /* Heap-allocate a new `TraceCallback`. */
-        return (TraceCallback*)malloc(sizeof(TraceCallback));
+        TraceCallback *callback = (TraceCallback*)malloc(sizeof(TraceCallback));
+        if (callback == NULL) RAISE_IN_CALL(
+            // If we're here we have bigger fish to fry... but be nice
+            // and raise an error explicitly anyway
+            "alloc_callback",
+            PyExc_MemoryError,
+            "failed to allocate memory for storing the existing "
+            "`sys` trace callback");
+        return callback;
     }
 
     void free_callback(TraceCallback *callback) {
@@ -170,27 +199,6 @@ cdef extern from *:
                 || callback->c_tracefunc == NULL
                 || callback->c_traceobj == NULL);
     }
-
-    #if PY_VERSION_HEX >= 0x030D00a1  // 3.13.0a0
-        #define add_module_ref PyImport_AddModuleRef
-    #else
-        inline PyObject *add_module_ref(const char *name) {
-            PyObject *mod = NULL, *name_str = NULL;
-            name_str = PyUnicode_FromString(name);
-            if (name_str == NULL) goto cleanup;
-            mod = PyImport_AddModuleObject(name_str);
-            Py_XINCREF(mod);
-        cleanup:
-            Py_XDECREF(name_str);
-            return mod;
-        }
-    #endif
-    #define RAISE_IN_CALL(xc, const_msg) \
-        PyErr_SetString(xc,\
-                        "in `line_profiler._line_profiler.call_callback()`: " \
-                        const_msg)
-    #define THIS_MODULE "line_profiler._line_profiler"
-    #define DISABLE_CALLBACK "disable_line_events"
 
     int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
                       int what, PyObject *arg) {
@@ -256,14 +264,16 @@ cdef extern from *:
                 // somewhere?
                 mod = add_module_ref(THIS_MODULE);
                 if (mod == NULL) {
-                    RAISE_IN_CALL(PyExc_ImportError,
+                    RAISE_IN_CALL("call_callback",
+                                  PyExc_ImportError,
                                   "cannot import `" THIS_MODULE "`");
                     result = -1;
                     goto cleanup;
                 }
                 dle = PyObject_GetAttrString(mod, DISABLE_CALLBACK);
                 if (dle == NULL) {
-                    RAISE_IN_CALL(PyExc_AttributeError,
+                    RAISE_IN_CALL("call_callback",
+                                  PyExc_AttributeError,
                                   "`line_profiler._line_profiler` has no "
                                   "attribute `" DISABLE_CALLBACK "`");
                     result = -1;
@@ -292,7 +302,7 @@ cdef extern from *:
         Py_tracefunc c_tracefunc
         PyObject *c_traceobj
 
-    cdef TraceCallback *alloc_callback()
+    cdef TraceCallback *alloc_callback() except *
     cdef void free_callback(TraceCallback *callback)
     cdef void fetch_callback(TraceCallback *callback)
     cdef void restore_callback(TraceCallback *callback)
