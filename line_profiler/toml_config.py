@@ -3,8 +3,10 @@ Read and resolve user-supplied TOML files and combine them with the
 default to generate configurations.
 """
 import copy
+import functools
 import importlib.resources
 import itertools
+import os
 import pathlib
 try:
     import tomllib
@@ -16,20 +18,28 @@ __all__ = ['get_config', 'get_default_config']
 
 namespace = 'tool', 'line_profiler'
 targets = 'line_profiler_rc.toml', 'pyproject.toml'
+env_var = 'LINE_PROFILER_RC'
 _defaults = None
 
 
-def find_and_read_config_file(*, config=None, targets=targets):
+def find_and_read_config_file(
+        *, config=None, env_var=env_var, targets=targets):
     """
     Arguments:
-        config (Union[str | PurePath | None]):
+        config (Union[str, PurePath, None]):
             Optional path to a specific TOML file;
             if provided, skip lookup and just try to read from that file
+        env_var (Union[str, None]):
+            Name of the of the environment variable containing the path
+            to a TOML file;
+            if true-y and if `config` isn't provided, skip lookup and
+            just try to read from that file
         targets (Sequence[str | PurePath]):
-            Optional filenames among which TOML files are looked up
+            Filenames among which TOML files are looked up (if neither
+            `config` or `env_var` is given)
 
     Return:
-        If the provied/looked-up file is readable and is valid TOML:
+        If the provided/looked-up file is readable and is valid TOML:
             content, path (tuple[dict, Path]):
             - `content`: parsed content of the file as a dictionary
             - `path`: absolute path to the file
@@ -46,11 +56,13 @@ def find_and_read_config_file(*, config=None, targets=targets):
                 except OSError:  # E.g. permission errors
                     pass
 
-    if config is None:
+    if config:
+        configs = pathlib.Path(config).absolute(),
+    elif env_var and os.environ.get(env_var):
+        configs = pathlib.Path(os.environ[env_var]).absolute(),
+    else:
         pwd = pathlib.Path.cwd().absolute()
         configs = iter_configs(pwd)
-    else:
-        configs = pathlib.Path(config).absolute(),
     for config in configs:
         try:
             with config.open(mode='rb') as fobj:
@@ -80,12 +92,17 @@ def get_subtable(table, keys, *, allow_absence=True):
     return table
 
 
-def get_config(config=None):
+def get_config(config=None, *, read_env=True):
     """
     Arguments:
         config (Union[str | PurePath | None]):
             Optional path to a specific TOML file;
             if provided, skip lookup and just try to read from that file
+        read_env (bool):
+            Whether to read the environment variable
+            `${LINE_PROFILER_RC}` for a config file (instead of moving
+            straight onto environment-based lookup) if `config` is not
+            provided.
 
     Return:
         conf_dict, path (tuple[dict, Path]):
@@ -118,15 +135,19 @@ def get_config(config=None):
         return result
 
     default_conf, default_source = get_default_config()
+    if read_env:
+        get_conf = functools.partial(find_and_read_config_file, config=config)
+    else:  # Shield the lookup from the environment
+        get_conf = functools.partial(find_and_read_config_file,
+                                     config=config, env_var=None)
     try:
-        content, source = find_and_read_config_file(config=config)
+        content, source = get_conf()
     except TypeError:  # Got `None`
         return default_conf, default_source
     conf = {}
     try:
-        for key in 'kernprof', 'setup', 'write', 'show':
-            conf[key] = subtable = get_subtable(
-                content, [*namespace, key])
+        for key in default_conf:
+            conf[key] = subtable = get_subtable(content, [*namespace, key])
             if not isinstance(subtable, dict):
                 raise TypeError
     except (TypeError, AttributeError):
