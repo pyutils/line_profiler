@@ -127,7 +127,9 @@ except ImportError:
 
 import line_profiler
 from line_profiler.cli_utils import (
-    add_argument, get_cli_config, positive_float, short_string_path)
+    add_argument, get_cli_config,
+    get_python_executable as _python_command,  # Compatibility
+    positive_float, short_string_path)
 from line_profiler.profiler_mixin import ByCountProfilerMixin
 
 
@@ -243,19 +245,6 @@ def find_script(script_name, *, exit_on_error=True):
         raise SystemExit(1)
     else:
         raise FileNotFoundError(msg)
-
-
-def _python_command():
-    """
-    Return a command that corresponds to :py:obj:`sys.executable`.
-    """
-    import shutil
-    if os.path.samefile(shutil.which('python'), sys.executable):
-        return 'python'
-    elif os.path.samefile(shutil.which('python3'), sys.executable):
-        return 'python3'
-    else:
-        return short_string_path(sys.executable)
 
 
 class _restore_list:

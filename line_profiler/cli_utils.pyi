@@ -37,6 +37,10 @@ def get_cli_config(
     ...
 
 
+def get_python_executable() -> str:
+    ...
+
+
 def positive_float(value: str) -> float:
     ...
 
