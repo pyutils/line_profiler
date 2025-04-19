@@ -25,7 +25,13 @@
 #   `python -m line_profiler`) CLI options, minus the leading '--'.
 # - `tool.line_profiler.setup` (resp. `.write`, `.show`) items:
 #   Same as the corresponding `GlobalProfiler.setup_config` (resp.
-#   `.write_config`, `.show_config`) key-value pairs.
+#   `.write_config`, `.show_config`) key-value pairs, except for:
+#   - `tool.line_profiler.write.output_prefix`:
+#     Not a part of `GlobalProfiler.write_config`, but rather the
+#     default value for `GlobalProfiler.output_prefix`.
+#   - `tool.line_profiler.show.column_widths`:
+#     Not a part of `GlobalProfiler.show_config`, but rather controls
+#     the column widths in outputs (see below).
 # - `tool.line_profiler.show.column_widths` items:
 #   - `line`: Line number
 #   - `hits`: Number of line hits
@@ -148,6 +154,12 @@ cli_flags = ["--line-profile", "--line_profile"]
 
 [tool.line_profiler.write]
 
+# - `GlobalProfiler` attributes
+#   - `output_prefix` (str):
+#     Common base-name prefix to the output files specified in this
+#     subtable
+output_prefix = 'profile_output'
+
 # - `GlobalProfiler.write_config` key-value pairs
 #   - `lprof` (bool):
 #     Whether to `LineProfiler.dump_stats()` to an `.lprof` file
@@ -166,8 +178,8 @@ stdout = true
 [tool.line_profiler.show]
 
 # - `GlobalProfiler.show_config` key-value pairs
-#    (booleans; refer to the synonymous arguments of
-#    `LineProfiler.print_stats()`)
+#   (booleans; refer to the synonymous arguments of
+#   `LineProfiler.print_stats()`)
 #   (Note: doesn't include the `column_widths` subtable below)
 sort = true
 stripzeros = true
