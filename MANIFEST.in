@@ -4,6 +4,7 @@ include *.py
 include *.txt
 include *.toml
 include run_tests.sh
+include line_profiler *.toml
 recursive-include requirements *.txt
 recursive-include tests *.py
 recursive-include line_profiler *.txt
