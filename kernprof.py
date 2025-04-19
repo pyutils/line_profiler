@@ -93,6 +93,7 @@ which displays:
                             the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
+import argparse
 import builtins
 import functools
 import os
@@ -102,7 +103,6 @@ import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import tempfile
 import time
-from argparse import ArgumentError, ArgumentParser
 from runpy import run_module
 
 # NOTE: This version needs to be manually maintained in
@@ -116,6 +116,7 @@ try:
 except ImportError:
     from profile import Profile  # type: ignore[assignment,no-redef]
 
+import line_profiler
 from line_profiler.profiler_mixin import ByCountProfilerMixin
 
 
@@ -193,7 +194,7 @@ class RepeatedTimer:
         self.is_running = False
 
 
-def find_module_script(module_name):
+def find_module_script(module_name, *, exit_on_error=True):
     """Find the path to the executable script for a module or package."""
     from line_profiler.autoprofile.util_static import modname_to_modpath
 
@@ -202,11 +203,15 @@ def find_module_script(module_name):
         if fname:
             return fname
 
-    sys.stderr.write('Could not find module %s\n' % module_name)
-    raise SystemExit(1)
+    msg = f'Could not find module `{module_name}`'
+    if exit_on_error:
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        raise ModuleNotFoundError(msg)
 
 
-def find_script(script_name):
+def find_script(script_name, *, exit_on_error=True):
     """ Find the script.
 
     If the input is not a file, then $PATH will be searched.
@@ -221,8 +226,12 @@ def find_script(script_name):
         if os.path.isfile(fn):
             return fn
 
-    sys.stderr.write('Could not find script %s\n' % script_name)
-    raise SystemExit(1)
+    msg = f'Could not find script {script_name!r}'
+    if exit_on_error:
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        raise FileNotFoundError(msg)
 
 
 def _python_command():
@@ -341,18 +350,60 @@ def pre_parse_single_arg_directive(args, flag, sep='--'):
 
 @_restore_list(sys.argv)
 @_restore_list(sys.path)
-def main(args=None):
+def main(args=None, exit_on_error=True):
     """
     Runs the command line interface
     """
+    # Make the absent value a list so that the `append` and `extend`
+    # action still works
     def positive_float(value):
         val = float(value)
         if val <= 0:
-            raise ArgumentError
+            raise argparse.ArgumentError
         return val
 
+    def add_argument(parser_like, *args,
+                     hide_complementary_flag=True, **kwargs):
+        """
+        Override the 'store_true' and 'store_false' actions so that they
+        are turned into 'store_const' options which don't set the
+        default to the opposite boolean, thus allowing us to later
+        distinguish between cases where the flag has been passed or not.
+
+        Also automatically generates complementary boolean options for
+        `action='store_true'` options. If `hide_complementary_flag` is
+        true, the auto-generated option (all the long flags prefixed
+        with 'no-', e.g. '--foo' is negated by '--no-foo') is hidden
+        from the help text.
+        """
+        if kwargs.get('action') not in ('store_true', 'store_false'):
+            return parser_like.add_argument(*args, **kwargs)
+        kwargs['const'] = kwargs['action'] == 'store_true'
+        kwargs['action'] = 'store_const'
+        kwargs.setdefault('default', None)
+        if kwargs['action'] == 'store_false':
+            return parser_like.add_argument(*args, **kwargs)
+        # Automatically generate a complementary option for a boolean
+        # option;
+        # for convenience, turn it into a `store_const` action
+        # (in Python 3.9+ one can use `argparse.BooleanOptionalAction`,
+        # but we want to maintain compatibility with Python 3.8)
+        action = parser_like.add_argument(*args, **kwargs)
+        long_flags = [arg for arg in args if arg.startswith('--')]
+        assert long_flags
+        if hide_complementary_flag:
+            falsy_help_text = argparse.SUPPRESS
+        else:
+            falsy_help_text = 'Negate these flags: ' + ', '.join(args)
+        parser_like.add_argument(*('--no-' + flag[2:] for flag in long_flags),
+                                 **{**kwargs,
+                                    'const': False,
+                                    'dest': action.dest,
+                                    'help': falsy_help_text})
+        return action
+
     create_parser = functools.partial(
-        ArgumentParser,
+        argparse.ArgumentParser,
         description='Run and profile a python script.')
 
     if args is None:
@@ -387,53 +438,82 @@ def main(args=None):
         help_parser = create_parser()
         parsers = [real_parser, help_parser]
     for parser in parsers:
-        parser.add_argument('-V', '--version', action='version', version=__version__)
-        parser.add_argument('-l', '--line-by-line', action='store_true',
-                            help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
-        parser.add_argument('-b', '--builtin', action='store_true',
-                            help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
-                            "'@profile' to decorate functions, or 'with profile:' to profile a "
-                            'section of code.')
-        parser.add_argument('-o', '--outfile',
-                            help="Save stats to <outfile> (default: 'scriptname.lprof' with "
-                            "--line-by-line, 'scriptname.prof' without)")
-        parser.add_argument('-s', '--setup',
-                            help='Code to execute before the code to profile')
-        parser.add_argument('-v', '--view', action='store_true',
-                            help='View the results of the profile in addition to saving it')
-        parser.add_argument('-r', '--rich', action='store_true',
-                            help='Use rich formatting if viewing output')
-        parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-                            help='Output unit (in seconds) in which the timing info is '
-                            'displayed (default: 1e-6)')
-        parser.add_argument('-z', '--skip-zero', action='store_true',
-                            help="Hide functions which have not been called")
-        parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                            help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
-                            "Minimum value is 1 (second). Defaults to disabled.")
-        parser.add_argument('-p', '--prof-mod', action='append', type=str,
-                            help="List of modules, functions and/or classes to profile specified by their name or path. "
-                            "List is comma separated, adding the current script path profiles the full script. "
-                            "Multiple copies of this flag can be supplied and the.list is extended. "
-                            "Only works with line_profiler -l, --line-by-line")
-        parser.add_argument('--prof-imports', action='store_true',
-                            help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
-                            "Only works with line_profiler -l, --line-by-line")
+        add_argument(parser, '-V', '--version',
+                     action='version', version=__version__)
+        add_argument(parser, '-l', '--line-by-line', action='store_true',
+                     help='Use the line-by-line profiler instead of cProfile. '
+                     'Implies --builtin.')
+        add_argument(parser, '-b', '--builtin', action='store_true',
+                     help="Put 'profile' in the builtins. "
+                     "Use 'profile.enable()'/'.disable()', "
+                     "'@profile' to decorate functions, "
+                     "or 'with profile:' to profile a section of code.")
+        add_argument(parser, '-o', '--outfile',
+                     help='Save stats to <outfile> '
+                     "(default: 'scriptname.lprof' with --line-by-line, "
+                     "'scriptname.prof' without)")
+        add_argument(parser, '-s', '--setup',
+                     help='Code to execute before the code to profile')
+        add_argument(parser, '-v', '--view', action='store_true',
+                     help='View the results of the profile '
+                     'in addition to saving it')
+        add_argument(parser, '-r', '--rich', action='store_true',
+                     help='Use rich formatting if viewing output')
+        add_argument(parser, '-u', '--unit', default='1e-6', type=positive_float,
+                     help='Output unit (in seconds) in which '
+                     'the timing info is displayed (default: %(default)s)')
+        add_argument(parser, '-z', '--skip-zero', action='store_true',
+                     help="Hide functions which have not been called")
+        add_argument(parser, '-i', '--output-interval',
+                     type=int, default=0, const=0, nargs='?',
+                     help="Enables outputting of cumulative profiling results "
+                     "to file every n seconds. Uses the threading module. "
+                     "Minimum value is 1 (second). Defaults to disabled.")
+        add_argument(parser, '-p', '--prof-mod', action='append', type=str,
+                     help="List of modules, functions and/or classes "
+                     "to profile specified by their name or path. "
+                     "List is comma separated, adding the current script path "
+                     "profiles the full script. "
+                     "Multiple copies of this flag can be supplied and "
+                     "the list is extended. "
+                     "Only works with line_profiler -l, --line-by-line")
+        add_argument(parser, '--prof-imports', action='store_true',
+                     help="If specified, modules specified to `--prof-mod` "
+                     "will also autoprofile modules that they import. "
+                     "Only works with line_profiler -l, --line-by-line")
 
         if parser is help_parser or module is literal_code is None:
-            parser.add_argument('script',
-                                metavar='{path/to/script'
-                                ' | -m path.to.module | -c "literal code"}',
-                                help='The python script file, module, or '
-                                'literal code to run')
-        parser.add_argument('args', nargs='...', help='Optional script arguments')
+            add_argument(parser, 'script',
+                         metavar='{path/to/script'
+                         ' | -m path.to.module | -c "literal code"}',
+                         help='The python script file, module, or '
+                         'literal code to run')
+        add_argument(parser, 'args',
+                     nargs='...', help='Optional script arguments')
 
     # Hand off to the dummy parser if necessary to generate the help
     # text
-    options = real_parser.parse_args(args)
+    try:
+        options = real_parser.parse_args(args)
+    except SystemExit as e:
+        # If `exit_on_error` is true, let `SystemExit` bubble up and
+        # kill the interpretor;
+        # else, catch and handle it more gracefully
+        # (Note: can't use `ArgumentParser(exit_on_error=False)` in
+        # Python 3.8)
+        if exit_on_error:
+            raise
+        elif e.code:
+            raise RuntimeError from None
+        else:
+            return
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
-        exit()
+        if exit_on_error:
+            raise SystemExit(0)
+        else:
+            return
+
     try:
         del options.help
     except AttributeError:
@@ -453,9 +533,9 @@ def main(args=None):
     if tempfile_source_and_content:
         with tempfile.TemporaryDirectory() as tmpdir:
             _write_tempfile(*tempfile_source_and_content, options, tmpdir)
-            return _main(options, module)
+            return _main(options, module, exit_on_error)
     else:
-        return _main(options, module)
+        return _main(options, module, exit_on_error)
 
 
 def _write_tempfile(source, content, options, tmpdir):
@@ -487,7 +567,7 @@ def _write_tempfile(source, content, options, tmpdir):
                                               suffix='.' + extension)
 
 
-def _main(options, module=False):
+def _main(options, module=False, exit_on_error=True):
     """
     Called by ``main()`` for the actual execution and profiling of code;
     not to be invoked on its own.
@@ -503,10 +583,10 @@ def _main(options, module=False):
         # Note: this NEEDS to happen here, before the setup script (or
         # any other code) has a chance to `os.chdir()`
         sys.path.insert(0, os.path.abspath(os.curdir))
-    if options.setup is not None:
-        # Run some setup code outside of the profiler. This is good for large
-        # imports.
-        setup_file = find_script(options.setup)
+    if options.setup:
+        # Run some setup code outside of the profiler. This is good for
+        # large imports.
+        setup_file = find_script(options.setup, exit_on_error=exit_on_error)
         __file__ = setup_file
         __name__ = '__main__'
         # Make sure the script's directory is on sys.path instead of just
@@ -516,7 +596,6 @@ def _main(options, module=False):
         execfile(setup_file, ns, ns)
 
     if options.line_by_line:
-        import line_profiler
         prof = line_profiler.LineProfiler()
         options.builtin = True
     elif Profile.__module__ == 'profile':
@@ -525,25 +604,19 @@ def _main(options, module=False):
     else:
         prof = ContextualProfile()
 
-    # If line_profiler is installed, then overwrite the explicit decorator
-    try:
-        import line_profiler
-    except ImportError:  # Shouldn't happen
-        install_profiler = global_profiler = None
-    else:
-        global_profiler = line_profiler.profile
-        install_profiler = global_profiler._kernprof_overwrite
-
-    if global_profiler:
-        install_profiler(prof)
+    # Overwrite the explicit decorator
+    global_profiler = line_profiler.profile
+    install_profiler = global_profiler._kernprof_overwrite
+    install_profiler(prof)
 
     if options.builtin:
         builtins.__dict__['profile'] = prof
 
     if module:
-        script_file = find_module_script(options.script)
+        script_file = find_module_script(options.script,
+                                         exit_on_error=exit_on_error)
     else:
-        script_file = find_script(options.script)
+        script_file = find_script(options.script, exit_on_error=exit_on_error)
         # Make sure the script's directory is on sys.path instead of
         # just kernprof.py's.
         sys.path.insert(0, os.path.dirname(script_file))
@@ -551,6 +624,7 @@ def _main(options, module=False):
     __name__ = '__main__'
 
     if options.output_interval:
+        # XXX: why are we doing this here (5a38626) and again below?
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     original_stdout = sys.stdout
     if options.output_interval:
@@ -606,9 +680,8 @@ def _main(options, module=False):
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
         # Restore the state of the global `@line_profiler.profile`
-        if global_profiler:
-            install_profiler(None)
+        install_profiler(None)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    main()
