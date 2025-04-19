@@ -3,7 +3,10 @@ Shared utilities between the `python -m line_profiler` and `kernprof`
 CLI tools.
 """
 import argparse
+import os
 import pathlib
+import shutil
+import sys
 from .toml_config import get_config
 
 
@@ -89,6 +92,20 @@ def get_cli_config(subtable, *args, **kwargs):
     kernprof_conf = {key.replace('-', '_'): value
                      for key, value in conf[subtable].items()}
     return kernprof_conf, source
+
+
+def get_python_executable():
+    """
+    Returns:
+        command (str)
+            Command or path thereto corresponding to `sys.executable`.
+    """
+    if os.path.samefile(shutil.which('python'), sys.executable):
+        return 'python'
+    elif os.path.samefile(shutil.which('python3'), sys.executable):
+        return 'python3'
+    else:
+        return short_string_path(sys.executable)
 
 
 def positive_float(value):
