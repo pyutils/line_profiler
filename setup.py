@@ -284,7 +284,10 @@ if __name__ == '__main__':
     setupkw["py_modules"] = ['kernprof', 'line_profiler']
     setupkw["python_requires"] = ">=3.8"
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
-    setupkw["package_data"] = {"line_profiler": ["py.typed", "*.pyi"]}
+    setupkw["package_data"] = {"line_profiler": ["py.typed", "*.pyi", "*.toml"]}
+    # `include_package_data` is needed to put `line_profiler_rc.toml` in
+    # the wheel
+    setupkw["include_package_data"] = True
     setupkw['keywords'] = ['timing', 'timer', 'profiling', 'profiler', 'line_profiler']
     setupkw["classifiers"] = [
         'Development Status :: 5 - Production/Stable',
