@@ -203,6 +203,9 @@ def get_config(config=None, *, read_env=True):
         return result
 
     default_conf, default_source = get_default_config()
+    if config is not None:
+        # Promote to `Path` (and catch type errors) early
+        config = pathlib.Path(config)
     if read_env:
         get_conf = functools.partial(find_and_read_config_file, config=config)
     else:  # Shield the lookup from the environment
@@ -211,6 +214,12 @@ def get_config(config=None, *, read_env=True):
     try:
         content, source = get_conf()
     except TypeError:  # Got `None`
+        if config:
+            if os.path.exists(config):
+                Error = ValueError
+            else:
+                Error = FileNotFoundError
+            raise Error(r'Cannot load configurations from {config!r}') from None
         return default_conf, default_source
     conf = {}
     try:
