@@ -522,17 +522,12 @@ def main(args=None, exit_on_error=True):
 
     # Parse the provided config file (if any), and resolve the values
     # of the un-specified options
-    config = options.config
     try:
         del options.help
     except AttributeError:
         pass
-    try:
-        del options.config
-    except AttributeError:
-        pass
-    if config:
-        defaults, _ = get_kernprof_config(config)
+    if options.config:
+        defaults, options.config = get_kernprof_config(options.config)
     for key, default in defaults.items():
         if getattr(options, key, None) is None:
             setattr(options, key, default)
@@ -691,7 +686,8 @@ def _main(options, module=False, exit_on_error=True):
                 prof.print_stats(output_unit=options.unit,
                                  stripzeros=options.skip_zero,
                                  rich=options.rich,
-                                 stream=original_stdout)
+                                 stream=original_stdout,
+                                 config=options.config)
         else:
             print('Inspect results with:')
             py_exe = _python_command()

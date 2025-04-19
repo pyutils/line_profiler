@@ -20,11 +20,18 @@
 # Naming scheme
 # -------------
 #
-# - `tool.line_profiler.kernprof` items:
-#   Same as the corresponding CLI options, minus the leading '--'.
+# - `tool.line_profiler.kernprof` (resp. `.cli`) items:
+#   Same as the corresponding `kernprof` (resp.
+#   `python -m line_profiler`) CLI options, minus the leading '--'.
 # - `tool.line_profiler.setup` (resp. `.write`, `.show`) items:
 #   Same as the corresponding `GlobalProfiler.setup_config` (resp.
 #   `.write_config`, `.show_config`) key-value pairs.
+# - `tool.line_profiler.show.column_widths` items:
+#   - `line`: Line number
+#   - `hits`: Number of line hits
+#   - `time`: Total time spent on the line
+#   - `perhit`: Mean time spent per hit
+#   - `percent`: % time spent on the line (relative to the func/method)
 #
 # Resolution order
 # ----------------
@@ -41,8 +48,12 @@
 #
 # ### Notes
 #
-# - For `kernprof` and `python -m line_profiler`, it is also possible to
-#   explicitly supply the config file and skip the lookup.
+# - To explicitly specify the config file and skip lookup, the user can:
+#   - Set the `${LINE_PROFILER_RC}` environment variable to be the path
+#     to the appropriate config file.
+#   - For the CLI applications `kernprof` and `python -m line_profiler`,
+#     it is also possible to supply the config file via the
+#     `-c`/`--config` flag.
 # - The first looked-up file that is readable TOML (possibly empty) is
 #   used;
 #   it doesn't matter if it contains the `tool.line_profiler` namespace.
@@ -100,6 +111,27 @@ output-interval = 0
 #     script/module
 prof-mod = []
 
+# `python -m line_profiler` options
+
+[tool.line_profiler.cli]
+
+# - `unit` (float):
+#   `--unit=...`: timer unit for the displayed profiling results when
+#   `view` is true
+unit = 1e-6
+# - `rich` (bool):
+#   `-r`/`--rich` (true) or `--no-rich` (false)
+rich = false
+# - `skip-zero` (bool):
+#   `-z`/`--skip-zero` (true) or `--no-skip-zero` (false)
+skip-zero = false
+# - `sort` (bool):
+#   `-t`/`--sort` (true) or `--no-sort` (false)
+sort = false
+# - `summarize` (bool):
+#   `-m`/`--summarize` (true) or `--no-summarize` (false)
+summarize = false
+
 # `line_profiler.GlobalProfiler` options
 
 [tool.line_profiler.setup]
@@ -136,8 +168,22 @@ stdout = true
 # - `GlobalProfiler.show_config` key-value pairs
 #    (booleans; refer to the synonymous arguments of
 #    `LineProfiler.print_stats()`)
+#   (Note: doesn't include the `column_widths` subtable below)
 sort = true
 stripzeros = true
 rich = true
 details = false
 summarize = true
+
+# `line_profiler.line_profiler.show_text()` column widths
+# (Note: the values below are also the minima; it is only possible to
+# supply bigger widths, not smaller ones)
+
+[tool.line_profiler.show.column_widths]
+
+# (See the file header for their meanings)
+line = 6
+hits = 9
+time = 12
+perhit = 8
+percent = 8
