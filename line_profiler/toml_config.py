@@ -12,6 +12,7 @@ try:
     import tomllib
 except ImportError:  # Python < 3.11
     import tomli as tomllib
+from collections.abc import Mapping
 
 
 __all__ = ['get_config', 'get_default_config']
@@ -19,6 +20,7 @@ __all__ = ['get_config', 'get_default_config']
 namespace = 'tool', 'line_profiler'
 targets = 'line_profiler_rc.toml', 'pyproject.toml'
 env_var = 'LINE_PROFILER_RC'
+
 _defaults = None
 
 
@@ -74,22 +76,87 @@ def find_and_read_config_file(
 
 def get_subtable(table, keys, *, allow_absence=True):
     """
-    Arguments
+    Arguments:
         table (Mapping):
-            (Nested) Mapping
+            (Nested) Mapping.
         keys (Sequence):
             Sequence of keys for item access on `table` and its
-            descendant tables
+            descendant tables.
         allow_absence (bool):
             If true, allow for the keys to be absent;
-            otherwise, raise a `KeyError`
+            otherwise, raise a `KeyError`.
+
+    Return:
+        subtable (Mapping)
+
+    Example:
+
+        >>> table = {'a': 1, 'b': {'c': 2, 'd': 3, 'e': {}}}
+        >>> assert get_subtable(table, []) == table
+        >>> assert get_subtable(table, ['b']) == table['b']
+        >>> assert get_subtable(table, ['b', 'e']) == table['b']['e']
+        >>> assert get_subtable(table, ['c']) == {}
+        >>> get_subtable(table, ['c'], allow_absence=False)
+        Traceback (most recent call last):
+          ...
+        KeyError: 'c'
+        >>> get_subtable(  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        ...     table, ['a'])
+        Traceback (most recent call last):
+          ...
+        TypeError: table = ..., keys = ['a']:
+        expected result to be a mapping, got a `int` (1)
     """
+    subtable = table
     for key in keys:
         if allow_absence:
-            table = table.get(key, {})
+            subtable = subtable.get(key, {})
         else:
-            table = table[key]
-    return table
+            subtable = subtable[key]
+    if not isinstance(subtable, Mapping):
+        raise TypeError(f'table = {table!r}, keys = {list(keys)!r}: '
+                        'expected result to be a mapping, got a '
+                        f'`{type(subtable).__name__}` ({subtable!r})')
+    return subtable
+
+
+def get_headers(table, *, include_implied=False):
+    """
+    Arguments:
+        table (Mapping):
+            (Nested) Mapping.
+        include_implied (bool):
+            if false and if a subtable has other subtables, only the
+            terminal key sequences are returned (that is to say, if
+            `table['a']['b']` is a subtable, then `('a',)` is only in
+            `headers` if `include_implied` is true.
+
+    Return:
+        headers (set[tuple]):
+            Key sequences corresponding to the subtables of `table`.
+
+    Example:
+
+        >>> table = {'a': 1,
+        ...          'b': {'c': 2, 'd': 3, 'e': {}, 'f': {'g': 4}},
+        ...          'h': {'i': 5}}
+        >>> assert get_headers(table) == {
+        ...     ('b', 'e'), ('b', 'f'), ('h',)}
+        >>> assert get_headers(table, include_implied=True) == {
+        ...     ('b',), ('b', 'e'), ('b', 'f'), ('h',)}
+        >>> assert get_headers({}) == set()
+        >>> assert get_headers({'a': 1, 'b': 2}) == set()
+    """
+    results = set()
+    for key, value in table.items():
+        if not isinstance(value, Mapping):
+            continue
+        subheaders = get_headers(value, include_implied=include_implied)
+        if subheaders:
+            results.update((key,) + header for header in subheaders)
+        if include_implied or not subheaders:
+            results.add((key,))
+    return results
 
 
 def get_config(config=None, *, read_env=True):
@@ -116,8 +183,9 @@ def get_config(config=None, *, read_env=True):
         - For the config TOML file, it is required that each of the
           following keys either is absent or maps to a table:
           - `tool` and `tool.line_profiler`
-          - `tool.line_profiler.kernprof`, `.setup`, `.write`, and
-            `.show`
+          - `tool.line_profiler.kernprof`, `.cli`, `.setup`, `.write`,
+            and `.show`
+          - `tool.line_profiler.show.column_widths`
           If this is not the case:
           - If `config` is provided, a `ValueError` is raised.
           - Otherwise, the looked-up file is considered invalid and
@@ -146,10 +214,14 @@ def get_config(config=None, *, read_env=True):
         return default_conf, default_source
     conf = {}
     try:
-        for key in default_conf:
-            conf[key] = subtable = get_subtable(content, [*namespace, key])
-            if not isinstance(subtable, dict):
-                raise TypeError
+        for header in get_headers(default_conf):
+            # Get the top-level subtable
+            key, *subheader = header
+            subtable = get_subtable(content, [*namespace, key])
+            # Check the existence of nested subtables (if any)
+            get_subtable(subtable, subheader)
+            # If it looks OK, remember the top-level subtable
+            conf.setdefault(key, subtable)
     except (TypeError, AttributeError):
         if config is None:
             # No file explicitly provided and the looked-up file is
@@ -158,12 +230,14 @@ def get_config(config=None, *, read_env=True):
         else:
             # The explicitly provided config file is invalid, raise an
             # error
+            all_headers = {'tool', 'tool.line_profiler'}
+            all_headers.update(
+                '.'.join(('tool.line_profiler', *header))
+                for header in get_headers(default_conf, include_implied=True))
             raise ValueError(
                 f'config = {config!r}: expected each of these keys to either '
                 'be nonexistent or map to a table: '
-                '`tool`, `tool.line_profiler`, and '
-                '`tool.line_profiler.kernprof`, `.setup`, `.write`, '
-                'and `.show`')
+                f'{sorted(all_headers)!r}') from None
     # Filter the content of `conf` down to just the key-value pairs
     # pairs present in the default configs
     return merge(default_conf, conf), source

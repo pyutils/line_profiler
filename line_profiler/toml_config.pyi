@@ -3,7 +3,7 @@ try:
     import tomllib
 except ImportError:  # Python < 3.11
     import tomli as tomllib
-from typing import Any, Dict, Mapping, Sequence, Tuple, TypeVar, Union
+from typing import Any, Dict, Mapping, Sequence, Set, Tuple, TypeVar, Union
 
 
 targets = 'line_profiler_rc.toml', 'pyproject.toml'
@@ -25,6 +25,11 @@ def find_and_read_config_file(
 
 def get_subtable(table: NestedTable[K, V], keys: Sequence[K], *,
                  allow_absence: bool = True) -> NestedTable[K, V]:
+    ...
+
+
+def get_headers(table: NestedTable[K, Any], *,
+                include_implied: bool = False) -> Set[Tuple[K, ...]]:
     ...
 
 
