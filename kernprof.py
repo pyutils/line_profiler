@@ -67,12 +67,12 @@ which displays:
                     {path/to/script | -m path.to.module | -c "literal code"} ...
     
     Run and profile a python script or module.Boolean options can be negated by passing the corresponding flag (e.g. `--no-view` for `--view`).
-    
+
     positional arguments:
       {path/to/script | -m path.to.module | -c "literal code"}
                             The python script file, module, or literal code to run
       args                  Optional script arguments
-    
+
     options:
       -h, --help            show this help message and exit
       -V, --version         show program's version number and exit
@@ -111,7 +111,6 @@ import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import tempfile
-import pathlib
 import time
 from runpy import run_module
 
@@ -127,8 +126,9 @@ except ImportError:
     from profile import Profile  # type: ignore[assignment,no-redef]
 
 import line_profiler
+from line_profiler.cli_utils import (
+    add_argument, get_cli_config, positive_float, short_string_path)
 from line_profiler.profiler_mixin import ByCountProfilerMixin
-from line_profiler.toml_config import get_config
 
 
 def execfile(filename, globals=None, locals=None):
@@ -243,23 +243,6 @@ def find_script(script_name, *, exit_on_error=True):
         raise SystemExit(1)
     else:
         raise FileNotFoundError(msg)
-
-
-def short_string_path(path):
-    """
-    Get the shortest formatted `path` among the provided path, the
-    corresponding absolute path, and its relative path to the current
-    directory.
-    """
-    path = pathlib.Path(path)
-    paths = {str(path)}
-    abspath = path.absolute()
-    paths.add(str(abspath))
-    try:
-        paths.add(str(abspath.relative_to(path.cwd().absolute())))
-    except ValueError:  # Not relative to the curdir
-        pass
-    return min(paths, key=len)
 
 
 def _python_command():
@@ -384,69 +367,12 @@ def main(args=None, exit_on_error=True):
     """
     Runs the command line interface
     """
-    # Make the absent value a list so that the `append` and `extend`
-    # action still works
-    def positive_float(value):
-        val = float(value)
-        if val <= 0:
-            raise argparse.ArgumentError
-        return val
-
-    def add_argument(parser_like, *args,
-                     hide_complementary_flag=True, **kwargs):
-        """
-        Override the 'store_true' and 'store_false' actions so that they
-        are turned into 'store_const' options which don't set the
-        default to the opposite boolean, thus allowing us to later
-        distinguish between cases where the flag has been passed or not.
-
-        Also automatically generates complementary boolean options for
-        `action='store_true'` options. If `hide_complementary_flag` is
-        true, the auto-generated option (all the long flags prefixed
-        with 'no-', e.g. '--foo' is negated by '--no-foo') is hidden
-        from the help text.
-        """
-        if kwargs.get('action') not in ('store_true', 'store_false'):
-            return parser_like.add_argument(*args, **kwargs)
-        kwargs['const'] = kwargs['action'] == 'store_true'
-        kwargs['action'] = 'store_const'
-        kwargs.setdefault('default', None)
-        if kwargs['action'] == 'store_false':
-            return parser_like.add_argument(*args, **kwargs)
-        # Automatically generate a complementary option for a boolean
-        # option;
-        # for convenience, turn it into a `store_const` action
-        # (in Python 3.9+ one can use `argparse.BooleanOptionalAction`,
-        # but we want to maintain compatibility with Python 3.8)
-        action = parser_like.add_argument(*args, **kwargs)
-        long_flags = [arg for arg in args if arg.startswith('--')]
-        assert long_flags
-        if hide_complementary_flag:
-            falsy_help_text = argparse.SUPPRESS
-        else:
-            falsy_help_text = 'Negate these flags: ' + ', '.join(args)
-        parser_like.add_argument(*('--no-' + flag[2:] for flag in long_flags),
-                                 **{**kwargs,
-                                    'const': False,
-                                    'dest': action.dest,
-                                    'help': falsy_help_text})
-        return action
-
-    def get_kernprof_config(*args, **kwargs):
-        """
-        Get the `tool.line_profiler.kernprof` configs and normalize its
-        keys.
-        """
-        conf, source = get_config(*args, **kwargs)
-        kernprof_conf = {key.replace('-', '_'): value
-                         for key, value in conf['kernprof'].items()}
-        return kernprof_conf, source
-
     create_parser = functools.partial(
         argparse.ArgumentParser,
         description='Run and profile a python script or module.'
         'Boolean options can be negated by passing the corresponding flag '
         '(e.g. `--no-view` for `--view`).')
+    get_kernprof_config = functools.partial(get_cli_config, 'kernprof')
     defaults, default_source = get_kernprof_config()
 
     if args is None:
