@@ -1,6 +1,6 @@
-from typing import List
-from typing import Tuple
 import io
+import pathlib
+from typing import List, Tuple, Union
 from ._line_profiler import LineProfiler as CLineProfiler
 from .profiler_mixin import ByCountProfilerMixin
 from _typeshed import Incomplete
@@ -25,7 +25,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     details: bool = ...,
                     summarize: bool = ...,
                     sort: bool = ...,
-                    rich: bool = ...) -> None:
+                    rich: bool = ...,
+                    *,
+                    config: Union[str, pathlib.PurePath, None] = None) -> None:
         ...
 
     def add_module(self, mod):
@@ -44,7 +46,9 @@ def show_func(filename: str,
               output_unit: float | None = None,
               stream: io.TextIOBase | None = None,
               stripzeros: bool = False,
-              rich: bool = False) -> None:
+              rich: bool = False,
+              *,
+              config: Union[str, pathlib.PurePath, None] = None) -> None:
     ...
 
 
@@ -56,7 +60,9 @@ def show_text(stats,
               details: bool = ...,
               summarize: bool = ...,
               sort: bool = ...,
-              rich: bool = ...):
+              rich: bool = ...,
+              *,
+              config: Union[str, pathlib.PurePath, None] = None) -> None:
     ...
 
 
