@@ -2,7 +2,7 @@ import pathlib
 try:
     import tomllib
 except ImportError:  # Python < 3.11
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[no-redef]
 from typing import Any, Dict, Mapping, Sequence, Set, Tuple, TypeVar, Union
 
 
