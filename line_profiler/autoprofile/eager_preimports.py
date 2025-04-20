@@ -1,0 +1,380 @@
+"""
+Tools for eagerly pre-importing everything as specified in
+`line_profiler.autoprof.run(prof_mod=...)`.
+"""
+import ast
+import functools
+import itertools
+from keyword import iskeyword
+from importlib.util import find_spec
+from textwrap import dedent
+from warnings import warn
+
+
+def is_dotted_path(obj):
+    """
+    Example:
+        >>> assert not is_dotted_path(object())
+        >>> assert is_dotted_path('foo')
+        >>> assert is_dotted_path('foo.bar')
+        >>> assert not is_dotted_path('not an identifier')
+        >>> assert not is_dotted_path('keyword.return.not.allowed')
+    """
+    if not (isinstance(obj, str) and obj):
+        return False
+    for chunk in obj.split('.'):
+        if iskeyword(chunk) or not chunk.isidentifier():
+            return False
+    return True
+
+
+def get_expression(obj):
+    """
+    Example:
+        >>> assert not get_expression(object())
+        >>> assert not get_expression('')
+        >>> assert not get_expression('foo; bar')
+        >>> assert get_expression('foo')
+        >>> assert get_expression('lambda x: x')
+        >>> assert not get_expression('def foo(x): return x')
+    """
+    if not (isinstance(obj, str) and obj):
+        return None
+    try:
+        return ast.parse(obj, mode='eval')
+    except SyntaxError:
+        return None
+
+
+def split_dotted_path(dotted_path):
+    """
+    Arguments:
+        dotted_path (str):
+            Dotted path indicating an import target (module, package, or
+            a `from ... import ...`-able name under that), or an object
+            accessible via (chained) attribute access thereon
+
+    Returns:
+        module, target (tuple[str, Union[str, None]]):
+        - module: dotted path indicating the module that should be
+          imported
+        - target: dotted path indicating the chained attribute access
+          target on the imported module corresponding to `dotted_path`;
+          if the import is just a module, this is set to `None`
+
+    Raises:
+        - `TypeError` if `dotted_path` is not a dotted path (Python
+          identifiers joined by periods)
+        - `ModuleNotFoundError` if a matching module cannot be found
+
+    Example:
+        >>> split_dotted_path('importlib.util.find_spec')
+        ('importlib.util', 'find_spec')
+        >>> split_dotted_path('importlib.util')
+        ('importlib.util', None)
+        >>> split_dotted_path('importlib.abc.Loader.exec_module')
+        ('importlib.abc', 'Loader.exec_module')
+        >>> split_dotted_path(  # doctest: +NORMALIZE_WHITESPACE
+        ...     'not a dotted path')
+        Traceback (most recent call last):
+          ...
+        TypeError: dotted_path = 'not a dotted path':
+        expected a dotted path (string of period-joined identifiers)
+        >>> split_dotted_path(  # doctest: +NORMALIZE_WHITESPACE
+        ...     'foo.bar.baz')
+        Traceback (most recent call last):
+          ...
+        ModuleNotFoundError: dotted_path = 'foo.bar.baz':
+        none of the below looks like an importable module:
+        ['foo.bar.baz', 'foo.bar', 'foo']
+    """
+    if not is_dotted_path(dotted_path):
+        raise TypeError(f'dotted_path = {dotted_path!r}: '
+                        'expected a dotted path '
+                        '(string of period-joined identifiers)')
+    chunks = dotted_path.split('.')
+    checked_locs = []
+    for slicing_point in range(len(chunks), 0, -1):
+        module = '.'.join(chunks[:slicing_point])
+        target = '.'.join(chunks[slicing_point:]) or None
+        try:
+            spec = find_spec(module)
+        except ImportError:
+            spec = None
+        if spec is None:
+            checked_locs.append(module)
+            continue
+        return module, target
+    raise ModuleNotFoundError(f'dotted_path = {dotted_path!r}: '
+                              'none of the below looks like an importable '
+                              f'module: {checked_locs!r}')
+
+
+def strip(s):
+    return dedent(s).strip('\n')
+
+
+class LoadedNameFinder(ast.NodeVisitor):
+    """
+    Find the names loaded in an AST. A name is considered to be loaded
+    if it appears with the context `ast.Load()` and is not an argument
+    of any surrounding function-definition contexts
+    (`def func(...): ...`, `async def func(...): ...`, or
+    `lambda ...: ...`).
+
+    Example:
+        >>> import ast
+        >>>
+        >>>
+        >>> module = '''
+        ... def foo(x, **k):
+        ...     def bar(y, **z):
+        ...         pass
+        ...
+        ...     return bar(x, **{**k, 'baz': foobar})
+        ...
+        ... spam = lambda x, *y, **z: (x, y, z, a)
+        ...
+        ... str('ham')
+        ... '''
+        >>> names = LoadedNameFinder.find(ast.parse(module))
+        >>> assert names == {'bar', 'foobar', 'a', 'str'}, names
+    """
+    def __init__(self):
+        self.names = set()
+        self.contexts = []
+
+    def visit_Name(self, node):
+        if not isinstance(node.ctx, ast.Load):
+            return
+        name = node.id
+        if not any(name in ctx for ctx in self.contexts):
+            self.names.add(node.id)
+
+    def _visit_func_def(self, node):
+        args = node.args
+        arg_names = {
+            arg.arg
+            for arg_list in (args.posonlyargs, args.args, args.kwonlyargs)
+            for arg in arg_list}
+        if args.vararg:
+            arg_names.add(args.vararg.arg)
+        if args.kwarg:
+            arg_names.add(args.kwarg.arg)
+        self.contexts.append(arg_names)
+        self.generic_visit(node)
+        self.contexts.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = visit_Lambda = _visit_func_def
+
+    @classmethod
+    def find(cls, node):
+        finder = cls()
+        finder.visit(node)
+        return finder.names
+
+
+def propose_names(prefixes):
+    """
+    Generate names based on prefixes.
+
+    Arguments:
+        prefixes (Collection[str]):
+            String identifier prefixes
+
+    Yields:
+        name (str):
+            String identifier
+
+    Example:
+        >>> import itertools
+        >>>
+        >>>
+        >>> list(itertools.islice(propose_names(['func', 'f', 'foo']),
+        ...                       10))  # doctest: +NORMALIZE_WHITESPACE
+        ['func', 'f', 'foo',
+         'func_0', 'f0', 'foo_0',
+         'func_1', 'f1', 'foo_1',
+         'func_2']
+    """
+    prefixes = list(dict.fromkeys(prefixes))  # Preserve order
+    if not all(is_dotted_path(p) and '.' not in p for p in prefixes):
+        raise TypeError(f'prefixes = {prefixes!r}: '
+                        'expected string identifiers')
+    # Yield all the provided prefixes
+    yield from prefixes
+    # Yield the prefixes in order with numeric suffixes
+    prefixes_and_patterns = [
+        (prefix, ('{}{}' if len(prefix) == 1 else '{}_{}').format)
+        for prefix in prefixes]
+    for i in itertools.count():
+        for prefix, pattern in prefixes_and_patterns:
+            yield pattern(prefix, i)
+
+
+def write_eager_import_module(dotted_paths, stream=None, *,
+                              adder='profile.add_imported_function_or_module'):
+    r"""
+    Write a module which autoprofiles all its imports.
+
+    Arguments:
+        dotted_paths (Collection[str]):
+            Dotted paths (strings of period-joined identifiers)
+            indicating what should be profiled
+        stream (Union[TextIO, None]):
+            Optional text-mode writable file object to which to write
+            the module
+        adder (str):
+            Single-line string `ast.parse(mode='eval')`-able to a single
+            expression, indicating the callable (which is assumed to
+            exist in the builtin namespace by the time the module is
+            executed) to be called to add the profiling target
+
+    Side effects:
+        - `stream` (or stdout if none) written to
+        - Warning issued if the module can't be located for one or more
+          dotted paths
+
+    Raises:
+        - `TypeError` if `adder` is not a string
+        - `ValueError` if `adder` is a non-single-line string or is not
+          parsable to a single expression
+        - `TypeError` if `dotted_paths` is not a collection of dotted
+          paths
+
+    Example:
+        >>> import io
+        >>> import textwrap
+        >>> import warnings
+        >>>
+        >>>
+        >>> def strip(s):
+        ...     return textwrap.dedent(s).strip('\n')
+        ...
+        >>>
+        >>> with warnings.catch_warnings(record=True) as record:
+        ...     with io.StringIO() as sio:
+        ...         write_eager_import_module(
+        ...             ['importlib.util',
+        ...              'foo.bar',
+        ...              'importlib.abc.Loader.exec_module',
+        ...              'importlib.abc.Loader.find_module'],
+        ...             sio)
+        ...         written = strip(sio.getvalue())
+        ...
+        >>> assert written == strip('''
+        ... add = profile.add_imported_function_or_module
+        ... failures = []
+        ...
+        ... import importlib.abc as module
+        ...
+        ... try:
+        ...     add(module.Loader.exec_module)
+        ... except AttributeError:
+        ...     failures.append('importlib.abc.Loader.exec_module')
+        ... try:
+        ...     add(module.Loader.find_module)
+        ... except AttributeError:
+        ...     failures.append('importlib.abc.Loader.find_module')
+        ...
+        ... import importlib.util as module
+        ...
+        ... add(module)
+        ...
+        ... if failures:
+        ...     import warnings
+        ...
+        ...     msg = '{} target{} cannot be imported: {!r}'.format(
+        ...         len(failures),
+        ...         '' if len(failures) == 1 else 's',
+        ...         failures)
+        ...     warnings.warn(msg, stacklevel=2)
+        ... '''), written
+        >>> assert len(record) == 1
+        >>> assert (record[0].message.args[0]
+        ...         == ("1 import target cannot be resolved: "
+        ...             "['foo.bar']"))
+    """
+    if not isinstance(adder, str):
+        AdderError = TypeError
+    elif len(adder.splitlines()) != 1:
+        AdderError = ValueError
+    else:
+        expr = get_expression(adder)
+        if expr:
+            AdderError = None
+        else:
+            AdderError = ValueError
+    if AdderError:
+        raise AdderError(f'adder = {adder!r}: '
+                         'expected a single-line string parsable to a single '
+                         'expression')
+
+    # Get the names loaded by `adder`;
+    # these names are not allowed in the namespace
+    forbidden_names = LoadedNameFinder.find(expr)
+    # We need three free names:
+    # - One for `adder`
+    # - One for a list of failed targets
+    # - One for the imported module
+    adder_name = next(
+        name for name in propose_names(['add', 'add_func', 'a', 'f'])
+        if name not in forbidden_names)
+    forbidden_names.add(adder_name)
+    failures_name = next(
+        name
+        for name in propose_names(['failures', 'failed_targets', 'f', '_'])
+        if name not in forbidden_names)
+    forbidden_names.add(failures_name)
+    module_name = next(
+        name for name in propose_names(['module', 'mod', 'imported', 'm', '_'])
+        if name not in forbidden_names)
+
+    # Figure out the import targets to profile
+    imports = {}
+    unknown_locs = []
+    for path in sorted(set(dotted_paths)):
+        try:
+            module, target = split_dotted_path(path)
+        except ModuleNotFoundError:
+            unknown_locs.append(path)
+            continue
+        imports.setdefault(module, []).append(target)
+
+    # Warn against failed imports
+    if unknown_locs:
+        msg = '{} import target{} cannot be resolved: {!r}'.format(
+            len(unknown_locs),
+            '' if len(unknown_locs) == 1 else 's',
+            unknown_locs)
+        warn(msg, stacklevel=2)
+
+    # Do the imports and add them with `adder`
+    write = functools.partial(print, file=stream)
+    write(f'{adder_name} = {adder}\n{failures_name} = []')
+    for module, targets in imports.items():
+        write(f'\nimport {module} as {module_name}\n')
+        for target in targets:
+            if target is None:
+                write(f'{adder_name}({module_name})')
+                continue
+            path = f'{module}.{target}'
+            write(strip(f"""
+            try:
+                {adder_name}({module_name}.{target})
+            except AttributeError:
+                {failures_name}.append({path!r})
+            """))
+    # Issue a warning if any of the targets doesn't exist
+    if imports:
+        write('')
+        write(strip(f"""
+        if {failures_name}:
+            import warnings
+
+            msg = '{{}} target{{}} cannot be imported: {{!r}}'.format(
+                len({failures_name}),
+                '' if len({failures_name}) == 1 else 's',
+                {failures_name})
+            warnings.warn(msg, stacklevel=2)
+        """))
