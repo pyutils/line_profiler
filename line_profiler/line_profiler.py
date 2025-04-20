@@ -116,7 +116,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         the underlying Cython profiler.
 
         Returns:
-            1 if any function is added to the profiler, 0 otherwise
+            1 if any function is added to the profiler, 0 otherwise.
         """
         nadded = 0
         for impl in _get_underlying_functions(func):
@@ -149,23 +149,42 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   stream=stream, stripzeros=stripzeros,
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
-    def add_module(self, mod):
-        """ Add all the functions in a module and its classes.
+    def _add_namespace(self, namespace, *, wrap=False):
         """
-        from inspect import isclass
+        Add the members (callables (wrappers), methods, classes, ...) in
+        a namespace and profile them.
 
-        nfuncsadded = 0
-        for item in mod.__dict__.values():
-            if isclass(item):
-                for k, v in item.__dict__.items():
-                    if is_function(v):
-                        self.add_function(v)
-                        nfuncsadded += 1
-            elif is_function(item):
-                self.add_function(item)
-                nfuncsadded += 1
+        Args:
+            namespace (Union[ModuleType, type]):
+                Module or class to be profiled.
+            wrap (bool):
+                Whether to replace the wrapped members with wrappers
+                which automatically enable/disable the profiler when
+                called.
 
-        return nfuncsadded
+        Returns:
+            n (int):
+                Number of members added to the profiler.
+        """
+        count = 0
+        add_cls = self.add_class
+        add_func = self.add_callable
+        for attr, value in vars(namespace).items():
+            if isinstance(value, type):
+                count += 1 if add_cls(value, wrap=wrap) else 0
+                continue
+            try:
+                func_needs_adding = add_func(value)
+            except TypeError:  # Not a callable (wrapper)
+                continue
+            if not func_needs_adding:
+                continue
+            if wrap:
+                setattr(namespace, attr, self.wrap_callable(value))
+            count += 1
+        return count
+
+    add_class = add_module = _add_namespace
 
     def _get_wrapper_info(self, func):
         info = getattr(func, self._profiler_wrapped_marker, None)
