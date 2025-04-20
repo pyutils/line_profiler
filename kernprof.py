@@ -89,11 +89,13 @@ which displays:
                             Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to
                             disabled.
       -p, --prof-mod PROF_MOD
-                            List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
-                            the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
+                            List of modules, functions and/or classes to profile specified by their name or path, if they are imported in the profiled script/module. These
+                            profiling targets can be supplied both as comma-separated items, or separately with multiple copies of this flag. Adding the current script/module
+                            profiles the entirety of it. Only works with line_profiler -l, --line-by-line.
       -e, --eager-preimports
-                            If specified, all modules, classes, etc. specified in `--prof-mod` will be imported and marked for profiling before running the script/module,
-                            regardless of whether they are directly imported in the script/module. Only works with line_profiler -l, --line-by-line
+                            List of modules, functions, and/or classes, to be imported and marked for profiling before running the script/module, regardless of whether they are
+                            directly imported in the script/module. Follows the same semantics as `--prof-mod`. If supplied without an argument, indicates that all `--prof-mod`
+                            targets are to be so profiled. Only works with line_profiler -l, --line-by-line.
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
@@ -211,7 +213,7 @@ def find_module_script(module_name):
     raise SystemExit(1)
 
 
-def find_script(script_name):
+def find_script(script_name, exit_on_error=True):
     """ Find the script.
 
     If the input is not a file, then $PATH will be searched.
@@ -226,8 +228,12 @@ def find_script(script_name):
         if os.path.isfile(fn):
             return fn
 
-    sys.stderr.write('Could not find script %s\n' % script_name)
-    raise SystemExit(1)
+    msg = f'Could not find script {script_name!r}'
+    if exit_on_error:
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        raise FileNotFoundError(msg)
 
 
 def _python_command():
@@ -239,6 +245,34 @@ def _python_command():
         if os.path.samefile(shutil.which(abbr), sys.executable):
             return abbr
     return sys.executable
+
+
+def _normalize_profiling_targets(targets):
+    """
+    Normalize the parsed `--prof-mod` and `--eager-preimports` by:
+    - Normalizing file paths with `find_script()`, and subsequently
+      to absolute paths.
+    - Splitting non-file paths at commas into (presumably) file paths
+      and/or dotted paths.
+    - Removing duplicates.
+    """
+    def find(path):
+        try:
+            path = find_script(path, exit_on_error=False)
+        except FileNotFoundError:
+            return None
+        return os.path.abspath(path)
+
+    results = {}
+    for chunk in targets:
+        filename = find(chunk)
+        if filename is not None:
+            results.setdefault(filename)
+            continue
+        for subchunk in chunk.split(','):
+            filename = find(subchunk)
+            results.setdefault(subchunk if filename is None else filename)
+    return list(results)
 
 
 class _restore_list:
@@ -416,18 +450,34 @@ def main(args=None):
         parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
                             help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                             "Minimum value is 1 (second). Defaults to disabled.")
-        parser.add_argument('-p', '--prof-mod', action='append', type=str,
-                            help="List of modules, functions and/or classes to profile specified by their name or path. "
-                            "List is comma separated, adding the current script path profiles the full script. "
-                            "Multiple copies of this flag can be supplied and the.list is extended. "
-                            "Only works with line_profiler -l, --line-by-line")
-        parser.add_argument('-e', '--eager-preimports', action='store_true',
-                            help="If specified, all modules, classes, etc. "
-                            "specified in `--prof-mod` will be imported and "
-                            "marked for profiling before running the script/"
-                            "module, regardless of whether they are directly "
-                            "imported in the script/module. "
-                            "Only works with line_profiler -l, --line-by-line")
+        parser.add_argument('-p', '--prof-mod',
+                            action='append',
+                            metavar=("{path/to/script | object.dotted.path}"
+                                     "[,...]"),
+                            help="List of modules, functions and/or classes "
+                            "to profile specified by their name or path, "
+                            "if they are imported in the profiled "
+                            "script/module. "
+                            "These profiling targets can be supplied both as "
+                            "comma-separated items, or separately with "
+                            "multiple copies of this flag. "
+                            "Adding the current script/module profiles the "
+                            "entirety of it. "
+                            "Only works with line_profiler -l, --line-by-line.")
+        parser.add_argument('-e', '--eager-preimports',
+                            action='append',
+                            const=True,
+                            metavar=("{path/to/script | object.dotted.path}"
+                                     "[,...]"),
+                            nargs='?',
+                            help="List of modules, functions, and/or classes, "
+                            "to be imported and marked for profiling before "
+                            "running the script/module, regardless of whether "
+                            "they are directly imported in the script/module. "
+                            "Follows the same semantics as `--prof-mod`. "
+                            "If supplied without an argument, indicates that "
+                            "all `--prof-mod` targets are to be so profiled. "
+                            "Only works with line_profiler -l, --line-by-line.")
         parser.add_argument('--prof-imports', action='store_true',
                             help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                             "Only works with line_profiler -l, --line-by-line")
@@ -568,15 +618,21 @@ def _main(options, module=False):
         # Note: `prof_mod` entries can be filenames (which can contain
         # commas), so check against existing filenames before splitting
         # them
-        options.prof_mod = sum(
-            ([spec] if os.path.exists(spec) else spec.split(',')
-             for spec in options.prof_mod),
-            [])
-    if options.line_by_line and options.prof_mod and options.eager_preimports:
-        # We assume most items in `.prof_mod` to be import-able without
-        # significant side effects, but the same cannot be said if it
-        # contains the script file to be run -- so don't eager-import
-        # it.
+        options.prof_mod = _normalize_profiling_targets(options.prof_mod)
+    if options.eager_preimports:
+        if options.eager_preimports == [True]:
+            # Eager-import all of `--prof-mod`
+            options.eager_preimports = list(options.prof_mod or [])
+        else:  # Only eager-import the specified targets
+            options.eager_preimports = _normalize_profiling_targets([
+                target for target in options.eager_preimports
+                if target not in (True,)])
+    if options.line_by_line and options.eager_preimports:
+        # We assume most items in `.eager_preimports` to be import-able
+        # without significant side effects, but the same cannot be said
+        # if it contains the script file to be run. E.g. the script may
+        # not even have a `if __name__ == '__main__': ...` guard. So
+        # don't eager-import it.
         from line_profiler.autoprofile.eager_preimports import (
             is_dotted_path, propose_names, write_eager_import_module)
         from line_profiler.autoprofile.util_static import modpath_to_modname
@@ -585,21 +641,23 @@ def _main(options, module=False):
 
         filtered_targets = []
         invalid_targets = []
-        for target in options.prof_mod:
+        for target in options.eager_preimports:
             if is_dotted_path(target):
                 filtered_targets.append(target)
                 continue
-            try:
-                with open(os.devnull, mode='w') as fobj:
-                    with contextlib.redirect_stderr(fobj):
-                        filename = find_script(target)
-            except SystemExit:  # No such file
+            # Filenames are already normalized in
+            # `_normalize_profiling_targets()`
+            if not os.path.exists(target):
                 invalid_targets.append(target)
                 continue
-            if not module and os.path.samefile(filename, script_file):
+            if not module and os.path.samefile(target, script_file):
                 # Ignore the script to be run in eager importing
+                # (but make sure that it is handled by `--prof-mod`)
+                if options.prof_mod is None:
+                    options.prof_mod = []
+                options.prof_mod.append(script_file)
                 continue
-            modname = modpath_to_modname(filename)
+            modname = modpath_to_modname(target)
             if modname is None:  # Not import-able
                 invalid_targets.append(target)
                 continue
