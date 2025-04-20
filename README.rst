@@ -36,7 +36,7 @@ They are available under a `BSD license`_.
 Quick Start (Modern)
 ====================
 
-This guide is for versions of line profiler starting a ``4.1.0``.
+This guide is for versions of line profiler starting at ``4.1.0``.
 
 To profile a python script:
 
