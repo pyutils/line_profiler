@@ -612,7 +612,6 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
-
         outfile, = temp_dpath.glob(expected_outfile)
         lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
         proc = ub.cmd(lp_cmd)
@@ -623,3 +622,150 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
     assert 'Function: add_one' in raw_output
     assert 'Function: add_two' not in raw_output
     assert 'Function: add_three' in raw_output
+
+
+@pytest.mark.parametrize(
+    ['prof_mod', 'eager_preimports',
+     'add_one', 'add_two', 'add_three', 'add_four', 'add_operator', 'main'],
+    # Test that `--eager-preimports` know to exclude the script run
+    # (so as not to inadvertantly run it twice)
+    [('script.py', None, False, False, False, False, False, True),
+     (None, 'script.py', False, False, False, False, False, True),
+     # Test explicitly passing targets to `--eager-preimports`
+     (['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'], None,
+      True, True, False, False, True, False),
+     (['test_mod.submod1,test_mod.submod2'], ['test_mod.subpkg.submod4'],
+      True, True, False, True, True, False),
+     (None, ['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'],
+      True, True, False, True, True, False),
+     # Test implicitly passing targets to `--eager-preimports`
+     (['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'], True,
+      True, True, False, True, True, False)])
+def test_autoprofile_eager_preimports(
+        prof_mod, eager_preimports,
+        add_one, add_two, add_three, add_four, add_operator, main):
+    """
+    Test eager imports with the `-e`/`--eager-preimports` flag.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+        _write_demo_module(temp_dpath)
+
+        args = [sys.executable, '-m', 'kernprof']
+        if prof_mod is not None:
+            if isinstance(prof_mod, str):
+                prof_mod = [prof_mod]
+            for target in prof_mod:
+                args.extend(['-p', target])
+        if eager_preimports in (True,):
+            args.append('-e')
+        elif eager_preimports is not None:
+            if isinstance(eager_preimports, str):
+                eager_preimports = [eager_preimports]
+            for target in eager_preimports:
+                args.extend(['-e', target])
+        args.extend(['-l', 'script.py'])
+        proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+        # Check that pre-imports don't accidentally run the code twice
+        assert proc.stdout.count('7.9') == 1
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+
+        prof = temp_dpath / 'script.py.lprof'
+
+        args = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
+        proc = ub.cmd(args, cwd=temp_dpath)
+        raw_output = proc.stdout
+        print(raw_output)
+        proc.check_returncode()
+
+    assert ('Function: add_one' in raw_output) == add_one
+    assert ('Function: add_two' in raw_output) == add_two
+    assert ('Function: add_three' in raw_output) == add_three
+    assert ('Function: add_four' in raw_output) == add_four
+    assert ('Function: add_operator' in raw_output) == add_operator
+    assert ('Function: main' in raw_output) == main
+
+
+@pytest.mark.parametrize(
+    ('eager_preimports, function, method, class_method, static_method, '
+     'descriptor'),
+    [('my_module', True, True, True, True, True),
+     # `function()` included in profiling via `Class.partial_method()`
+     ('my_module.Class', True, True, True, True, True),
+     ('my_module.Class.descriptor', False, False, False, False, True)])
+def test_autoprofile_callable_wrapper_objects(
+        eager_preimports, function, method, class_method, static_method,
+        descriptor):
+    """
+    Test that on-import profiling catches various callable-wrapper
+    object types:
+    - properties
+    - staticmethod
+    - classmethod
+    - partialmethod
+    Like it does regular methods and functions.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+        path = temp_dpath / 'path'
+        path.mkdir()
+        (path / 'my_module.py').write_text(ub.codeblock("""
+        import functools
+
+
+        def function(x):
+            return
+
+
+        class Class:
+            def method(self):
+                return
+
+            @classmethod
+            def class_method(cls):
+                return
+
+            @staticmethod
+            def static_method():
+                return
+
+            partial_method = functools.partial(function)
+
+            @property
+            def descriptor(self):
+                return
+        """))
+        (temp_dpath / 'script.py').write_text(ub.codeblock("""
+        import my_module
+
+
+        if __name__ == '__main__':
+            pass
+        """))
+
+        with ub.ChDir(temp_dpath):
+            args = [sys.executable, '-m', 'kernprof',
+                    '-e', eager_preimports, '-lv', 'script.py']
+            python_path = os.environ.get('PYTHONPATH')
+            if python_path:
+                python_path = '{}:{}'.format(path, python_path)
+            else:
+                python_path = str(path)
+            proc = ub.cmd(args,
+                          env={**os.environ, 'PYTHONPATH': python_path},
+                          verbose=2)
+            raw_output = proc.stdout
+        print(raw_output)
+        print(proc.stderr)
+        proc.check_returncode()
+
+    assert ('Function: function' in raw_output) == function
+    assert ('Function: method' in raw_output) == method
+    assert ('Function: class_method' in raw_output) == class_method
+    assert ('Function: static_method' in raw_output) == static_method
+    # `partial_method()` not included as its own item because it's a
+    # wrapper around `function()`
+    assert 'Function: partial_method' not in raw_output
+    assert ('Function: descriptor' in raw_output) == descriptor
