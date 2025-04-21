@@ -166,12 +166,20 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
+        return self._add_namespace_inner(set(), namespace, wrap=wrap)
+
+    def _add_namespace_inner(self, duplicate_tracker, namespace, *,
+                             wrap=False):
         count = 0
-        add_cls = self.add_class
+        add_cls = self._add_namespace_inner
         add_func = self.add_callable
         for attr, value in vars(namespace).items():
+            if id(value) in duplicate_tracker:
+                continue
+            duplicate_tracker.add(id(value))
             if isinstance(value, type):
-                count += 1 if add_cls(value, wrap=wrap) else 0
+                if add_cls(duplicate_tracker, value, wrap=wrap):
+                    count += 1
                 continue
             try:
                 func_needs_adding = add_func(value)

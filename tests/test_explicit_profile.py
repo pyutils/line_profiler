@@ -498,6 +498,57 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
         assert line.split()[1] == ('1' if has_timing else 'pass')
 
 
+def test_profiler_add_class_recursion_guard():
+    """
+    Test that if we were to add a pair of classes which each of them
+    has a reference to the other in its namespace, we don't end up in
+    infinite recursion.
+    """
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        curdir = ub.Path.cwd()
+        (curdir / 'script.py').write_text(ub.codeblock("""
+        from line_profiler import LineProfiler
+
+
+        class Class1:
+            def method1(self):
+                pass
+
+            class ChildClass1:
+                def child_method_1(self):
+                    pass
+
+
+        class Class2:
+            def method2(self):
+                pass
+
+            class ChildClass2:
+                def child_method_2(self):
+                    pass
+
+            OtherClass = Class1
+            # A duplicate reference shouldn't affect profiling either
+            YetAnotherClass = Class1
+
+
+        # Add self/mutual references
+        Class1.ThisClass = Class1
+        Class1.OtherClass = Class2
+
+        profile = LineProfiler()
+        profile.add_class(Class1)
+        assert len(profile.functions) == 4
+        assert Class1.method1 in profile.functions
+        assert Class2.method2 in profile.functions
+        assert Class1.ChildClass1.child_method_1 in profile.functions
+        assert Class2.ChildClass2.child_method_2 in profile.functions
+        """))
+        ub.cmd([sys.executable, 'script.py'], verbose=2).check_returncode()
+
+
 if __name__ == '__main__':
     ...
     test_simple_explicit_nonglobal_usage()
