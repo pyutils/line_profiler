@@ -1,3 +1,4 @@
+from types import ModuleType
 from typing import Literal, List, Tuple
 import io
 from ._line_profiler import LineProfiler as CLineProfiler
@@ -26,7 +27,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     rich: bool = ...) -> None:
         ...
 
-    def add_module(self, mod) -> int:
+    def add_module(self, mod: ModuleType, *, wrap: bool = False) -> int:
+        ...
+
+    def add_class(self, cls: type, *, wrap: bool = False) -> int:
         ...
 
 
