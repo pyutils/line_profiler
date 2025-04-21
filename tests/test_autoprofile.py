@@ -529,28 +529,31 @@ def test_autoprofile_exec_module(
     assert ('Function: _main' in raw_output) == main
 
 
+@pytest.mark.parametrize('view', [True, False])
+@pytest.mark.parametrize('prof_mod', [True, False])
 @pytest.mark.parametrize(
     ('outfile', 'expected_outfile'),
     [(None, 'kernprof-stdin-*.lprof'),
      ('test-stdin.lprof', 'test-stdin.lprof')])
 def test_autoprofile_from_stdin(
-    outfile, expected_outfile,
-) -> None:
+        outfile, expected_outfile, prof_mod, view) -> None:
     """
     Test the profiling of a script read from stdin.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dpath = ub.Path(tmpdir)
 
+        kp_cmd = [sys.executable, '-m', 'kernprof', '-l']
+        if prof_mod:
+            kp_cmd += ['-p' 'test_mod.submod1,test_mod.subpkg.submod3']
+        if outfile:
+            kp_cmd += ['-o', outfile]
+        if view:
+            kp_cmd += ['-v']
+        kp_cmd += ['-']
         with ub.ChDir(temp_dpath):
             script_fpath = _write_demo_module(ub.Path())
-
-            args = [sys.executable, '-m', 'kernprof',
-                    '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
-            if outfile:
-                args += ['-o', outfile]
-            args += ['-']
-            proc = subprocess.run(args,
+            proc = subprocess.run(kp_cmd,
                                   input=script_fpath.read_text(),
                                   text=True,
                                   capture_output=True)
@@ -559,25 +562,28 @@ def test_autoprofile_from_stdin(
             proc.check_returncode()
 
         outfile, = temp_dpath.glob(expected_outfile)
-        args = [sys.executable, '-m', 'line_profiler', str(outfile)]
-        proc = ub.cmd(args)
-        raw_output = proc.stdout
-        print(raw_output)
-        proc.check_returncode()
+        if view:
+            raw_output = proc.stdout
+        else:
+            lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
+            proc = ub.cmd(lp_cmd)
+            raw_output = proc.stdout
+            print(raw_output)
+            proc.check_returncode()
 
-    assert 'Function: add_one' in raw_output
+    assert ('Function: add_one' in raw_output) == prof_mod
     assert 'Function: add_two' not in raw_output
-    assert 'Function: add_three' in raw_output
-    assert 'Function: main' not in raw_output
+    assert ('Function: add_three' in raw_output) == prof_mod
+    # If we're calling a separate process to view the results, the
+    # script file will already have been deleted
+    assert ('Function: main' in raw_output) == view
 
 
 @pytest.mark.parametrize(
     ('outfile', 'expected_outfile'),
     [(None, 'kernprof-command-*.lprof'),
      ('test-command.lprof', 'test-command.lprof')])
-def test_autoprofile_from_inlined_script(
-    outfile, expected_outfile,
-) -> None:
+def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
     """
     Test the profiling of an inlined script (supplied with the `-c`
     flag).
@@ -587,32 +593,29 @@ def test_autoprofile_from_inlined_script(
 
         _write_demo_module(temp_dpath)
 
-        inlined_script = (
-            'from test_mod import submod1, submod2; '
-            'from test_mod.subpkg import submod3; '
-            'import statistics; '
-            'data = [1, 2, 3]; '
-            'val = submod1.add_one(data); '
-            'val = submod2.add_two(val); '
-            'val = submod3.add_three(val); '
-            'result = statistics.harmonic_mean(val); '
-            'print(result); '
-        )
-        prof_file = 'test-command.lprof'
+        inlined_script = ('from test_mod import submod1, submod2; '
+                          'from test_mod.subpkg import submod3; '
+                          'import statistics; '
+                          'data = [1, 2, 3]; '
+                          'val = submod1.add_one(data); '
+                          'val = submod2.add_two(val); '
+                          'val = submod3.add_three(val); '
+                          'result = statistics.harmonic_mean(val); '
+                          'print(result);')
 
-        args = [sys.executable, '-m', 'kernprof',
-                '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
+        kp_cmd = [sys.executable, '-m', 'kernprof',
+                  '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
         if outfile:
-            args += ['-o', outfile]
-        args += ['-c', inlined_script]
-        proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+            kp_cmd += ['-o', outfile]
+        kp_cmd += ['-c', inlined_script]
+        proc = ub.cmd(kp_cmd, cwd=temp_dpath, verbose=2)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
         outfile, = temp_dpath.glob(expected_outfile)
-        args = [sys.executable, '-m', 'line_profiler', str(outfile)]
-        proc = ub.cmd(args)
+        lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
+        proc = ub.cmd(lp_cmd)
         raw_output = proc.stdout
         print(raw_output)
         proc.check_returncode()
