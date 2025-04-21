@@ -15,6 +15,7 @@ Changes
 * ENH: In Python >=3.11, profiled objects are reported using their qualified name.
 * ENH: Highlight final summary using rich if enabled
 * ENH: Made it possible to use multiple profiler instances simultaneously
+* ENH: Added CLI argument ``-e``/``--eager-preimports`` to profile target entities even when they aren't directly imported in the run script/module; made on-import profiling more aggressive so that it doesn't miss entities like class methods and properties
 
 4.2.0
 ~~~~~
