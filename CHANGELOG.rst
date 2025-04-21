@@ -11,6 +11,7 @@ Changes
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
 * FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
+* ENH: Added CLI argument ``-e``/``--eager-preimports`` to profile target entities even when they aren't directly imported in the run script/module; made on-import profiling more aggressive so that it doesn't miss entities like class methods and properties
 
 4.2.0
 ~~~~~

@@ -415,9 +415,10 @@ def test_explicit_profile_with_duplicate_functions():
 def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
     """
     Test the `wrap` argument for the
+    `LineProfiler.add_class()`, `.add_module()`, and
+    `.add_imported_function_or_module()` (added via
     `line_profiler.autoprofile.autoprofile.
-    _extend_line_profiler_for_profiling_imports()`,
-    `LineProfiler.add_class()` and `.add_module()` methods.
+    _extend_line_profiler_for_profiling_imports()`) methods.
     """
     def write(path, code):
         path.write_text(ub.codeblock(code))
@@ -434,7 +435,9 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
 
         profiler = LineProfiler()
         upgrade_profiler(profiler)
+        # This dispatches to `.add_module()`
         profiler.add_imported_function_or_module(my_module_1{})
+        # This dispatches to `.add_class()`
         profiler.add_imported_function_or_module(Class{})
         profiler.add_imported_function_or_module(func3)
 
