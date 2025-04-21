@@ -97,9 +97,9 @@ def create_doctest_wrapper(
             # If setting up the test item fails (e.g. due to `pytest`
             # refactoring), fall back to the vanilla implementation with
             # a warning
+            tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
             msg = ('failed to convert `doctest.DocTest` into '
-                   '`pytest.Item`:\n\n'
-                   f'{"".join(traceback.format_exception(e))}\n'
+                   f'`pytest.Item`:\n\n{"".join(tb_lines)}\n'
                    'falling back to vanilla `doctest`')
             warnings.warn(msg)
             return wrapper_vanilla()
