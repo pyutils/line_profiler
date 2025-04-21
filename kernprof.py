@@ -446,10 +446,8 @@ def main(args=None):
     import tempfile
 
     source, content = tempfile_source_and_content
-    file_prefix = f'kernprof-{source}-'
-    with tempfile.NamedTemporaryFile(mode='w',
-                                     prefix=file_prefix,
-                                     suffix='.py') as fobj:
+    file_prefix = f'kernprof-{source}'
+    with tempfile.TemporaryDirectory() as tmpdir:
         # Set up the script to be run
         try:
             content = ast.unparse(ast.parse(content))
@@ -461,19 +459,21 @@ def main(args=None):
                 # stdin), which can't be all that complicated
                 RecursionError):
             pass
-        print(content, file=fobj, flush=True)
-        options.script = fobj.name
+        fname = os.path.join(tmpdir, file_prefix + '.py')
+        with open(fname, mode='w') as fobj:
+            print(content, file=fobj)
+        options.script = fname
         # Add the tempfile to `--prof-mod`
         if options.prof_mod:
-            options.prof_mod += ',' + fobj.name
+            options.prof_mod.append(fname)
         else:
-            options.prof_mod = fobj.name
+            options.prof_mod = [fname]
         # Set the output file to somewhere nicer (also take care of
         # possible filename clash)
         if not options.outfile:
             extension = 'lprof' if options.line_by_line else 'prof'
             _, options.outfile = tempfile.mkstemp(dir=os.curdir,
-                                                  prefix=file_prefix,
+                                                  prefix=file_prefix + '-',
                                                   suffix='.' + extension)
         return _main(options, module)
 
