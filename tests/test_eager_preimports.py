@@ -11,6 +11,8 @@ import doctest
 import functools
 import importlib
 import pathlib
+import warnings
+import traceback
 from types import ModuleType
 from typing import Any, Callable, Dict, Type, Union
 
@@ -75,15 +77,32 @@ def create_doctest_wrapper(
         use_pytest_doctest = False
 
     def wrapper_pytest(request: pytest.FixtureRequest) -> None:
-        if globs is not None:
-            test.globs = globs.copy()
-        module = module_from_parent(parent=request.session, path=fname)
-        runner = PytestDoctestRunner(
-            checker=checker,
-            optionflags=get_doctest_option_flags(request.config),
-            continue_on_failure=False)
-        item = item_from_parent(module, name=name, runner=runner, dtest=test)
-        item.setup()
+        try:
+            if globs is not None:
+                test.globs = globs.copy()
+            module = module_from_parent(parent=request.session, path=fname)
+            try:
+                option_flags = get_doctest_option_flags(request.config)
+            except AttributeError:
+                # `pytest < 8` expects an object having the `.config` to
+                # be passed, instead of the `pytest.Config` itself
+                option_flags = get_doctest_option_flags(request)
+            runner = PytestDoctestRunner(checker=checker,
+                                         optionflags=option_flags,
+                                         continue_on_failure=False)
+            item = item_from_parent(module,
+                                    name=name, runner=runner, dtest=test)
+            item.setup()
+        except Exception as e:
+            # If setting up the test item fails (e.g. due to `pytest`
+            # refactoring), fall back to the vanilla implementation with
+            # a warning
+            msg = ('failed to convert `doctest.DocTest` into '
+                   '`pytest.Item`:\n\n'
+                   f'{"".join(traceback.format_exception(e))}\n'
+                   'falling back to vanilla `doctest`')
+            warnings.warn(msg)
+            return wrapper_vanilla()
         try:
             item.runtest()
         except doctest.UnexpectedException as e:
