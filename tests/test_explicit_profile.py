@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 import sys
@@ -405,6 +406,96 @@ def test_explicit_profile_with_duplicate_functions():
     assert output_fpath.exists()
     assert (temp_dpath / 'profile_output.lprof').exists()
     temp_dpath.delete()
+
+
+@pytest.mark.parametrize('reset_enable_count', [True, False])
+@pytest.mark.parametrize('wrap_class, wrap_module',
+                         [(None, None), (False, True),
+                          (True, False), (True, True)])
+def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
+    """
+    Test the `wrap` argument for the
+    `line_profiler.autoprofile.autoprofile.
+    _extend_line_profiler_for_profiling_imports()`,
+    `LineProfiler.add_class()` and `.add_module()` methods.
+    """
+    def write(path, code):
+        path.write_text(ub.codeblock(code))
+
+    script = ub.codeblock('''
+        from line_profiler import LineProfiler
+        from line_profiler.autoprofile.autoprofile import (
+            _extend_line_profiler_for_profiling_imports as upgrade_profiler)
+
+        import my_module_1
+        from my_module_2 import Class
+        from my_module_3 import func3
+
+
+        profiler = LineProfiler()
+        upgrade_profiler(profiler)
+        profiler.add_imported_function_or_module(my_module_1{})
+        profiler.add_imported_function_or_module(Class{})
+        profiler.add_imported_function_or_module(func3)
+
+        if {}:
+            for _ in range(profiler.enable_count):
+                profiler.disable_by_count()
+
+        # `func1()` should only have timing info if `wrap_module`
+        my_module_1.func1()
+        # `method2()` should only have timing info if `wrap_class`
+        Class.method2()
+        # `func3()` is profiled but don't see any timing info because it
+        # isn't wrapped and doesn't auto-`.enable()` before being called
+        func3()
+        profiler.print_stats(details=True, summarize=True)
+                          '''.format(
+        '' if wrap_module is None else f', wrap={wrap_module}',
+        '' if wrap_class is None else f', wrap={wrap_class}',
+        reset_enable_count))
+
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        curdir = ub.Path.cwd()
+        write(curdir / 'script.py', script)
+        write(curdir / 'my_module_1.py',
+              '''
+        def func1():
+            pass  # Marker: func1
+              ''')
+        write(curdir / 'my_module_2.py',
+              '''
+        class Class:
+            @classmethod
+            def method2(cls):
+                pass  # Marker: method2
+              ''')
+        write(curdir / 'my_module_3.py',
+              '''
+        def func3():
+            pass  # Marker: func3
+              ''')
+        proc = ub.cmd([sys.executable, str(curdir / 'script.py')])
+
+    # Check that the profiler has seen each of the methods
+    raw_output = proc.stdout
+    print(script)
+    print(raw_output)
+    print(proc.stderr)
+    proc.check_returncode()
+    assert '# Marker: func1' in raw_output
+    assert '# Marker: method2' in raw_output
+    assert '# Marker: func3' in raw_output
+
+    # Check that the timing info (of the lack thereof) are correct
+    for func, has_timing in [('func1', wrap_module), ('method2', wrap_class),
+                             ('func3', False)]:
+        line, = (line for line in raw_output.splitlines()
+                 if line.endswith('Marker: ' + func))
+        has_timing = has_timing or not reset_enable_count
+        assert line.split()[1] == ('1' if has_timing else 'pass')
 
 
 if __name__ == '__main__':
