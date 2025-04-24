@@ -1,7 +1,8 @@
 import inspect
 
 
-def add_imported_function_or_module(self, item, *, wrap=False):
+def add_imported_function_or_module(self, item, *,
+                                    match_scope='siblings', wrap=False):
     """
     Method to add an object to `LineProfiler` to be profiled.
 
@@ -12,6 +13,21 @@ def add_imported_function_or_module(self, item, *, wrap=False):
     Args:
         item (Union[Callable, Type, ModuleType]):
             Object to be profiled.
+        match_scope (Literal['exact', 'siblings', 'descendants',
+                             'none']):
+            Whether (and how) to match the scope of member classes to
+            `item` (if a class or module) and decide on whether to add
+            them:
+            - 'exact': only add classes defined locally in the body of
+              `item`
+            - 'descendants': only add locally-defined classes and
+              classes defined in submodules or locally-defined class
+              bodies, and so on.
+            - 'siblings': only add classes fulfilling 'descendants',
+              or defined in the same module as `item` (if a class) or in
+              sibling modules and subpackages to `item` (if a module)
+            - 'none': don't check scopes and add all classes in the
+              namespace
         wrap (bool):
             Whether to replace the wrapped members with wrappers which
             automatically enable/disable the profiler when called.
@@ -23,9 +39,9 @@ def add_imported_function_or_module(self, item, *, wrap=False):
         `LineProfiler.add_callable()`, `.add_module()`, `.add_class()`
     """
     if inspect.isclass(item):
-        count = self.add_class(item, wrap=wrap)
+        count = self.add_class(item, match_scope=match_scope, wrap=wrap)
     elif inspect.ismodule(item):
-        count = self.add_module(item, wrap=wrap)
+        count = self.add_module(item, match_scope=match_scope, wrap=wrap)
     else:
         try:
             count = self.add_callable(item)
