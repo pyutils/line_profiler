@@ -8,6 +8,15 @@ import pytest
 import ubelt as ub
 
 
+@contextlib.contextmanager
+def enter_tmpdir():
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = os.path.abspath(enter(tempfile.TemporaryDirectory()))
+        enter(ub.ChDir(tmpdir))
+        yield ub.Path(tmpdir)
+
+
 def test_simple_explicit_nonglobal_usage():
     """
     python -c "from test_explicit_profile import *; test_simple_explicit_nonglobal_usage()"
@@ -458,10 +467,7 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
         '' if wrap_class is None else f', wrap={wrap_class}',
         reset_enable_count))
 
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
-        curdir = ub.Path.cwd()
+    with enter_tmpdir() as curdir:
         write(curdir / 'script.py', script)
         write(curdir / 'my_module_1.py',
               '''
@@ -507,49 +513,180 @@ def test_profiler_add_class_recursion_guard():
     has a reference to the other in its namespace, we don't end up in
     infinite recursion.
     """
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
-        curdir = ub.Path.cwd()
-        (curdir / 'script.py').write_text(ub.codeblock("""
-        from line_profiler import LineProfiler
+    from line_profiler import LineProfiler
+
+    class Class1:
+        def method1(self):
+            pass
+
+        class ChildClass1:
+            def child_method_1(self):
+                pass
+
+    class Class2:
+        def method2(self):
+            pass
+
+        class ChildClass2:
+            def child_method_2(self):
+                pass
+
+        OtherClass = Class1
+        # A duplicate reference shouldn't affect profiling either
+        YetAnotherClass = Class1
+
+    # Add self/mutual references
+    Class1.ThisClass = Class1
+    Class1.OtherClass = Class2
+
+    profile = LineProfiler()
+    profile.add_class(Class1)
+    assert len(profile.functions) == 4
+    assert Class1.method1 in profile.functions
+    assert Class2.method2 in profile.functions
+    assert Class1.ChildClass1.child_method_1 in profile.functions
+    assert Class2.ChildClass2.child_method_2 in profile.functions
 
 
+def test_profiler_warn_unwrappable():
+    """
+    Test for warnings when using `LineProfiler.add_*(wrap=True)` with a
+    namespace which doesn't allow attribute assignment.
+    """
+    from line_profiler import LineProfiler
+
+    class ProblamticMeta(type):
+        def __init__(cls, *args, **kwargs):
+            super(ProblamticMeta, cls).__init__(*args, **kwargs)
+            cls._initialized = True
+
+        def __setattr__(cls, attr, value):
+            if not getattr(cls, '_initialized', None):
+                return super(ProblamticMeta, cls).__setattr__(attr, value)
+            raise AttributeError(
+                f'cannot set attribute on {type(cls)} instance')
+
+    class ProblematicClass(metaclass=ProblamticMeta):
+        def method(self):
+            pass
+
+    profile = LineProfiler()
+    vanilla_method = ProblematicClass.method
+
+    with pytest.warns(match=r"cannot wrap 1 attribute\(s\) of "
+                      r"<class '.*\.ProblematicClass'> \(`\{attr: value\}`\): "
+                      r"\{'method': <function .*\.method at 0x.*>\}"):
+        # The method is added to the profiler, but we can't assign its
+        # wrapper back into the class namespace
+        assert profile.add_class(ProblematicClass, wrap=True) == 1
+
+    assert ProblematicClass.method is vanilla_method
+
+
+@pytest.mark.parametrize(
+    ('match_scope', 'add_module_targets', 'add_class_targets'),
+    [('exact',
+      {'class2_method', 'child_class2_method'},
+      {'class3_method', 'child_class3_method'}),
+     ('descendants',
+      {'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method'},
+      {'class3_method', 'child_class3_method'}),
+     ('siblings',
+      {'class1_method', 'child_class1_method',
+       'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'},
+      {'class3_method', 'child_class3_method', 'other_class3_method'}),
+     ('none',
+      {'class1_method', 'child_class1_method',
+       'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'},
+      {'child_class1_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'})])
+def test_profiler_scope_matching(monkeypatch,
+                                 match_scope,
+                                 add_module_targets,
+                                 add_class_targets):
+    """
+    Test for the scope-matching strategies of the `LineProfiler.add_*()`
+    methods.
+    """
+    def write(path, code=None):
+        path.parent.mkdir(exist_ok=True, parents=True)
+        if code is None:
+            path.touch()
+        else:
+            path.write_text(ub.codeblock(code))
+
+    with enter_tmpdir() as curdir:
+        pkg_dir = curdir / 'packages' / 'my_pkg'
+        write(pkg_dir / '__init__.py')
+        write(pkg_dir / 'submod1.py',
+              """
         class Class1:
-            def method1(self):
+            def class1_method(self):
                 pass
 
             class ChildClass1:
-                def child_method_1(self):
+                def child_class1_method(self):
                     pass
+              """)
+        write(pkg_dir / 'subpkg2' / '__init__.py',
+              """
+        from ..submod1 import Class1  # Import from a sibling
+        from .submod3 import Class3  # Import from a descendant
 
 
         class Class2:
-            def method2(self):
+            def class2_method(self):
                 pass
 
             class ChildClass2:
-                def child_method_2(self):
+                def child_class2_method(self):
                     pass
 
-            OtherClass = Class1
-            # A duplicate reference shouldn't affect profiling either
-            YetAnotherClass = Class1
+            BorrowedChildClass = Class1.ChildClass1  # Non-sibling class
+              """)
+        write(pkg_dir / 'subpkg2' / 'submod3.py',
+              """
+        from ..submod1 import Class1
 
 
-        # Add self/mutual references
-        Class1.ThisClass = Class1
-        Class1.OtherClass = Class2
+        class Class3:
+            def class3_method(self):
+                pass
 
+            class OtherChildClass3:
+                def child_class3_method(self):
+                    pass
+
+            # Unrelated class
+            BorrowedChildClass1 = Class1.ChildClass1
+
+        class OtherClass3:
+            def other_class3_method(self):
+                pass
+
+        # Sibling class
+        Class3.BorrowedChildClass3 = OtherClass3
+              """)
+        monkeypatch.syspath_prepend(pkg_dir.parent)
+
+        from my_pkg import subpkg2
+        from line_profiler import LineProfiler
+
+        # Add a module
         profile = LineProfiler()
-        profile.add_class(Class1)
-        assert len(profile.functions) == 4
-        assert Class1.method1 in profile.functions
-        assert Class2.method2 in profile.functions
-        assert Class1.ChildClass1.child_method_1 in profile.functions
-        assert Class2.ChildClass2.child_method_2 in profile.functions
-        """))
-        ub.cmd([sys.executable, 'script.py'], verbose=2).check_returncode()
+        profile.add_module(subpkg2, match_scope=match_scope)
+        assert len(profile.functions) == len(add_module_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_module_targets)
+        # Add a class
+        profile = LineProfiler()
+        profile.add_class(subpkg2.Class3, match_scope=match_scope)
+        assert len(profile.functions) == len(add_class_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_class_targets)
 
 
 if __name__ == '__main__':
