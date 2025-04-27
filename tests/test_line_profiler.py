@@ -506,6 +506,28 @@ def test_cached_property_decorator():
     assert profile.enable_count == 0
 
 
+def test_profiler_c_callable_no_op():
+    """
+    Test that when the profiler is used to decorate or add a C-level
+    callable it results in a no-op.
+    """
+    profile = LineProfiler()
+
+    for i, (func, Type) in enumerate([
+            (len, types.BuiltinFunctionType),
+            ('string'.split, types.BuiltinMethodType),
+            (vars(int)['from_bytes'], types.ClassMethodDescriptorType),
+            (str.split, types.MethodDescriptorType),
+            ((1).__str__, types.MethodWrapperType),
+            (int.__repr__, types.WrapperDescriptorType)]):
+        assert isinstance(func, Type)
+        if i % 2:  # Add is no-op
+            assert not profile.add_callable(func)
+        else:  # Decoration is no-op
+            assert profile(func) is func
+        assert not profile.functions
+
+
 def test_show_func_column_formatting():
     from line_profiler.line_profiler import show_func
     import line_profiler
