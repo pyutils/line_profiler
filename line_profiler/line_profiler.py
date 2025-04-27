@@ -4,6 +4,7 @@ This module defines the core :class:`LineProfiler` class as well as methods to
 inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
+import functools
 import pickle
 import inspect
 import linecache
@@ -164,23 +165,29 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
     def _add_namespace(self, duplicate_tracker, namespace, *,
-                       filter_scope=None, wrap=False):
+                       match_scope='none', wrap=False):
         count = 0
-        add_cls = self._add_namespace
+        add_cls = functools.partial(self._add_namespace, duplicate_tracker,
+                                    match_scope=match_scope, wrap=wrap)
         add_func = self.add_callable
+        remember = duplicate_tracker.add
+        wrap_func = self.wrap_callable
         wrap_failures = {}
-        if filter_scope is None:
-            def filter_scope(*_):
+        if match_scope == 'none':
+            def check(*_):
                 return True
+        elif isinstance(namespace, type):
+            check = self._add_class_filter(namespace, match_scope)
+        else:
+            check = self._add_module_filter(namespace, match_scope)
 
         for attr, value in vars(namespace).items():
             if id(value) in duplicate_tracker:
                 continue
-            duplicate_tracker.add(id(value))
+            remember(id(value))
             if isinstance(value, type):
-                if filter_scope(namespace, value):
-                    if add_cls(duplicate_tracker, value, wrap=wrap):
-                        count += 1
+                if check(value) and add_cls(value):
+                    count += 1
                 continue
             try:
                 if not add_func(value):
@@ -188,7 +195,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             except TypeError:  # Not a callable (wrapper)
                 continue
             if wrap:
-                wrapper = self.wrap_callable(value)
+                wrapper = add_func(value)
                 if wrapper is not value:
                     try:
                         setattr(namespace, attr, wrapper)
@@ -206,6 +213,48 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                    f'{namespace!r} (`{{attr: value}}`): {wrap_failures!r}')
             warnings.warn(msg, stacklevel=2)
         return count
+
+    @staticmethod
+    def _add_module_filter(mod, match_scope):
+        def match_prefix(s, prefix, sep='.'):
+            return s == prefix or s.startswith(prefix + sep)
+
+        def class_is_child(other):
+            return other.__module__ == mod.__name__
+
+        def class_is_descendant(other):
+            return match_prefix(other.__module__, mod.__name__)
+
+        def class_is_cousin(other):
+            if class_is_descendant(other):
+                return True
+            return match_prefix(other.__module__, parent)
+
+        parent, _, basename = mod.__name__.rpartition('.')
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': (class_is_cousin  # Only if a pkg
+                             if basename else
+                             class_is_descendant)}[match_scope]
+
+    @staticmethod
+    def _add_class_filter(cls, match_scope):
+        def class_is_child(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
+
+        def modules_are_equal(other):  # = sibling check
+            return cls.__module__ == other.__module__
+
+        def class_is_descendant(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__.startswith(cls.__qualname__ + '.')
+
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': modules_are_equal}[match_scope]
 
     def add_class(self, cls, *, match_scope='siblings', wrap=False):
         """
@@ -237,25 +286,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        def class_is_child(cls, other):
-            if not modules_are_equal(cls, other):
-                return False
-            return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
-
-        def modules_are_equal(cls, other):  # = sibling check
-            return cls.__module__ == other.__module__
-
-        def class_is_descendant(cls, other):
-            if not modules_are_equal(cls, other):
-                return False
-            return other.__qualname__.startswith(cls.__qualname__ + '.')
-
-        filter_scope = {'exact': class_is_child,
-                        'descendants': class_is_descendant,
-                        'siblings': modules_are_equal,
-                        'none': None}[match_scope]
         return self._add_namespace(set(), cls,
-                                   filter_scope=filter_scope, wrap=wrap)
+                                   match_scope=match_scope, wrap=wrap)
 
     def add_module(self, mod, *, match_scope='siblings', wrap=False):
         """
@@ -287,29 +319,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        def match_prefix(s: str, prefix: str, sep: str = '.') -> bool:
-            return s == prefix or s.startswith(prefix + sep)
-
-        def class_is_child(mod, other):
-            return other.__module__ == mod.__name__
-
-        def class_is_descendant(mod, other):
-            return match_prefix(other.__module__, mod.__name__)
-
-        def class_is_cousin(mod, other):
-            if class_is_descendant(mod, other):
-                return True
-            return match_prefix(other.__module__, parent)
-
-        parent, _, basename = mod.__name__.rpartition('.')
-        filter_scope = {'exact': class_is_child,
-                        'descendants': class_is_descendant,
-                        'siblings': (class_is_cousin  # Only if a pkg
-                                     if basename else
-                                     class_is_descendant),
-                        'none': None}[match_scope]
         return self._add_namespace(set(), mod,
-                                   filter_scope=filter_scope, wrap=wrap)
+                                   match_scope=match_scope, wrap=wrap)
 
 
 # This could be in the ipython_extension submodule,
