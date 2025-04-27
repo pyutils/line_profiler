@@ -212,7 +212,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             except TypeError:  # Not a callable (wrapper)
                 continue
             if wrap:
-                wrapper = add_func(value)
+                wrapper = wrap_func(value)
                 if wrapper is not value:
                     try:
                         setattr(namespace, attr, wrapper)
