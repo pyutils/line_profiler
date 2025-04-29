@@ -1,3 +1,5 @@
+import os
+import re
 import shlex
 import sys
 import tempfile
@@ -71,8 +73,9 @@ def test_kernprof_m_parsing(
         return
     else:
         proc.check_returncode()
-    expected_output = expected_output.replace('__MYMOD__', repr(str(mod)))
-    assert proc.stdout.startswith(expected_output)
+    expected_output = re.escape(expected_output).replace(
+        '__MYMOD__', "'.*{}'".format(re.escape(os.path.sep + mod.name)))
+    assert re.match('^' + expected_output, proc.stdout)
 
 
 @pytest.mark.skipif(sys.version_info[:2] < (3, 11),
