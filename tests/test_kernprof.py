@@ -1,3 +1,4 @@
+import shlex
 import sys
 import tempfile
 import unittest
@@ -24,14 +25,14 @@ def g(x):
     'use_kernprof_exec, args, expected_output, expect_error',
     [([False, ['-m'], '', True]),
      # `python -m kernprof`
-     (False, ['-m', 'mymod'], "['mymod']", False),
+     (False, ['-m', 'mymod'], "[__MYMOD__]", False),
      # `kernprof`
-     (True, ['-m', 'mymod'], "['mymod']", False),
-     (False, ['-m', 'mymod', '-p', 'bar'], "['mymod', '-p', 'bar']", False),
+     (True, ['-m', 'mymod'], "[__MYMOD__]", False),
+     (False, ['-m', 'mymod', '-p', 'bar'], "[__MYMOD__, '-p', 'bar']", False),
      # `-p bar` consumed by `kernprof`, `-p baz` are not
      (False,
       ['-p', 'bar', '-m', 'mymod', '-p', 'baz'],
-      "['mymod', '-p', 'baz']",
+      "[__MYMOD__, '-p', 'baz']",
       False),
      # Separator `--` broke off the remainder, so the requisite arg for
      # `-m` is not found and we error out
@@ -49,26 +50,74 @@ def test_kernprof_m_parsing(
     an argument and cuts off everything after it, passing that along
     to the module to be executed.
     """
-    temp_dpath = ub.Path(tempfile.mkdtemp())
-    (temp_dpath / 'mymod.py').write_text(ub.codeblock(
-        '''
-        import sys
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+        mod = (temp_dpath / 'mymod.py').resolve()
+        mod.write_text(ub.codeblock(
+            '''
+            import sys
 
 
-        if __name__ == '__main__':
-            print(sys.argv)
-        '''))
-    if use_kernprof_exec:
-        cmd = ['kernprof']
-    else:
-        cmd = [sys.executable, '-m', 'kernprof']
-    proc = ub.cmd(cmd + args, cwd=temp_dpath, verbose=2)
+            if __name__ == '__main__':
+                print(sys.argv)
+            '''))
+        if use_kernprof_exec:
+            cmd = ['kernprof']
+        else:
+            cmd = [sys.executable, '-m', 'kernprof']
+        proc = ub.cmd(cmd + args, cwd=temp_dpath, verbose=2)
     if expect_error:
         assert proc.returncode
         return
     else:
         proc.check_returncode()
+    expected_output = expected_output.replace('__MYMOD__', repr(str(mod)))
     assert proc.stdout.startswith(expected_output)
+
+
+@pytest.mark.skipif(sys.version_info[:2] < (3, 11),
+                    reason='no `@enum.global_enum` in Python '
+                    f'{".".join(str(v) for v in sys.version_info[:3])}')
+@pytest.mark.parametrize(('flags', 'profiled_main'),
+                         [('-lv -p mymod', True),  # w/autoprofile
+                          ('-lv', True),  # w/o autoprofile
+                          ('-b', False)])  # w/o line profiling
+def test_kernprof_m_sys_modules(flags, profiled_main):
+    """
+    Test that `kernprof -m` is amenable to modules relying on the global
+    `sys` state (e.g. those using `@enum.global_enum`).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'mymod.py').write_text(ub.codeblock(
+            '''
+            import enum
+            import os
+            import sys
+
+
+            @enum.global_enum
+            class MyEnum(enum.Enum):
+                FOO = 1
+                BAR = 2
+
+
+            @profile
+            def main():
+                x = FOO.value + BAR.value
+                print(x)
+                assert x == 3
+
+
+            if __name__ == '__main__':
+                main()
+            '''))
+        cmd = [sys.executable, '-m', 'kernprof',
+               *shlex.split(flags), '-m', 'mymod']
+        proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2)
+    proc.check_returncode()
+    assert proc.stdout.startswith('3\n')
+    assert ('Function: main' in proc.stdout) == profiled_main
 
 
 class TestKernprof(unittest.TestCase):
@@ -129,6 +178,7 @@ class TestKernprof(unittest.TestCase):
         with self.assertRaises((StopIteration, RuntimeError)):
             next(i)
         self.assertEqual(profile.enable_count, 0)
+
 
 if __name__ == '__main__':
     """
