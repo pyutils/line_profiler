@@ -107,17 +107,16 @@ def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
     if as_module:
         Profiler = AstTreeModuleProfiler
         module_name = modpath_to_modname(script_file)
-        assert module_name is not None
+        if not module_name:
+            raise ModuleNotFoundError(f'script_file = {script_file!r}: '
+                                      'cannot find corresponding module')
 
         module_obj = types.ModuleType(module_name)
         namespace = vars(module_obj)
         namespace.update(ns)
 
         # Set the `__spec__` correctly
-        spec = getattr(sys.modules.get(module_name), '__spec__', None)
-        if spec is None:
-            spec = importlib.util.find_spec(module_name)
-        module_obj.__spec__ = spec
+        module_obj.__spec__ = importlib.util.find_spec(module_name)
 
         # Set the module object to `sys.modules` via a callback, and
         # then restore it via the context manager
