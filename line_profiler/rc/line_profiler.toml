@@ -14,8 +14,8 @@
 #
 # All options read by `line_profiler` live under the
 # `tool.line_profiler` namespace. The same applies no matter if reading
-# from a `line_profiler_rc.toml`, `pyproject.toml`, or other
-# user-specified file.
+# from a `line_profiler.toml`, `pyproject.toml`, or other user-specified
+# file.
 #
 # Naming scheme
 # -------------
@@ -43,7 +43,7 @@
 # ----------------
 #
 # - Lookup for either of these two files starts from the current
-#   directory: `line_profiler_rc.toml` or `pyproject.toml`. In case when
+#   directory: `line_profiler.toml` or `pyproject.toml`. In case when
 #   both are present, the former takes priority.
 # - If the current directory
 #   - Doesn't contain such a file; or if
