@@ -6,7 +6,7 @@ except ImportError:  # Python < 3.11
 from typing import Any, Dict, Mapping, Sequence, Set, Tuple, TypeVar, Union
 
 
-targets = 'line_profiler_rc.toml', 'pyproject.toml'
+targets = 'line_profiler.toml', 'pyproject.toml'
 env_var = 'LINE_PROFILER_RC'
 
 K = TypeVar('K')
