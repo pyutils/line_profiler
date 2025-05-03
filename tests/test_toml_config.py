@@ -107,21 +107,21 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     Test the hierarchy according to which we load config files.
     """
     _, default = get_default_config()
-    # Lowest priority: `pyproject.toml` or `line_profiler_rc.toml` in
-    # an ancestral directory
+    # Lowest priority: `pyproject.toml` or `line_profiler.toml` in an
+    # ancestral directory
     curdir = fresh_curdir
-    lowest_priority = curdir / 'line_profiler_rc.toml'
+    lowest_priority = curdir / 'line_profiler.toml'
     lowest_priority.touch()
     curdir = curdir / 'child'
     curdir.mkdir()
     monkeypatch.chdir(curdir)
     assert get_config()[1].samefile(lowest_priority)
     # Higher priority: the same in the current directory
-    # (`line_profiler_rc.toml` preferred over `pyproject.toml`)
+    # (`line_profiler.toml` preferred over `pyproject.toml`)
     lower_priority = curdir / 'pyproject.toml'
     lower_priority.touch()
     assert get_config()[1].samefile(lower_priority)
-    low_priority = curdir / 'line_profiler_rc.toml'
+    low_priority = curdir / 'line_profiler.toml'
     low_priority.touch()
     assert get_config()[1].samefile(low_priority)
     # Higher priority: a file specified by the `${LINE_PROFILER_RC}`
