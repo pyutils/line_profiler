@@ -32,8 +32,9 @@ def add_argument(parser_like: ParserLike[A_co], *args,
     ...
 
 
-def get_cli_config(
-        subtable: str, *args, **kwargs) -> Tuple[dict, pathlib.Path]:
+def get_cli_config(subtable: str, /,
+                   config: Union[str, pathlib.PurePath, bool, None] = None,
+                   *args, **kwargs) -> Tuple[dict, pathlib.Path]:
     ...
 
 

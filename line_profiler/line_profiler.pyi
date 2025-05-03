@@ -32,7 +32,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     sort: bool = ...,
                     rich: bool = ...,
                     *,
-                    config: Union[str, pathlib.PurePath, None] = None) -> None:
+                    config: Union[str, pathlib.PurePath,
+                                  bool, None] = None) -> None:
         ...
 
     def add_module(self, mod):
@@ -53,7 +54,7 @@ def show_func(filename: str,
               stripzeros: bool = False,
               rich: bool = False,
               *,
-              config: Union[str, pathlib.PurePath, None] = None) -> None:
+              config: Union[str, pathlib.PurePath, bool, None] = None) -> None:
     ...
 
 
@@ -67,7 +68,7 @@ def show_text(stats,
               sort: bool = ...,
               rich: bool = ...,
               *,
-              config: Union[str, pathlib.PurePath, None] = None) -> None:
+              config: Union[str, pathlib.PurePath, bool, None] = None) -> None:
     ...
 
 
