@@ -188,7 +188,8 @@ class GlobalProfiler:
             ``LINE_PROFILER_RC`` environment variable or looked up among
             the current directory or its ancestors.
             Should all that fail, the default config file at
-            ``importlib.resources.path('line_profiler', 'line_profiler_rc.toml')``
+            ``importlib.resources.path('line_profiler.rc',
+            'line_profiler.toml')``
             is used.
 
     Attributes:

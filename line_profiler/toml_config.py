@@ -18,7 +18,7 @@ from collections.abc import Mapping
 __all__ = ['get_config', 'get_default_config']
 
 namespace = 'tool', 'line_profiler'
-targets = 'line_profiler_rc.toml', 'pyproject.toml'
+targets = 'line_profiler.toml', 'pyproject.toml'
 env_var = 'LINE_PROFILER_RC'
 
 _defaults = None
@@ -261,8 +261,9 @@ def get_default_config():
             - `path`: absolute path to the default config file
     """
     if _defaults is None:
-        with importlib.resources.path(__spec__.name.rpartition('.')[0],
-                                      'line_profiler_rc.toml') as path:
+        package = __spec__.name.rpartition('.')[0]
+        with importlib.resources.path(package + '.rc',
+                                      'line_profiler.toml') as path:
             conf_dict, source = find_and_read_config_file(config=path)
         globals()['_defaults'] = (get_subtable(conf_dict, namespace,
                                                allow_absence=False),
