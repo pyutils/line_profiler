@@ -41,6 +41,14 @@ def get_minimum_column_widths():
         get_default_config()[0]['show']['column_widths'])
 
 
+def _get_config(config):
+    if config in (True,):
+        config = None
+    if config in (False,):
+        return get_default_config()
+    return get_config(config=config)
+
+
 def load_ipython_extension(ip):
     """ API for IPython to recognize this module as an IPython extension.
     """
@@ -213,12 +221,14 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         rich (bool):
             If True, attempt to use rich highlighting.
 
-        config (Union[str, PurePath, None]):
+        config (Union[str, PurePath, bool, None]):
             Optional filename from which to load configurations (e.g.
             output column widths);
-            default is to look for a config file based on the
-            environment variable `${LINE_PROFILER_RC}` and path-based
-            lookup.
+            default (= `True` or `None`) is to look for a config file
+            based on the environment variable `${LINE_PROFILER_RC}` and
+            path-based lookup;
+            passing `False` disables all lookup and falls back to the
+            default configuration
 
     Example:
         >>> from line_profiler.line_profiler import show_func
@@ -291,7 +301,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         sublines = [''] * nlines
 
     # Define minimum column sizes so text fits and usually looks consistent
-    conf_column_sizes = get_config(config=config)[0]['show']['column_widths']
+    conf_column_sizes = _get_config(config)[0]['show']['column_widths']
     default_column_sizes = {
         col: max(width, conf_column_sizes.get(col, width))
         for col, width in get_minimum_column_widths().items()}
@@ -422,7 +432,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         stats_order = sorted(stats.items())
 
     # Pre-lookup the appropriate config file
-    _, config = get_config(config=config)
+    _, config = _get_config(config)
 
     if details:
         # Show detailed per-line information for each function.
@@ -468,6 +478,10 @@ def main():
                  '`tool.line_profiler.cli` table of which to load '
                  'defaults for the options. '
                  f'(Default: {short_string_path(default_source)!r})')
+    add_argument(parser, '--no-config',
+                 action='store_const', dest='config', const=False,
+                 help='Disable the loading of configuration files other than '
+                 'the default one')
     add_argument(parser, '-u', '--unit', type=positive_float,
                  help='Output unit (in seconds) in which '
                  'the timing info is displayed. '

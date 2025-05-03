@@ -77,6 +77,7 @@ which displays:
       -h, --help            show this help message and exit
       -V, --version         show program's version number and exit
       --config CONFIG       Path to the TOML file, from the `tool.line_profiler.kernprof` table of which to load defaults for the options. (Default: 'pyproject.toml')
+      --no-config           Disable the loading of configuration files other than the default one
 
     profiling options:
       -l, --line-by-line    Use the line-by-line profiler instead of cProfile. Implies `--builtin`. (Boolean option; default: False)
@@ -403,6 +404,10 @@ def main(args=None, exit_on_error=True):
                      '`tool.line_profiler.kernprof` table of which to load '
                      'defaults for the options. '
                      f'(Default: {short_string_path(default_source)!r})')
+        add_argument(parser, '--no-config',
+                     action='store_const', dest='config', const=False,
+                     help='Disable the loading of configuration files other '
+                     'than the default one')
         prof_opts = parser.add_argument_group('profiling options')
         add_argument(prof_opts, '-l', '--line-by-line', action='store_true',
                      help='Use the line-by-line profiler instead of cProfile. '

@@ -67,7 +67,7 @@ def add_argument(parser_like, *args,
     return action
 
 
-def get_cli_config(subtable, *args, **kwargs):
+def get_cli_config(subtable, /, config=None, *args, **kwargs):
     """
     Get the `tool.line_profiler.<subtable>` configs and normalize
     its keys (`some-key` -> `some_key`).
@@ -76,6 +76,14 @@ def get_cli_config(subtable, *args, **kwargs):
         subtable (str):
             Name of the subtable the CLI app should refer to (e.g.
             'kernprof')
+        config (Union[str, PurePath, bool, None]):
+            Optional filename from which to load configurations (e.g.
+            output column widths);
+            default (= `True` or `None`) is to look for a config file
+            based on the environment variable `${LINE_PROFILER_RC}` and
+            path-based lookup;
+            passing `False` disables all lookup and falls back to the
+            default configuration
         *args, **kwargs
             Passed to `line_profiler.toml_config.get_config()`
 
@@ -88,10 +96,15 @@ def get_cli_config(subtable, *args, **kwargs):
             - `path`: absolute path to the config file whence the
               config options are loaded
     """
-    conf, source = get_config(*args, **kwargs)
-    kernprof_conf = {key.replace('-', '_'): value
-                     for key, value in conf[subtable].items()}
-    return kernprof_conf, source
+    if config in (True,):
+        config = None
+    if config in (False,):
+        conf, source = get_default_config()
+    else:
+        conf, source = get_config(config, *args, **kwargs)
+    cli_conf = {key.replace('-', '_'): value
+                for key, value in conf[subtable].items()}
+    return cli_conf, source
 
 
 def get_python_executable():

@@ -707,7 +707,7 @@ def test_autoprofile_with_customized_config(
             kernprof_cmd.extend(['-p', prof_mod])
         if prof_imports in (True, False):
             kernprof_cmd.append('--{}prof-imports'
-                        .format('' if prof_imports else 'no-'))
+                                .format('' if prof_imports else 'no-'))
         kernprof_cmd.extend(['-m', 'test_mod.subpkg.submod4', '1', '2', '3'])
         proc = ub.cmd(kernprof_cmd, cwd=temp_dpath, env=env, verbose=2)
         print(proc.stdout)
@@ -734,6 +734,71 @@ def test_autoprofile_with_customized_config(
     assert ('- add_four' in raw_output) == add_four
     assert ('- add_operator' in raw_output) == add_operator
     assert ('- _main' in raw_output) == main
+
+    # Check the column width of the line numbers. which is configured in
+    # `tool.line_profiler.show.column_widths`
+    for line in raw_output.splitlines():
+        if not line:
+            continue
+        if line.isspace():
+            continue
+        first, *_ = line.split()
+        if not first.isdecimal():
+            continue
+        assert line.index(first) + len(first) == lineno_col_width
+
+
+@pytest.mark.parametrize('view_in_process', [True, False])
+@pytest.mark.parametrize('no_config', [True, False])
+def test_autoprofile_with_no_config(no_config, view_in_process):
+    """
+    Test disabling config lookup with the `--no-config` flag.
+    """
+    toml_content = ub.codeblock('''
+    [tool.line_profiler.show.column_widths]
+    line = 8  # 2 wider than the default
+    ''')
+    lineno_col_width = 6 if no_config else 8
+
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_dpath = ub.Path(tmp)
+        _write_demo_module(temp_dpath)
+        toml = (temp_dpath / 'line_profiler.toml').absolute()
+        toml.write_text(toml_content)
+        prof = temp_dpath / 'my_output.lprof'
+
+        kernprof_cmd = ['kernprof',
+                        '-p', 'test_mod.subpkg.submod4',
+                        '-o', 'my_output.lprof',
+                        '-l']
+        lp_cmd = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
+        if view_in_process:
+            kernprof_cmd.append('--view')
+        if no_config:
+            if view_in_process:
+                kernprof_cmd.append('--no-config')
+            else:
+                lp_cmd.insert(-1, '--no-config')
+        kernprof_cmd.extend(['-m', 'test_mod.subpkg.submod4', '1', '2', '3'])
+        proc = ub.cmd(kernprof_cmd, cwd=temp_dpath, verbose=2)
+        print(proc.stdout)
+        print(proc.stderr)
+        proc.check_returncode()
+        assert prof.is_file()
+
+        if view_in_process:
+            raw_output = proc.stdout
+        else:
+            proc = ub.cmd(lp_cmd, cwd=temp_dpath)
+            raw_output = proc.stdout
+            print(raw_output)
+            proc.check_returncode()
+
+    assert 'Function: add_one' not in raw_output
+    assert 'Function: add_two' not in raw_output
+    assert 'Function: add_four' in raw_output
+    assert 'Function: add_operator' not in raw_output
+    assert 'Function: _main' in raw_output
 
     # Check the column width of the line numbers. which is configured in
     # `tool.line_profiler.show.column_widths`
