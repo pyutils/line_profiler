@@ -33,8 +33,12 @@ from .cli_utils import (
 __version__ = '4.3.0'
 
 is_function = inspect.isfunction
-minimum_column_widths = types.MappingProxyType(
-    get_default_config()[0]['show']['column_widths'])
+
+
+@functools.lru_cache()
+def get_minimum_column_widths():
+    return types.MappingProxyType(
+        get_default_config()[0]['show']['column_widths'])
 
 
 def load_ipython_extension(ip):
@@ -290,7 +294,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     conf_column_sizes = get_config(config=config)[0]['show']['column_widths']
     default_column_sizes = {
         col: max(width, conf_column_sizes.get(col, width))
-        for col, width in minimum_column_widths.items()}
+        for col, width in get_minimum_column_widths().items()}
 
     display = {}
 
