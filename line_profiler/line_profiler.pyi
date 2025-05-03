@@ -1,9 +1,14 @@
 import io
 import pathlib
-from typing import List, Tuple, Union
+from typing import Literal, List, Mapping, Tuple, Union
 from ._line_profiler import LineProfiler as CLineProfiler
 from .profiler_mixin import ByCountProfilerMixin
 from _typeshed import Incomplete
+
+
+def get_minimum_column_widths() -> Mapping[
+        Literal['line', 'hits', 'time', 'perhit', 'percent'], int]:
+    ...
 
 
 def load_ipython_extension(ip) -> None:
