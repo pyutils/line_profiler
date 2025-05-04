@@ -162,9 +162,13 @@ def get_headers(table, *, include_implied=False):
 def get_config(config=None, *, read_env=True):
     """
     Arguments:
-        config (Union[str | PurePath | None]):
+        config (Union[str, PurePath, bool, None]):
             Optional path to a specific TOML file;
-            if provided, skip lookup and just try to read from that file
+            if a (string) path, skip lookup and just try to read from
+            that file;
+            if `None` or `True`, use lookup to resolve to the correct
+            file;
+            if `False`, skip lookup and just use the default configs
         read_env (bool):
             Whether to read the environment variable
             `${LINE_PROFILER_RC}` for a config file (instead of moving
@@ -203,6 +207,11 @@ def get_config(config=None, *, read_env=True):
         return result
 
     default_conf, default_source = get_default_config()
+    if config in (True, False):
+        if config:
+            config = None
+        else:
+            return default_conf, default_source
     if config is not None:
         # Promote to `Path` (and catch type errors) early
         config = pathlib.Path(config)

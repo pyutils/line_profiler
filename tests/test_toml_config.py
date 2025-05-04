@@ -139,3 +139,7 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
         get_config(highest_priority)
     highest_priority.touch()
     assert get_config(highest_priority)[1].samefile(highest_priority)
+    # Also test that `True` is equivalent to the default behavior
+    # (`None`), and `False` to disabling all lookup
+    assert get_config(True)[1].samefile(high_priority)
+    assert get_config(False)[1].samefile(default)

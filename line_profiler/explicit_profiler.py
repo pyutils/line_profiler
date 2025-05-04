@@ -181,16 +181,18 @@ class GlobalProfiler:
     The :py:obj:`line_profile.profile` decorator is an instance of this object.
 
     Arguments:
-        config (Union[str, PurePath, None]):
+        config (Union[str, PurePath, bool, None]):
             Optional TOML config file from which to load the
             configurations (see Attributes);
-            if not explicitly given, it is either resolved from the
-            ``LINE_PROFILER_RC`` environment variable or looked up among
-            the current directory or its ancestors.
-            Should all that fail, the default config file at
+            if not explicitly given (= ``True`` or ``None``), it is
+            either resolved from the ``LINE_PROFILER_RC`` environment
+            variable or looked up among the current directory or its
+            ancestors.  Should all that fail, the default config file at
             ``importlib.resources.path('line_profiler.rc',
             'line_profiler.toml')``
-            is used.
+            is used;
+            passing ``False`` disables all lookup and falls back to the
+            default configuration
 
     Attributes:
         setup_config (Dict[str, List[str]]):
