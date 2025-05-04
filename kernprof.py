@@ -470,7 +470,8 @@ def main(args=None):
     try:
         try:
             execfile_ = execfile
-            rmod_ = run_module
+            rmod_ = functools.partial(run_module,
+                                      run_name='__main__', alter_sys=True)
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
@@ -487,13 +488,11 @@ def main(args=None):
                                 profile_imports=options.prof_imports,
                                 as_module=module is not None)
             elif module and options.builtin:
-                run_module(options.script, ns, '__main__')
+                rmod_(options.script, ns)
             elif options.builtin:
                 execfile(script_file, ns, ns)
             elif module:
-                prof.runctx(f'rmod_({options.script!r}, globals(), "__main__")',
-                            ns,
-                            ns)
+                prof.runctx(f'rmod_({options.script!r}, globals())', ns, ns)
             else:
                 prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
         except (KeyboardInterrupt, SystemExit):
