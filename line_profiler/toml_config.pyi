@@ -33,7 +33,7 @@ def get_headers(table: NestedTable[K, Any], *,
     ...
 
 
-def get_config(config: Union[str, pathlib.PurePath, None] = None, *,
+def get_config(config: Union[str, pathlib.PurePath, bool, None] = None, *,
                read_env: bool = True) -> Config:
     ...
 

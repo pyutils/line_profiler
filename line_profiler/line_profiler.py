@@ -24,7 +24,7 @@ from .profiler_mixin import (ByCountProfilerMixin,
                              is_property, is_cached_property,
                              is_boundmethod, is_classmethod, is_staticmethod,
                              is_partial, is_partialmethod)
-from .toml_config import get_config, get_default_config
+from .toml_config import get_config
 from .cli_utils import (
     add_argument, get_cli_config, positive_float, short_string_path)
 
@@ -38,15 +38,7 @@ is_function = inspect.isfunction
 @functools.lru_cache()
 def get_minimum_column_widths():
     return types.MappingProxyType(
-        get_default_config()[0]['show']['column_widths'])
-
-
-def _get_config(config):
-    if config in (True,):
-        config = None
-    if config in (False,):
-        return get_default_config()
-    return get_config(config=config)
+        get_config(False)[0]['show']['column_widths'])
 
 
 def load_ipython_extension(ip):
@@ -301,7 +293,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         sublines = [''] * nlines
 
     # Define minimum column sizes so text fits and usually looks consistent
-    conf_column_sizes = _get_config(config)[0]['show']['column_widths']
+    conf_column_sizes = get_config(config)[0]['show']['column_widths']
     default_column_sizes = {
         col: max(width, conf_column_sizes.get(col, width))
         for col, width in get_minimum_column_widths().items()}
@@ -432,7 +424,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         stats_order = sorted(stats.items())
 
     # Pre-lookup the appropriate config file
-    _, config = _get_config(config)
+    _, config = get_config(config)
 
     if details:
         # Show detailed per-line information for each function.
