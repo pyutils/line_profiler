@@ -88,6 +88,7 @@ import sys
 import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
+import tempfile
 import time
 import warnings
 from argparse import ArgumentError, ArgumentParser
@@ -420,8 +421,8 @@ def main(args=None):
     # text
     options = real_parser.parse_args(args)
     if help_parser and getattr(options, 'help', False):
-        # This should raise a `SystemExit`
-        help_parser.parse_args([*args, '-m', 'dummy'])
+        help_parser.print_help()
+        exit()
     try:
         del options.help
     except AttributeError:
@@ -438,47 +439,53 @@ def main(args=None):
     elif options.script == '-' and not module:
         tempfile_source_and_content = 'stdin', sys.stdin.read()
 
-    if not tempfile_source_and_content:
+    if tempfile_source_and_content:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_tempfile(*tempfile_source_and_content, options, tmpdir)
+            return _main(options, module)
+    else:
         return _main(options, module)
 
+
+def _write_tempfile(source, content, options, tmpdir):
     # Importing `ast` is IIRC somewhat expensive, so don't do that if we
     # don't have to
     import ast
-    import tempfile
+    import textwrap
 
-    source, content = tempfile_source_and_content
+    # Set up the script to be run
     file_prefix = f'kernprof-{source}'
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Set up the script to be run
-        try:
-            content = ast.unparse(ast.parse(content))
-        except (
-                # `ast.unparse()` unavailable in Python < 3.9
-                AttributeError,
-                # Big module - shouldn't happen since the script should
-                # just be one inline thing (except when reading from
-                # stdin), which can't be all that complicated
-                RecursionError) as e:
-            msg = (f'cannot pretty-print code read from {source} ({e!r}), '
-                   'writing it to a temporary file as-is')
-            warnings.warn(msg)
-        fname = os.path.join(tmpdir, file_prefix + '.py')
-        with open(fname, mode='w') as fobj:
-            print(content, file=fobj)
-        options.script = fname
-        # Add the tempfile to `--prof-mod`
-        if options.prof_mod:
-            options.prof_mod.append(fname)
-        else:
-            options.prof_mod = [fname]
-        # Set the output file to somewhere nicer (also take care of
-        # possible filename clash)
-        if not options.outfile:
-            extension = 'lprof' if options.line_by_line else 'prof'
-            _, options.outfile = tempfile.mkstemp(dir=os.curdir,
-                                                  prefix=file_prefix + '-',
-                                                  suffix='.' + extension)
-        return _main(options, module)
+    # Do what 3.14 does (#103998)... and also just to be user-friendly
+    content = textwrap.dedent(content)
+    try:
+        content = ast.unparse(ast.parse(content))
+    except (
+            # `ast.unparse()` unavailable in Python < 3.9
+            AttributeError,
+            # Long, complicated script - shouldn't happen since the
+            # script should probably just be one inline thing (except
+            # when reading from stdin), which can't be all that
+            # complicated
+            RecursionError) as e:
+        msg = (f'cannot pretty-print code read from {source} ({e!r}), '
+               'writing it to a temporary file as-is')
+        warnings.warn(msg)
+    fname = os.path.join(tmpdir, file_prefix + '.py')
+    with open(fname, mode='w') as fobj:
+        print(content, file=fobj)
+    options.script = fname
+    # Add the tempfile to `--prof-mod`
+    if options.prof_mod:
+        options.prof_mod.append(fname)
+    else:
+        options.prof_mod = [fname]
+    # Set the output file to somewhere nicer (also take care of possible
+    # filename clash)
+    if not options.outfile:
+        extension = 'lprof' if options.line_by_line else 'prof'
+        _, options.outfile = tempfile.mkstemp(dir=os.curdir,
+                                              prefix=file_prefix + '-',
+                                              suffix='.' + extension)
 
 
 def _main(options, module=False):
