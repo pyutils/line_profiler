@@ -39,6 +39,16 @@ available and compiled. Add the ``-l`` argument to the kernprof invocation.
 
     kernprof -lb script_to_profile.py
 
+NOTE:
+
+    New in 4.3.0: more code execution options are added:
+
+    * ``kernprof <options> -m some.module <args to module>`` parallels
+      ``python -m`` and runs the provided module as ``__main__``.
+    * ``kernprof <options> -c "some code" <args to code>`` parallels
+      ``python -c`` and executes the provided literal code.
+    * ``kernprof <options> - <args to code>`` parallels ``python -`` and
+      executes literal code passed via the ``stdin``.
 
 For more details and options, refer to the CLI help.
 To view kernprof help run:
@@ -90,7 +100,6 @@ import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import tempfile
 import time
-import warnings
 from argparse import ArgumentError, ArgumentParser
 from runpy import run_module
 
@@ -448,28 +457,16 @@ def main(args=None):
 
 
 def _write_tempfile(source, content, options, tmpdir):
-    # Importing `ast` is IIRC somewhat expensive, so don't do that if we
-    # don't have to
-    import ast
+    """
+    Called by ``main()`` to handle ``kernprof -c`` and ``kernprof -``;
+    not to be invoked on its own.
+    """
     import textwrap
 
     # Set up the script to be run
     file_prefix = f'kernprof-{source}'
     # Do what 3.14 does (#103998)... and also just to be user-friendly
     content = textwrap.dedent(content)
-    try:
-        content = ast.unparse(ast.parse(content))
-    except (
-            # `ast.unparse()` unavailable in Python < 3.9
-            AttributeError,
-            # Long, complicated script - shouldn't happen since the
-            # script should probably just be one inline thing (except
-            # when reading from stdin), which can't be all that
-            # complicated
-            RecursionError) as e:
-        msg = (f'cannot pretty-print code read from {source} ({e!r}), '
-               'writing it to a temporary file as-is')
-        warnings.warn(msg)
     fname = os.path.join(tmpdir, file_prefix + '.py')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
@@ -489,6 +486,10 @@ def _write_tempfile(source, content, options, tmpdir):
 
 
 def _main(options, module=False):
+    """
+    Called by ``main()`` for the actual execution and profiling of code;
+    not to be invoked on its own.
+    """
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
