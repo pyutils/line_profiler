@@ -89,6 +89,7 @@ import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import time
+import warnings
 from argparse import ArgumentError, ArgumentParser
 from runpy import run_module
 
@@ -457,8 +458,10 @@ def main(args=None):
                 # Big module - shouldn't happen since the script should
                 # just be one inline thing (except when reading from
                 # stdin), which can't be all that complicated
-                RecursionError):
-            pass
+                RecursionError) as e:
+            msg = (f'cannot pretty-print code read from {source} ({e!r}), '
+                   'writing it to a temporary file as-is')
+            warnings.warn(msg)
         fname = os.path.join(tmpdir, file_prefix + '.py')
         with open(fname, mode='w') as fobj:
             print(content, file=fobj)
