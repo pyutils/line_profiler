@@ -1,9 +1,29 @@
-from typing import List
-from typing import Tuple
+from functools import cached_property, partial, partialmethod
+from inspect import isfunction as is_function
+from types import (FunctionType, MethodType, ModuleType,
+                   BuiltinFunctionType, BuiltinMethodType,
+                   ClassMethodDescriptorType, MethodDescriptorType,
+                   MethodWrapperType, WrapperDescriptorType)
+from typing import (overload,
+                    Any, Callable, List, Literal, Tuple, TypeGuard, TypeVar)
 import io
 from ._line_profiler import LineProfiler as CLineProfiler
 from .profiler_mixin import ByCountProfilerMixin
 from _typeshed import Incomplete
+
+
+CLevelCallable = TypeVar('CLevelCallable',
+                         BuiltinFunctionType, BuiltinMethodType,
+                         ClassMethodDescriptorType, MethodDescriptorType,
+                         MethodWrapperType, WrapperDescriptorType)
+CallableLike = TypeVar('CallableLike',
+                       FunctionType, partial, property, cached_property,
+                       MethodType, staticmethod, classmethod, partialmethod)
+MatchScopeOption = Literal['exact', 'descendants', 'siblings', 'none']
+
+
+def is_c_level_callable(func: Any) -> TypeGuard[CLevelCallable]:
+    ...
 
 
 def load_ipython_extension(ip) -> None:
@@ -11,8 +31,23 @@ def load_ipython_extension(ip) -> None:
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
+    @overload
+    def __call__(self,  # type: ignore[overload-overlap]
+                 func: CLevelCallable) -> CLevelCallable:
+        ...
 
-    def add_callable(self, func) -> None:
+    @overload
+    def __call__(self,  # type: ignore[overload-overlap]
+                 func: CallableLike) -> CallableLike:
+        ...
+
+    # Fallback: just wrap the `.__call__()` of a generic callable
+
+    @overload
+    def __call__(self, func: Callable) -> FunctionType:
+        ...
+
+    def add_callable(self, func) -> Literal[0, 1]:
         ...
 
     def dump_stats(self, filename) -> None:
@@ -28,7 +63,14 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     rich: bool = ...) -> None:
         ...
 
-    def add_module(self, mod):
+    def add_module(self, mod: ModuleType, *,
+                   match_scope: MatchScopeOption = 'siblings',
+                   wrap: bool = False) -> int:
+        ...
+
+    def add_class(self, cls: type, *,
+                  match_scope: MatchScopeOption = 'siblings',
+                  wrap: bool = False) -> int:
         ...
 
 

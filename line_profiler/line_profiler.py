@@ -4,12 +4,15 @@ This module defines the core :class:`LineProfiler` class as well as methods to
 inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
+import functools
 import pickle
 import inspect
 import linecache
 import tempfile
 import os
 import sys
+import types
+import warnings
 from argparse import ArgumentError, ArgumentParser
 
 try:
@@ -28,7 +31,26 @@ from .profiler_mixin import (ByCountProfilerMixin,
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
 
+# These objects are callables, but are defined in C so we can't handle
+# them anyway
+c_level_callable_types = (types.BuiltinFunctionType,
+                          types.BuiltinMethodType,
+                          types.ClassMethodDescriptorType,
+                          types.MethodDescriptorType,
+                          types.MethodWrapperType,
+                          types.WrapperDescriptorType)
+
 is_function = inspect.isfunction
+
+
+def is_c_level_callable(func):
+    """
+    Returns:
+        func_is_c_level (bool):
+            Whether a callable is defined at the C level (and is thus
+            non-profilable).
+    """
+    return isinstance(func, c_level_callable_types)
 
 
 def load_ipython_extension(ip):
@@ -63,6 +85,8 @@ def _get_underlying_functions(func):
                         f'cannot get functions from {type(func)} objects')
     if is_function(func):
         return [func]
+    if is_c_level_callable(func):
+        return []
     return [type(func).__call__]
 
 
@@ -90,11 +114,19 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         start the profiler on function entry and stop it on function
         exit.
         """
-        # Note: if `func` is a `types.FunctionType` which is already
-        # decorated by the profiler, the same object is returned;
+        # The same object is returned when:
+        # - `func` is a `types.FunctionType` which is already
+        #   decorated by the profiler, or
+        # - `func` is any of the C-level callables that can't be
+        #   profiled
         # otherwise, wrapper objects are always returned.
         self.add_callable(func)
         return self.wrap_callable(func)
+
+    def wrap_callable(self, func):
+        if is_c_level_callable(func):  # Non-profilable
+            return func
+        return super().wrap_callable(func)
 
     def add_callable(self, func):
         """
@@ -102,7 +134,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         the underlying Cython profiler.
 
         Returns:
-            1 if any function is added to the profiler, 0 otherwise
+            1 if any function is added to the profiler, 0 otherwise.
         """
         guard = self._already_wrapped
 
@@ -132,23 +164,163 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   stream=stream, stripzeros=stripzeros,
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
-    def add_module(self, mod):
-        """ Add all the functions in a module and its classes.
+    def _add_namespace(self, duplicate_tracker, namespace, *,
+                       match_scope='none', wrap=False):
+        count = 0
+        add_cls = functools.partial(self._add_namespace, duplicate_tracker,
+                                    match_scope=match_scope, wrap=wrap)
+        add_func = self.add_callable
+        remember = duplicate_tracker.add
+        wrap_func = self.wrap_callable
+        wrap_failures = {}
+        if match_scope == 'none':
+            def check(*_):
+                return True
+        elif isinstance(namespace, type):
+            check = self._add_class_filter(namespace, match_scope)
+        else:
+            check = self._add_module_filter(namespace, match_scope)
+
+        for attr, value in vars(namespace).items():
+            if id(value) in duplicate_tracker:
+                continue
+            remember(id(value))
+            if isinstance(value, type):
+                if check(value) and add_cls(value):
+                    count += 1
+                continue
+            try:
+                if not add_func(value):
+                    continue
+            except TypeError:  # Not a callable (wrapper)
+                continue
+            if wrap:
+                wrapper = wrap_func(value)
+                if wrapper is not value:
+                    try:
+                        setattr(namespace, attr, wrapper)
+                    except (TypeError, AttributeError):
+                        # Corner case in case if a class/module don't
+                        # allow setting attributes (could e.g. happen
+                        # with some builtin/extension classes, but their
+                        # method should be in C anyway, so
+                        # `.add_callable()` should've returned 0 and we
+                        # shouldn't be here)
+                        wrap_failures[attr] = value
+            count += 1
+        if wrap_failures:
+            msg = (f'cannot wrap {len(wrap_failures)} attribute(s) of '
+                   f'{namespace!r} (`{{attr: value}}`): {wrap_failures!r}')
+            warnings.warn(msg, stacklevel=2)
+        return count
+
+    @staticmethod
+    def _add_module_filter(mod, match_scope):
+        def match_prefix(s, prefix, sep='.'):
+            return s == prefix or s.startswith(prefix + sep)
+
+        def class_is_child(other):
+            return other.__module__ == mod.__name__
+
+        def class_is_descendant(other):
+            return match_prefix(other.__module__, mod.__name__)
+
+        def class_is_cousin(other):
+            if class_is_descendant(other):
+                return True
+            return match_prefix(other.__module__, parent)
+
+        parent, _, basename = mod.__name__.rpartition('.')
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': (class_is_cousin  # Only if a pkg
+                             if basename else
+                             class_is_descendant)}[match_scope]
+
+    @staticmethod
+    def _add_class_filter(cls, match_scope):
+        def class_is_child(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
+
+        def modules_are_equal(other):  # = sibling check
+            return cls.__module__ == other.__module__
+
+        def class_is_descendant(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__.startswith(cls.__qualname__ + '.')
+
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': modules_are_equal}[match_scope]
+
+    def add_class(self, cls, *, match_scope='siblings', wrap=False):
         """
-        from inspect import isclass
+        Add the members (callables (wrappers), methods, classes, ...) in
+        a class' local namespace and profile them.
 
-        nfuncsadded = 0
-        for item in mod.__dict__.values():
-            if isclass(item):
-                for k, v in item.__dict__.items():
-                    if is_function(v):
-                        self.add_function(v)
-                        nfuncsadded += 1
-            elif is_function(item):
-                self.add_function(item)
-                nfuncsadded += 1
+        Args:
+            cls (type):
+                Class to be profiled.
+            match_scope (Literal['exact', 'siblings', 'descendants',
+                                 'none']):
+                Whether (and how) to match the scope of member classes
+                and decide on whether to add them:
+                - 'exact': only add classes defined locally in this
+                  namespace, i.e. in the body of `cls`, as "inner
+                  classes"
+                - 'descendants': only add "inner classes", their "inner
+                  classes", and so on.
+                - 'siblings': only add classes fulfilling 'descendants',
+                  or defined in the same module as `cls`
+                - 'none': don't check scopes and add all classes in the
+                  namespace
+            wrap (bool):
+                Whether to replace the wrapped members with wrappers
+                which automatically enable/disable the profiler when
+                called.
 
-        return nfuncsadded
+        Returns:
+            n (int):
+                Number of members added to the profiler.
+        """
+        return self._add_namespace(set(), cls,
+                                   match_scope=match_scope, wrap=wrap)
+
+    def add_module(self, mod, *, match_scope='siblings', wrap=False):
+        """
+        Add the members (callables (wrappers), methods, classes, ...) in
+        a module's local namespace and profile them.
+
+        Args:
+            mod (ModuleType):
+                Module to be profiled.
+            match_scope (Literal['exact', 'siblings', 'descendants',
+                                 'none']):
+                Whether (and how) to match the scope of member classes
+                and decide on whether to add them:
+                - 'exact': only add classes defined locally in this
+                  namespace, i.e. in the body of `mod`
+                - 'descendants': only add locally-defined classes,
+                  classes locally defined in their bodies, and so on
+                - 'siblings': only add classes fulfilling 'descendants',
+                  or defined in sibling modules/subpackages to `mod` (if
+                  `mod` is part of a package)
+                - 'none': don't check scopes and add all classes in the
+                  namespace
+            wrap (bool):
+                Whether to replace the wrapped members with wrappers
+                which automatically enable/disable the profiler when
+                called.
+
+        Returns:
+            n (int):
+                Number of members added to the profiler.
+        """
+        return self._add_namespace(set(), mod,
+                                   match_scope=match_scope, wrap=wrap)
 
 
 # This could be in the ipython_extension submodule,

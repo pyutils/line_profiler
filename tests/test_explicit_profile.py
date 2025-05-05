@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 import sys
@@ -5,6 +6,15 @@ import tempfile
 
 import pytest
 import ubelt as ub
+
+
+@contextlib.contextmanager
+def enter_tmpdir():
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = os.path.abspath(enter(tempfile.TemporaryDirectory()))
+        enter(ub.ChDir(tmpdir))
+        yield ub.Path(tmpdir)
 
 
 def test_simple_explicit_nonglobal_usage():
@@ -405,6 +415,278 @@ def test_explicit_profile_with_duplicate_functions():
     assert output_fpath.exists()
     assert (temp_dpath / 'profile_output.lprof').exists()
     temp_dpath.delete()
+
+
+@pytest.mark.parametrize('reset_enable_count', [True, False])
+@pytest.mark.parametrize('wrap_class, wrap_module',
+                         [(None, None), (False, True),
+                          (True, False), (True, True)])
+def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
+    """
+    Test the `wrap` argument for the
+    `LineProfiler.add_class()`, `.add_module()`, and
+    `.add_imported_function_or_module()` (added via
+    `line_profiler.autoprofile.autoprofile.
+    _extend_line_profiler_for_profiling_imports()`) methods.
+    """
+    def write(path, code):
+        path.write_text(ub.codeblock(code))
+
+    script = ub.codeblock('''
+        from line_profiler import LineProfiler
+        from line_profiler.autoprofile.autoprofile import (
+            _extend_line_profiler_for_profiling_imports as upgrade_profiler)
+
+        import my_module_1
+        from my_module_2 import Class
+        from my_module_3 import func3
+
+
+        profiler = LineProfiler()
+        upgrade_profiler(profiler)
+        # This dispatches to `.add_module()`
+        profiler.add_imported_function_or_module(my_module_1{})
+        # This dispatches to `.add_class()`
+        profiler.add_imported_function_or_module(Class{})
+        profiler.add_imported_function_or_module(func3)
+
+        if {}:
+            for _ in range(profiler.enable_count):
+                profiler.disable_by_count()
+
+        # `func1()` should only have timing info if `wrap_module`
+        my_module_1.func1()
+        # `method2()` should only have timing info if `wrap_class`
+        Class.method2()
+        # `func3()` is profiled but don't see any timing info because it
+        # isn't wrapped and doesn't auto-`.enable()` before being called
+        func3()
+        profiler.print_stats(details=True, summarize=True)
+                          '''.format(
+        '' if wrap_module is None else f', wrap={wrap_module}',
+        '' if wrap_class is None else f', wrap={wrap_class}',
+        reset_enable_count))
+
+    with enter_tmpdir() as curdir:
+        write(curdir / 'script.py', script)
+        write(curdir / 'my_module_1.py',
+              '''
+        def func1():
+            pass  # Marker: func1
+              ''')
+        write(curdir / 'my_module_2.py',
+              '''
+        class Class:
+            @classmethod
+            def method2(cls):
+                pass  # Marker: method2
+              ''')
+        write(curdir / 'my_module_3.py',
+              '''
+        def func3():
+            pass  # Marker: func3
+              ''')
+        proc = ub.cmd([sys.executable, str(curdir / 'script.py')])
+
+    # Check that the profiler has seen each of the methods
+    raw_output = proc.stdout
+    print(script)
+    print(raw_output)
+    print(proc.stderr)
+    proc.check_returncode()
+    assert '# Marker: func1' in raw_output
+    assert '# Marker: method2' in raw_output
+    assert '# Marker: func3' in raw_output
+
+    # Check that the timing info (of the lack thereof) are correct
+    for func, has_timing in [('func1', wrap_module), ('method2', wrap_class),
+                             ('func3', False)]:
+        line, = (line for line in raw_output.splitlines()
+                 if line.endswith('Marker: ' + func))
+        has_timing = has_timing or not reset_enable_count
+        assert line.split()[1] == ('1' if has_timing else 'pass')
+
+
+def test_profiler_add_class_recursion_guard():
+    """
+    Test that if we were to add a pair of classes which each of them
+    has a reference to the other in its namespace, we don't end up in
+    infinite recursion.
+    """
+    from line_profiler import LineProfiler
+
+    class Class1:
+        def method1(self):
+            pass
+
+        class ChildClass1:
+            def child_method_1(self):
+                pass
+
+    class Class2:
+        def method2(self):
+            pass
+
+        class ChildClass2:
+            def child_method_2(self):
+                pass
+
+        OtherClass = Class1
+        # A duplicate reference shouldn't affect profiling either
+        YetAnotherClass = Class1
+
+    # Add self/mutual references
+    Class1.ThisClass = Class1
+    Class1.OtherClass = Class2
+
+    profile = LineProfiler()
+    profile.add_class(Class1)
+    assert len(profile.functions) == 4
+    assert Class1.method1 in profile.functions
+    assert Class2.method2 in profile.functions
+    assert Class1.ChildClass1.child_method_1 in profile.functions
+    assert Class2.ChildClass2.child_method_2 in profile.functions
+
+
+def test_profiler_warn_unwrappable():
+    """
+    Test for warnings when using `LineProfiler.add_*(wrap=True)` with a
+    namespace which doesn't allow attribute assignment.
+    """
+    from line_profiler import LineProfiler
+
+    class ProblamticMeta(type):
+        def __init__(cls, *args, **kwargs):
+            super(ProblamticMeta, cls).__init__(*args, **kwargs)
+            cls._initialized = True
+
+        def __setattr__(cls, attr, value):
+            if not getattr(cls, '_initialized', None):
+                return super(ProblamticMeta, cls).__setattr__(attr, value)
+            raise AttributeError(
+                f'cannot set attribute on {type(cls)} instance')
+
+    class ProblematicClass(metaclass=ProblamticMeta):
+        def method(self):
+            pass
+
+    profile = LineProfiler()
+    vanilla_method = ProblematicClass.method
+
+    with pytest.warns(match=r"cannot wrap 1 attribute\(s\) of "
+                      r"<class '.*\.ProblematicClass'> \(`\{attr: value\}`\): "
+                      r"\{'method': <function .*\.method at 0x.*>\}"):
+        # The method is added to the profiler, but we can't assign its
+        # wrapper back into the class namespace
+        assert profile.add_class(ProblematicClass, wrap=True) == 1
+
+    assert ProblematicClass.method is vanilla_method
+
+
+@pytest.mark.parametrize(
+    ('match_scope', 'add_module_targets', 'add_class_targets'),
+    [('exact',
+      {'class2_method', 'child_class2_method'},
+      {'class3_method', 'child_class3_method'}),
+     ('descendants',
+      {'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method'},
+      {'class3_method', 'child_class3_method'}),
+     ('siblings',
+      {'class1_method', 'child_class1_method',
+       'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'},
+      {'class3_method', 'child_class3_method', 'other_class3_method'}),
+     ('none',
+      {'class1_method', 'child_class1_method',
+       'class2_method', 'child_class2_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'},
+      {'child_class1_method',
+       'class3_method', 'child_class3_method', 'other_class3_method'})])
+def test_profiler_scope_matching(monkeypatch,
+                                 match_scope,
+                                 add_module_targets,
+                                 add_class_targets):
+    """
+    Test for the scope-matching strategies of the `LineProfiler.add_*()`
+    methods.
+    """
+    def write(path, code=None):
+        path.parent.mkdir(exist_ok=True, parents=True)
+        if code is None:
+            path.touch()
+        else:
+            path.write_text(ub.codeblock(code))
+
+    with enter_tmpdir() as curdir:
+        pkg_dir = curdir / 'packages' / 'my_pkg'
+        write(pkg_dir / '__init__.py')
+        write(pkg_dir / 'submod1.py',
+              """
+        class Class1:
+            def class1_method(self):
+                pass
+
+            class ChildClass1:
+                def child_class1_method(self):
+                    pass
+              """)
+        write(pkg_dir / 'subpkg2' / '__init__.py',
+              """
+        from ..submod1 import Class1  # Import from a sibling
+        from .submod3 import Class3  # Import from a descendant
+
+
+        class Class2:
+            def class2_method(self):
+                pass
+
+            class ChildClass2:
+                def child_class2_method(self):
+                    pass
+
+            BorrowedChildClass = Class1.ChildClass1  # Non-sibling class
+              """)
+        write(pkg_dir / 'subpkg2' / 'submod3.py',
+              """
+        from ..submod1 import Class1
+
+
+        class Class3:
+            def class3_method(self):
+                pass
+
+            class OtherChildClass3:
+                def child_class3_method(self):
+                    pass
+
+            # Unrelated class
+            BorrowedChildClass1 = Class1.ChildClass1
+
+        class OtherClass3:
+            def other_class3_method(self):
+                pass
+
+        # Sibling class
+        Class3.BorrowedChildClass3 = OtherClass3
+              """)
+        monkeypatch.syspath_prepend(pkg_dir.parent)
+
+        from my_pkg import subpkg2
+        from line_profiler import LineProfiler
+
+        # Add a module
+        profile = LineProfiler()
+        profile.add_module(subpkg2, match_scope=match_scope)
+        assert len(profile.functions) == len(add_module_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_module_targets)
+        # Add a class
+        profile = LineProfiler()
+        profile.add_class(subpkg2.Class3, match_scope=match_scope)
+        assert len(profile.functions) == len(add_class_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_class_targets)
 
 
 if __name__ == '__main__':
