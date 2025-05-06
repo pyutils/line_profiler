@@ -50,6 +50,8 @@ NOTE:
     * ``kernprof <options> - <args to code>`` parallels ``python -`` and
       executes literal code passed via the ``stdin``.
 
+    See also :doc:`kernprof invocations </manual/examples/example_kernprof>`.
+
 For more details and options, refer to the CLI help.
 To view kernprof help run:
 
