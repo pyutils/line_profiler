@@ -6,8 +6,7 @@ and profile Python code in various forms.
 
 For the following, we assume that we have:
 
-* the below file ``fib.py`` in the current directory,
-* the current directory in ``${PYTHONPATH}``, and
+* the below file ``fib.py`` in the current directory, and
 * :py:mod:`line_profiler` and :py:mod:`kernprof` installed.
 
 .. code:: python
@@ -62,10 +61,18 @@ Script execution
 In the most basic form, one passes the path to the executed script and
 its arguments to ``kernprof``:
 
-.. code:: console
+.. code:: bash
 
-    $ kernprof --prof-mod fib.py --line-by-line --view \
-    > fib.py --verbose 10 20 30
+    kernprof --prof-mod fib.py --line-by-line --view \
+        fib.py --verbose 10 20 30
+
+.. raw:: html
+
+    <details>
+    <summary>Output (click to expand)</summary>
+
+.. code::
+
     fib(10) = 89
     fib(20) = 10946
     fib(30) = 1346269
@@ -126,6 +133,12 @@ its arguments to ``kernprof``:
         37         3         91.0     30.3     18.7          result = func(n)
         38         3         20.0      6.7      4.1          print(pattern.format(n, result))
 
+.. raw:: html
+
+    </details>
+    <p>
+
+
 .. _kernprof-script-note:
 .. note::
 
@@ -141,15 +154,29 @@ Module execution
 It is also possible to use ``kernprof -m`` to run installed modules and
 packages:
 
-.. code:: console
+.. code:: bash
 
-    $ kernprof --prof-mod fib --line-by-line --view -m \
-    > fib --verbose 10 20 30
+    PYTHONPATH="${PYTHONPATH}:${PWD}" \
+        kernprof --prof-mod fib --line-by-line --view -m \
+        fib --verbose 10 20 30
+
+.. raw:: html
+
+    <details>
+    <summary>Output (click to expand)</summary>
+
+.. code::
+
     fib(10) = 89
     fib(20) = 10946
     fib(30) = 1346269
     Wrote profile results to fib.lprof
     ...
+
+.. raw:: html
+
+    </details>
+    <p>
 
 .. _kernprof-m-note:
 .. note::
@@ -159,12 +186,24 @@ packages:
     thereafter (the run module).
     If there isn't one, an error is raised:
 
-    .. code:: console
+    .. code:: bash
 
-        $ kernprof -m
+        kernprof -m
+
+    .. raw:: html
+
+        <details>
+        <summary>Output (click to expand)</summary>
+
+    .. code:: pycon
+
         Traceback (most recent call last):
           ...
         ValueError: argument expected for the -m option
+
+    .. raw:: html
+
+        </details>
 
 
 Literal-code execution
@@ -174,12 +213,23 @@ Like how ``kernprof -m`` parallels ``python -m``, ``kernprof -c`` can be
 used to run and profile literal snippets supplied on the command line
 like ``python -c``:
 
-.. code:: console
+.. code:: bash
 
-    $ code="import sys; "
-    $ code+="from fib import _run_fib, fib_no_cache as fib; "
-    $ code+="for n in sys.argv[1:]: print(f'fib({n})', '=', fib(int(n)))"
-    $ kernprof --prof-mod fib._run_fib --line-by-line --view -c "${code}" 10 20
+    PYTHONPATH="${PYTHONPATH}:${PWD}" \
+        kernprof --prof-mod fib._run_fib --line-by-line --view -c "
+        import sys
+        from fib import _run_fib, fib_no_cache as fib
+        for n in sys.argv[1:]:
+            print(f'fib({n})', '=', fib(int(n)))
+        " 10 20
+
+.. raw:: html
+
+    <details>
+    <summary>Output (click to expand)</summary>
+
+.. code::
+
     fib(10) = 89
     fib(20) = 10946
     Wrote profile results to <...>/kernprof-command-imuhz89_.lprof
@@ -200,6 +250,11 @@ like ``python -c``:
         22     11033       1477.0      0.1     18.4      prev = fib(n - 1)
         23     11033        770.0      0.1      9.6      return prev_prev + prev
 
+.. raw:: html
+
+    </details>
+    <p>
+
 .. note::
 
     * As with ``python -c``, the ``-c`` option terminates further
@@ -215,18 +270,25 @@ like ``python -c``:
       ``python -m line_profiler`` and has to be ``--view``-ed
       immediately:
 
-      .. code:: console
+      .. code:: bash
 
-          $ read -d '' -r code <<-'!'
-          > from fib import fib
-          >
-          > def my_func(n=50):
-          >     result = fib(n)
-          >     print(n, '->', result)
-          >
-          > my_func()
-          > !
-          $ kernprof -lv -c "${code}"
+          PYTHONPATH="${PYTHONPATH}:${PWD}" \
+              kernprof --line-by-line --view -c "
+              from fib import fib
+
+              def my_func(n=50):
+                  result = fib(n)
+                  print(n, '->', result)
+
+              my_func()"
+
+      .. raw:: html
+
+          <details>
+          <summary>Output (click to expand)</summary>
+
+      .. code::
+
           50 -> 20365011074
           Wrote profile results to <...>/kernprof-command-ni6nis6t.lprof
           Timer unit: 1e-06 s
@@ -241,7 +303,22 @@ like ``python -c``:
                4         1         26.0     26.0     68.4      result = fib(n)
                5         1         12.0     12.0     31.6      print(n, '->', result)
 
-          $ python -m line_profiler kernprof-command-ni6nis6t.lprof 
+      .. raw:: html
+
+          </details>
+          <p>
+
+      .. code:: bash
+
+          python -m line_profiler kernprof-command-ni6nis6t.lprof
+
+      .. raw:: html
+
+          <details>
+          <summary>Output (click to expand)</summary>
+
+      .. code::
+
           Timer unit: 1e-06 s
           
           Total time: 3.6e-05 s
@@ -257,6 +334,10 @@ like ``python -c``:
                4         1         26.0     26.0     72.2  
                5         1         10.0     10.0     27.8  
 
+      .. raw:: html
+
+          </details>
+
 
 Executing code read from ``stdin``
 ----------------------------------
@@ -264,18 +345,34 @@ Executing code read from ``stdin``
 It is also possible to read, run, and profile code from ``stdin``, by
 passing ``-`` to ``kernprof`` in place of a filename:
 
-.. code:: console
+.. code:: bash
 
-    $ kernprof --prof-mod fib._run_fib --line-by-line --view - 10 20 <<-'!'
-    > import sys
-    > from fib import _run_fib, fib_no_cache as fib
-    > for n in sys.argv[1:]:
-    >     print(f"fib({n})", "=", fib(int(n)))
-    > !
+    {
+        # This example doesn't make much sense on its own, but just
+        # imagine if this is a command generating code dynamically
+        echo 'import sys'
+        echo 'from fib import _run_fib, fib_no_cache as fib'
+        echo 'for n in sys.argv[1:]:'
+        echo '    print(f"fib({n})", "=", fib(int(n)))'
+    } | PYTHONPATH="${PYTHONPATH}:${PWD}" \
+        kernprof --prof-mod fib._run_fib --line-by-line --view - 10 20
+
+.. raw:: html
+
+    <details>
+    <summary>Output (click to expand)</summary>
+
+.. code::
+
     fib(10) = 89
     fib(20) = 10946
     Wrote profile results to <...>/kernprof-stdin-kntk2lo1.lprof
     ...
+
+.. raw:: html
+
+    </details>
+    <p>
 
 .. note::
 
