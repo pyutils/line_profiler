@@ -4,7 +4,6 @@ CLI tools.
 """
 import argparse
 import pathlib
-from .toml_config import get_config
 from typing import Protocol, Sequence, Tuple, TypeVar, Union
 
 
@@ -23,11 +22,15 @@ class ActionLike(Protocol):
 
 
 class ParserLike(Protocol[A_co]):
-    def add_argument(self, *args, **kwargs) -> A_co:
+    def add_argument(self, arg: str, /, *args: str, **kwargs) -> A_co:
+        ...
+
+    @property
+    def prefix_chars(self) -> str:
         ...
 
 
-def add_argument(parser_like: ParserLike[A_co], *args,
+def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
                  hide_complementary_options: bool = True, **kwargs) -> A_co:
     ...
 
@@ -42,6 +45,11 @@ def get_python_executable() -> str:
 
 
 def positive_float(value: str) -> float:
+    ...
+
+
+def boolean(value: str, *,
+            fallback: Union[bool, None] = None, invert: bool = False) -> bool:
     ...
 
 
