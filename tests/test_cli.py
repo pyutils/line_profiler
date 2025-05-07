@@ -1,5 +1,117 @@
+import re
+from argparse import ArgumentParser, HelpFormatter
+from contextlib import nullcontext
+from functools import partial
+from io import StringIO
 from os.path import join
+from shlex import split
 from sys import executable
+import pytest
+from line_profiler.cli_utils import add_argument
+
+
+@pytest.fixture
+def parser():
+    """
+    Argument parser with the following boolean flags:
+
+    -f, -F, --foo -> foo
+    -b, --bar -> bar
+    -B, --baz -> baz
+    --no-spam -> spam (negated)
+    --ham -> ham
+    -c -> c
+    """
+    parser = ArgumentParser(
+        formatter_class=partial(HelpFormatter,
+                                max_help_position=float('inf'),
+                                width=float('inf')))
+    # Normal boolean flag (w/2 short forms)
+    # -> adds 3 actions (long, short, long-negated)
+    add_argument(parser, '-f', '-F', '--foo', action='store_true')
+    # Boolean flag w/o parenthetical remark in help text
+    # -> adds 3 actions (long, short, long-negated)
+    add_argument(parser, '-b', '--bar', action='store_true', help='Set `bar`')
+    # Boolean flag w/parenthetical remark in help text
+    # -> adds 3 actions (long, short, long-negated)
+    add_argument(parser, '-B', '--baz',
+                 action='store_true', help='Set `baz` (BAZ)')
+    # Negative boolean flag
+    # -> adds 1 action (long-negated)
+    add_argument(parser, '--no-spam',
+                 action='store_false', dest='spam', help='Set `spam` to false')
+    # Boolean flag w/o short form
+    # -> adds 2 actions (long, long-negated)
+    add_argument(parser, '--ham', action='store_true', help='Set `ham`')
+    # Short-form-only boolean flag
+    # -> adds 1 action (short)
+    add_argument(parser, '-e',
+                 action='store_true', dest='eggs', help='Set `eggs`')
+    yield parser
+
+
+def test_boolean_argument_help_text(parser):
+    """
+    Test the help texts generated from boolean arguments added by
+    `line_profiler.cli_utils.add_argument(action=...)`.
+    """
+    assert len(parser._actions) == 14  # One extra option from `--help`
+    with StringIO() as sio:
+        parser.print_help(sio)
+        help_text = sio.getvalue()
+    matches = partial(re.search, string=help_text, flags=re.MULTILINE)
+    assert matches(r'^  --foo \[.*\] +'
+                   + re.escape('(Short forms: -f, -F)')
+                   + '$')
+    assert matches(r'^  --bar \[.*\] +'
+                   + re.escape('Set `bar` (Short form: -b)')
+                   + '$')
+    assert matches(r'^  --baz \[.*\] +'
+                   + re.escape('Set `baz` (BAZ; short form: -B)')
+                   + '$')
+    assert matches(r'^  --no-spam \[.*\] +'
+                   + re.escape('Set `spam` to false')
+                   + '$')
+    assert matches(r'^  --ham \[.*\] +'
+                   + re.escape('Set `ham`')
+                   + '$')
+    assert matches(r'^  -e +'
+                   + re.escape('Set `eggs`')
+                   + '$')
+
+
+@pytest.mark.parametrize(
+    ('args', 'foo', 'bar', 'baz', 'spam', 'ham', 'eggs', 'expect_error'),
+    [('--foo q', *((None,) * 6), True),  # Can't parse `q` into boolean
+     ('-fbB'  # Test short-flag concatenation
+      ' --ham=',  # Empty string -> set to false
+      True, True, True, None, False, None, False),
+     ('--foo'  # No-arg -> set to true
+      ' --bar=0'  # Falsy arg -> set to false
+      ' --no-baz'  # No-arg (negated flag) -> set to false
+      ' --no-spam=no'  # Falsy arg (negated flag) -> set to true
+      ' --ham=on'  # Truey arg -> set to true
+      ' -e',  # No-arg -> set to true
+      True, False, False, True, True, True, False)])
+def test_boolean_argument_parsing(
+        parser, capsys, args, foo, bar, baz, spam, ham, eggs, expect_error):
+    """
+    Test the handling of boolean flags.
+    """
+    if expect_error:
+        ctx = pytest.raises(SystemExit)
+        match_stderr = 'usage: .* error: argument'
+    else:
+        ctx = nullcontext()
+        match_stderr = '^$'
+    with ctx:
+        result = vars(parser.parse_args(split(args)))
+    stderr = capsys.readouterr().err
+    assert re.match(match_stderr, stderr, flags=re.DOTALL)
+    if expect_error:
+        return
+    expected = dict(foo=foo, bar=bar, baz=baz, spam=spam, ham=ham, eggs=eggs)
+    assert result == expected
 
 
 def test_cli():
