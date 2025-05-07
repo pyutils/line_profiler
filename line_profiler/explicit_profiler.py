@@ -166,12 +166,9 @@ import atexit
 import os
 import sys
 # This is for compatibility
-from .cli_utils import get_python_executable as _python_command
+from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
 from .toml_config import get_config
-
-
-_FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
 
 
 class GlobalProfiler:
@@ -299,7 +296,7 @@ class GlobalProfiler:
         """
         environ_flags = self.setup_config['environ_flags']
         cli_flags = self.setup_config['cli_flags']
-        is_profiling = any(os.environ.get(f, '').lower() not in _FALSY_STRINGS
+        is_profiling = any(boolean(os.environ.get(f, ''), fallback=True)
                            for f in environ_flags)
         is_profiling |= any(f in sys.argv for f in cli_flags)
         if is_profiling:
