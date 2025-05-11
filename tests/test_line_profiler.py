@@ -50,9 +50,12 @@ def check_timings(prof):
     timings = prof.get_stats().timings
     assert not any(timings.values()), ('Expected no timing entries, '
                                        f'got {timings!r}')
-    yield prof
-    timings = prof.get_stats().timings
-    assert any(timings.values()), f'Expected timing entries, got {timings!r}'
+    try:
+        yield prof
+    finally:
+        timings = prof.get_stats().timings
+        assert (any(timings.values()),
+                f'Expected timing entries, got {timings!r}')
 
 
 def test_init():

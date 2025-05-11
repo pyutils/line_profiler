@@ -249,8 +249,10 @@ def _restore_list(lst):
     [1, 2, 3]
     """
     old = lst.copy()
-    yield
-    lst[:] = old
+    try:
+        yield
+    finally:
+        lst[:] = old
 
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):

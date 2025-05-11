@@ -100,9 +100,11 @@ def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
     @contextlib.contextmanager
     def restore_dict(d, target=None):
         copy = d.copy()
-        yield target
-        d.clear()
-        d.update(copy)
+        try:
+            yield target
+        finally:
+            d.clear()
+            d.update(copy)
 
     if as_module:
         Profiler = AstTreeModuleProfiler
