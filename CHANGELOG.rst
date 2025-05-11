@@ -10,6 +10,7 @@ Changes
 * ENH: Added CLI argument ``-m`` to ``kernprof`` for running a library module as a script; also made it possible for profiling targets to be supplied across multiple ``-p`` flags
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
+* FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
 
 4.2.0
 ~~~~~
