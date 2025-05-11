@@ -41,21 +41,28 @@ def strip(s):
     return textwrap.dedent(s).strip('\n')
 
 
-@contextlib.contextmanager
-def check_timings(prof):
+class check_timings:
     """
     Verify that the profiler starts without timing data and ends with
     some.
     """
-    timings = prof.get_stats().timings
-    assert not any(timings.values()), ('Expected no timing entries, '
-                                       f'got {timings!r}')
-    try:
-        yield prof
-    finally:
-        timings = prof.get_stats().timings
-        assert (any(timings.values()),
-                f'Expected timing entries, got {timings!r}')
+    def __init__(self, prof):
+        self.prof = prof
+
+    def __enter__(self):
+        timings = self.timings
+        assert not any(timings.values()), (
+            f'Expected no timing entries, got {timings!r}')
+        return self.prof
+
+    def __exit__(self, *_, **__):
+        timings = self.timings
+        assert any(timings.values()), (
+            f'Expected timing entries, got {timings!r}')
+
+    @property
+    def timings(self):
+        return self.prof.get_stats().timings
 
 
 def test_init():

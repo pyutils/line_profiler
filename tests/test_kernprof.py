@@ -125,9 +125,15 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
 
 
 @pytest.mark.parametrize('error', [True, False])
-def test_kernprof_sys_restoration(capsys, error):
+@pytest.mark.parametrize(
+    'args',
+    ['', '-pmymod'],  # Normal execution / auto-profile
+)
+def test_kernprof_sys_restoration(capsys, error, args):
     """
-    Test that `kernprof.main()` properly restores `sys.path` on the way
+    Test that `kernprof.main()` and
+    `line_profiler.autoprofile.autoprofile.run()` (resp.) properly
+    restores `sys.path` (resp. `sys.modules['__main__']`) on the way
     out.
 
     Notes
@@ -162,11 +168,13 @@ def test_kernprof_sys_restoration(capsys, error):
             ctx = pytest.raises(BaseException)
         else:
             ctx = contextlib.nullcontext()
+        old_main = sys.modules.get('__main__')
         with ctx:
-            main(['-l', '-m', 'mymod'])
+            main(['-l', *shlex.split(args), '-m', 'mymod'])
         out, _ = capsys.readouterr()
         assert out.startswith('1')
         assert tmpdir not in sys.path
+        assert sys.modules.get('__main__') is old_main
 
 
 class TestKernprof(unittest.TestCase):

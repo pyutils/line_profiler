@@ -80,7 +80,6 @@ which displays:
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
 """
 import builtins
-import contextlib
 import functools
 import os
 import sys
@@ -224,8 +223,7 @@ def _python_command():
         return sys.executable
 
 
-@contextlib.contextmanager
-def _restore_list(lst):
+class _restore_list:
     """
     Restore a list like `sys.path` after running code which potentially
     modifies it.
@@ -248,11 +246,23 @@ def _restore_list(lst):
     >>> l
     [1, 2, 3]
     """
-    old = lst.copy()
-    try:
-        yield
-    finally:
-        lst[:] = old
+    def __init__(self, lst):
+        self.lst = lst
+        self.contexts = []
+
+    def __enter__(self):
+        self.contexts.append(self.lst.copy())
+
+    def __exit__(self, *_, **__):
+        self.lst[:] = self.contexts.pop()
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with self:
+                return func(*args, **kwargs)
+
+        return wrapper
 
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):

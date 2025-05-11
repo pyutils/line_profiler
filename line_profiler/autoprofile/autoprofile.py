@@ -97,14 +97,19 @@ def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
         as_module (bool):
             Whether we're running script_file as a module
     """
-    @contextlib.contextmanager
-    def restore_dict(d, target=None):
-        copy = d.copy()
-        try:
-            yield target
-        finally:
-            d.clear()
-            d.update(copy)
+    class restore_dict:
+        def __init__(self, d, target=None):
+            self.d = d
+            self.target = target
+            self.contexts = []
+
+        def __enter__(self):
+            self.contexts.append(self.d.copy())
+            return self.target
+
+        def __exit__(self, *_, **__):
+            self.d.clear()
+            self.d.update(self.contexts.pop())
 
     if as_module:
         Profiler = AstTreeModuleProfiler
