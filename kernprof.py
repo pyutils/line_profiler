@@ -255,7 +255,7 @@ class _restore_list:
         self.old = self.lst.copy()
 
     def __exit__(self, *_, **__):
-        self.lst[:] = self.old
+        self.old, self.lst[:] = None, self.old
 
     def __call__(self, func):
         @functools.wraps(func)
