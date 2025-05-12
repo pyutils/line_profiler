@@ -248,13 +248,14 @@ class _restore_list:
     """
     def __init__(self, lst):
         self.lst = lst
-        self.contexts = []
+        self.old = None
 
     def __enter__(self):
-        self.contexts.append(self.lst.copy())
+        assert self.old is None
+        self.old = self.lst.copy()
 
     def __exit__(self, *_, **__):
-        self.lst[:] = self.contexts.pop()
+        self.lst[:] = self.old
 
     def __call__(self, func):
         @functools.wraps(func)
