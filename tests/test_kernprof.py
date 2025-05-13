@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 import shlex
@@ -8,7 +9,7 @@ import unittest
 import pytest
 import ubelt as ub
 
-from kernprof import ContextualProfile
+from kernprof import main, ContextualProfile
 
 
 def f(x):
@@ -121,6 +122,59 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
     proc.check_returncode()
     assert proc.stdout.startswith('3\n')
     assert ('Function: main' in proc.stdout) == profiled_main
+
+
+@pytest.mark.parametrize('error', [True, False])
+@pytest.mark.parametrize(
+    'args',
+    ['', '-pmymod'],  # Normal execution / auto-profile
+)
+def test_kernprof_sys_restoration(capsys, error, args):
+    """
+    Test that `kernprof.main()` and
+    `line_profiler.autoprofile.autoprofile.run()` (resp.) properly
+    restores `sys.path` (resp. `sys.modules['__main__']`) on the way
+    out.
+
+    Notes
+    -----
+    The test is run in-process.
+    """
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = enter(tempfile.TemporaryDirectory())
+        assert tmpdir not in sys.path
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'mymod.py').write_text(ub.codeblock(
+            f'''
+            import sys
+
+
+            def main():
+                # Mess up `sys.path`
+                sys.path.append({tmpdir!r})
+                # Output
+                print(1)
+                # Optionally raise an error
+                if {error!r}:
+                    raise Exception
+
+
+            if __name__ == '__main__':
+                main()
+            '''))
+        enter(ub.ChDir(tmpdir))
+        if error:
+            ctx = pytest.raises(BaseException)
+        else:
+            ctx = contextlib.nullcontext()
+        old_main = sys.modules.get('__main__')
+        with ctx:
+            main(['-l', *shlex.split(args), '-m', 'mymod'])
+        out, _ = capsys.readouterr()
+        assert out.startswith('1')
+        assert tmpdir not in sys.path
+        assert sys.modules.get('__main__') is old_main
 
 
 class TestKernprof(unittest.TestCase):
