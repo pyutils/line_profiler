@@ -153,12 +153,14 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
 # This could be in the ipython_extension submodule,
 # but it doesn't depend on the IPython module so it's easier to just let it stay here.
-def is_ipython_kernel_cell(filename):
-    """ Return True if a filename corresponds to a Jupyter Notebook cell
+def is_generated_code(filename):
+    """ Return True if a filename corresponds to generated code, such as a
+    Jupyter Notebook cell.
     """
     filename = os.path.normcase(filename)
     temp_dir = os.path.normcase(tempfile.gettempdir())
     return (
+        filename.startswith('<generated') or
         filename.startswith('<ipython-input-') or
         filename.startswith(os.path.join(temp_dir, 'ipykernel_')) or
         filename.startswith(os.path.join(temp_dir, 'xpython_'))
@@ -249,7 +251,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     linenos = [t[0] for t in timings]
 
     stream.write('Total time: %g s\n' % (total_time * unit))
-    if os.path.exists(filename) or is_ipython_kernel_cell(filename):
+    if os.path.exists(filename) or is_generated_code(filename):
         stream.write(f'File: {filename}\n')
         stream.write(f'Function: {func_name} at line {start_lineno}\n')
         if os.path.exists(filename):

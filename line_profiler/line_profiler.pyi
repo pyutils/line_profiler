@@ -32,7 +32,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         ...
 
 
-def is_ipython_kernel_cell(filename):
+def is_generated_code(filename):
     ...
 
 
