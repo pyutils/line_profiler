@@ -11,6 +11,7 @@ Changes
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
 * FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
+* ENH: Added CLI arguments ``-c`` to ``kernprof`` for (auto-)profiling module/package/inline-script execution instead of that of script files; passing ``'-'`` as the script-file name now also reads from and profiles ``stdin``
 
 4.2.0
 ~~~~~

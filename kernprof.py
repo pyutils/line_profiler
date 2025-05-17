@@ -39,6 +39,18 @@ available and compiled. Add the ``-l`` argument to the kernprof invocation.
 
     kernprof -lb script_to_profile.py
 
+NOTE:
+
+    New in 4.3.0: more code execution options are added:
+
+    * ``kernprof <options> -m some.module <args to module>`` parallels
+      ``python -m`` and runs the provided module as ``__main__``.
+    * ``kernprof <options> -c "some code" <args to code>`` parallels
+      ``python -c`` and executes the provided literal code.
+    * ``kernprof <options> - <args to code>`` parallels ``python -`` and
+      executes literal code passed via the ``stdin``.
+
+    See also :doc:`kernprof invocations </manual/examples/example_kernprof>`.
 
 For more details and options, refer to the CLI help.
 To view kernprof help run:
@@ -51,12 +63,14 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [-m] [--prof-imports] {script | -m module} ...
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports]
+                    {path/to/script | -m path.to.module | -c "literal code"} ...
 
     Run and profile a python script.
 
     positional arguments:
-      {script | -m module}  The python script file or module to run
+      {path/to/script | -m path.to.module | -c "literal code"}
+                            The python script file, module, or literal code to run
       args                  Optional script arguments
 
     options:
@@ -64,16 +78,16 @@ which displays:
       -V, --version         show program's version number and exit
       -l, --line-by-line    Use the line-by-line profiler instead of cProfile. Implies --builtin.
       -b, --builtin         Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', '@profile' to decorate functions, or 'with profile:' to profile a section of code.
-      -o OUTFILE, --outfile OUTFILE
+      -o, --outfile OUTFILE
                             Save stats to <outfile> (default: 'scriptname.lprof' with --line-by-line, 'scriptname.prof' without)
-      -s SETUP, --setup SETUP
-                            Code to execute before the code to profile
+      -s, --setup SETUP     Code to execute before the code to profile
       -v, --view            View the results of the profile in addition to saving it
       -r, --rich            Use rich formatting if viewing output
-      -u UNIT, --unit UNIT  Output unit (in seconds) in which the timing info is displayed (default: 1e-6)
+      -u, --unit UNIT       Output unit (in seconds) in which the timing info is displayed (default: 1e-6)
       -z, --skip-zero       Hide functions which have not been called
-      -i [OUTPUT_INTERVAL], --output-interval [OUTPUT_INTERVAL]
-                            Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to disabled.
+      -i, --output-interval [OUTPUT_INTERVAL]
+                            Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to
+                            disabled.
       -p, --prof-mod PROF_MOD
                             List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
                             the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
@@ -86,6 +100,7 @@ import sys
 import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
+import tempfile
 import time
 from argparse import ArgumentError, ArgumentParser
 from runpy import run_module
@@ -215,12 +230,10 @@ def _python_command():
     Return a command that corresponds to :py:obj:`sys.executable`.
     """
     import shutil
-    if shutil.which('python') == sys.executable:
-        return 'python'
-    elif shutil.which('python3') == sys.executable:
-        return 'python3'
-    else:
-        return sys.executable
+    for abbr in 'python', 'python3':
+        if os.path.samefile(shutil.which(abbr), sys.executable):
+            return abbr
+    return sys.executable
 
 
 class _restore_list:
@@ -345,11 +358,22 @@ def main(args=None):
     if args is None:
         args = sys.argv[1:]
 
-    # Special case: `kernprof [...] -m <module>` should terminate the
-    # parsing of all subsequent options
-    args, module, post_args = pre_parse_single_arg_directive(args, '-m')
+    # Special cases: `kernprof [...] -m <module>` or
+    # `kernprof [...] -c <script>` should terminate the parsing of all
+    # subsequent options
+    if '-m' in args and '-c' in args:
+        special_mode = min(['-c', '-m'], key=args.index)
+    elif '-m' in args:
+        special_mode = '-m'
+    else:
+        special_mode = '-c'
+    args, thing, post_args = pre_parse_single_arg_directive(args, special_mode)
+    if special_mode == '-m':
+        module, literal_code = thing, None
+    else:
+        module, literal_code = None, thing
 
-    if module is None:  # Normal execution
+    if module is literal_code is None:  # Normal execution
         real_parser, = parsers = [create_parser()]
         help_parser = None
     else:
@@ -396,27 +420,78 @@ def main(args=None):
                             help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                             "Only works with line_profiler -l, --line-by-line")
 
-        if parser is help_parser or module is None:
+        if parser is help_parser or module is literal_code is None:
             parser.add_argument('script',
-                                metavar='{script | -m module}',
-                                help='The python script file or module to run')
+                                metavar='{path/to/script'
+                                ' | -m path.to.module | -c "literal code"}',
+                                help='The python script file, module, or '
+                                'literal code to run')
         parser.add_argument('args', nargs='...', help='Optional script arguments')
 
     # Hand off to the dummy parser if necessary to generate the help
     # text
     options = real_parser.parse_args(args)
     if help_parser and getattr(options, 'help', False):
-        # This should raise a `SystemExit`
-        help_parser.parse_args([*args, '-m', module])
+        help_parser.print_help()
+        exit()
     try:
         del options.help
     except AttributeError:
         pass
-    # Add in the pre-partitioned arguments cut off by `-m <module>`
+    # Add in the pre-partitioned arguments cut off by `-m <module>` or
+    # `-c <script>`
     options.args += post_args
     if module is not None:
         options.script = module
 
+    tempfile_source_and_content = None
+    if literal_code is not None:
+        tempfile_source_and_content = 'command', literal_code
+    elif options.script == '-' and not module:
+        tempfile_source_and_content = 'stdin', sys.stdin.read()
+
+    if tempfile_source_and_content:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_tempfile(*tempfile_source_and_content, options, tmpdir)
+            return _main(options, module)
+    else:
+        return _main(options, module)
+
+
+def _write_tempfile(source, content, options, tmpdir):
+    """
+    Called by ``main()`` to handle ``kernprof -c`` and ``kernprof -``;
+    not to be invoked on its own.
+    """
+    import textwrap
+
+    # Set up the script to be run
+    file_prefix = f'kernprof-{source}'
+    # Do what 3.14 does (#103998)... and also just to be user-friendly
+    content = textwrap.dedent(content)
+    fname = os.path.join(tmpdir, file_prefix + '.py')
+    with open(fname, mode='w') as fobj:
+        print(content, file=fobj)
+    options.script = fname
+    # Add the tempfile to `--prof-mod`
+    if options.prof_mod:
+        options.prof_mod.append(fname)
+    else:
+        options.prof_mod = [fname]
+    # Set the output file to somewhere nicer (also take care of possible
+    # filename clash)
+    if not options.outfile:
+        extension = 'lprof' if options.line_by_line else 'prof'
+        _, options.outfile = tempfile.mkstemp(dir=os.curdir,
+                                              prefix=file_prefix + '-',
+                                              suffix='.' + extension)
+
+
+def _main(options, module=False):
+    """
+    Called by ``main()`` for the actual execution and profiling of code;
+    not to be invoked on its own.
+    """
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
