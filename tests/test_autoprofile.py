@@ -432,19 +432,28 @@ def test_autoprofile_script_with_prof_imports():
 
 
 @pytest.mark.parametrize(
-    ['use_kernprof_exec', 'prof_mod', 'prof_imports',
+    ['use_kernprof_exec', 'prof_mod', 'no_preimports', 'prof_imports',
      'add_one', 'add_two', 'add_operator', 'main'],
-    [(False, 'test_mod.submod1', False, True, False, False, False),
-     (False, 'test_mod.submod2', True, False, True, True, False),
-     (False, 'test_mod', True, True, True, True, True),
+    [(False, 'test_mod.submod1', False, False,
+      True, False, True, False),
+     # By not using `--no-preimports`, the entirety of `.submod1` is
+     # passed to `add_imported_function_or_module()`
+     (False, 'test_mod.submod1', True, False,
+      True, False, False, False),
+     (False, 'test_mod.submod2', False, True,
+      False, True, True, False),
+     (False, 'test_mod', False, True,
+      True, True, True, True),
      # Explicitly add all the modules via multiple `-p` flags, without
      # using the `--prof-imports` flag
-     (False, ['test_mod', 'test_mod.submod1,test_mod.submod2'], False,
+     (False, ['test_mod', 'test_mod.submod1,test_mod.submod2'], False, False,
       True, True, True, True),
-     (False, None, True, False, False, False, False),
-     (True, None, True, False, False, False, False)])
+     (False, None, False, True,
+      False, False, False, False),
+     (True, None, False, True,
+      False, False, False, False)])
 def test_autoprofile_exec_package(
-        use_kernprof_exec, prof_mod, prof_imports,
+        use_kernprof_exec, prof_mod, no_preimports, prof_imports,
         add_one, add_two, add_operator, main):
     """
     Test the execution of a package.
@@ -461,6 +470,8 @@ def test_autoprofile_exec_package(
             prof_mod = [prof_mod]
         for pm in prof_mod:
             args.extend(['-p', pm])
+    if no_preimports:
+        args.append('--no-preimports')
     if prof_imports:
         args.append('--prof-imports')
     args.extend(['-l', '-m', 'test_mod', '1', '2', '3'])
@@ -484,16 +495,28 @@ def test_autoprofile_exec_package(
 
 
 @pytest.mark.parametrize(
-    ['use_kernprof_exec', 'prof_mod', 'prof_imports',
-     'add_one', 'add_two', 'add_four', 'add_operator', 'main'],
-    [(False, 'test_mod.submod2', False, False, True, False, False, False),
-     (False, 'test_mod.submod1', False, True, False, False, True, False),
-     (False, 'test_mod.subpkg.submod4', True, True, True, True, True, True),
-     (False, None, True, False, False, False, False, False),
-     (True, None, True, False, False, False, False, False)])
+    ['use_kernprof_exec', 'prof_mod', 'no_preimports', 'prof_imports',
+     'add_one', 'add_two', 'add_three', 'add_four', 'add_operator', 'main'],
+    [(False, 'test_mod.submod2,test_mod.subpkg.submod3.add_three', True, False,
+      False, True, False, False, False, False),
+     # By not using `--no-preimports`:
+     # - The entirety of `.submod2` is passed to
+     #   `add_imported_function_or_module()`
+     # - Despite not having been imported anywhere, `add_three()` is
+     #   still profiled
+     (False, 'test_mod.submod2,test_mod.subpkg.submod3.add_three', False, False,
+      False, True, True, False, True, False),
+     (False, 'test_mod.submod1', False, False,
+      True, False, False, False, True, False),
+     (False, 'test_mod.subpkg.submod4', False, True,
+      True, True, False, True, True, True),
+     (False, None, False, True,
+      False, False, False, False, False, False),
+     (True, None, False, True,
+      False, False, False, False, False, False)])
 def test_autoprofile_exec_module(
-        use_kernprof_exec, prof_mod, prof_imports,
-        add_one, add_two, add_four, add_operator, main):
+        use_kernprof_exec, prof_mod, no_preimports, prof_imports,
+        add_one, add_two, add_three, add_four, add_operator, main):
     """
     Test the execution of a module.
     """
@@ -506,6 +529,8 @@ def test_autoprofile_exec_module(
         args = [sys.executable, '-m', 'kernprof']
     if prof_mod is not None:
         args.extend(['-p', prof_mod])
+    if no_preimports:
+        args.append('--no-preimports')
     if prof_imports:
         args.append('--prof-imports')
     args.extend(['-l', '-m', 'test_mod.subpkg.submod4', '1', '2', '3'])
@@ -524,6 +549,7 @@ def test_autoprofile_exec_module(
 
     assert ('Function: add_one' in raw_output) == add_one
     assert ('Function: add_two' in raw_output) == add_two
+    assert ('Function: add_three' in raw_output) == add_three
     assert ('Function: add_four' in raw_output) == add_four
     assert ('Function: add_operator' in raw_output) == add_operator
     assert ('Function: _main' in raw_output) == main
@@ -625,78 +651,14 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
 
 
 @pytest.mark.parametrize(
-    ['prof_mod', 'eager_preimports',
-     'add_one', 'add_two', 'add_three', 'add_four', 'add_operator', 'main'],
-    # Test that `--eager-preimports` know to exclude the script run
-    # (so as not to inadvertantly run it twice)
-    [('script.py', None, False, False, False, False, False, True),
-     (None, 'script.py', False, False, False, False, False, True),
-     # Test explicitly passing targets to `--eager-preimports`
-     (['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'], None,
-      True, True, False, False, True, False),
-     (['test_mod.submod1,test_mod.submod2'], ['test_mod.subpkg.submod4'],
-      True, True, False, True, True, False),
-     (None, ['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'],
-      True, True, False, True, True, False),
-     # Test implicitly passing targets to `--eager-preimports`
-     (['test_mod.submod1,test_mod.submod2', 'test_mod.subpkg.submod4'], True,
-      True, True, False, True, True, False)])
-def test_autoprofile_eager_preimports(
-        prof_mod, eager_preimports,
-        add_one, add_two, add_three, add_four, add_operator, main):
-    """
-    Test eager imports with the `-e`/`--eager-preimports` flag.
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_dpath = ub.Path(tmpdir)
-        _write_demo_module(temp_dpath)
-
-        args = [sys.executable, '-m', 'kernprof']
-        if prof_mod is not None:
-            if isinstance(prof_mod, str):
-                prof_mod = [prof_mod]
-            for target in prof_mod:
-                args.extend(['-p', target])
-        if eager_preimports in (True,):
-            args.append('-e')
-        elif eager_preimports is not None:
-            if isinstance(eager_preimports, str):
-                eager_preimports = [eager_preimports]
-            for target in eager_preimports:
-                args.extend(['-e', target])
-        args.extend(['-l', 'script.py'])
-        proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
-        # Check that pre-imports don't accidentally run the code twice
-        assert proc.stdout.count('7.9') == 1
-        print(proc.stdout)
-        print(proc.stderr)
-        proc.check_returncode()
-
-        prof = temp_dpath / 'script.py.lprof'
-
-        args = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
-        proc = ub.cmd(args, cwd=temp_dpath)
-        raw_output = proc.stdout
-        print(raw_output)
-        proc.check_returncode()
-
-    assert ('Function: add_one' in raw_output) == add_one
-    assert ('Function: add_two' in raw_output) == add_two
-    assert ('Function: add_three' in raw_output) == add_three
-    assert ('Function: add_four' in raw_output) == add_four
-    assert ('Function: add_operator' in raw_output) == add_operator
-    assert ('Function: main' in raw_output) == main
-
-
-@pytest.mark.parametrize(
-    ('eager_preimports, function, method, class_method, static_method, '
+    ('prof_mod, function, method, class_method, static_method, '
      'descriptor'),
     [('my_module', True, True, True, True, True),
      # `function()` included in profiling via `Class.partial_method()`
      ('my_module.Class', True, True, True, True, True),
      ('my_module.Class.descriptor', False, False, False, False, True)])
 def test_autoprofile_callable_wrapper_objects(
-        eager_preimports, function, method, class_method, static_method,
+        prof_mod, function, method, class_method, static_method,
         descriptor):
     """
     Test that on-import profiling catches various callable-wrapper
@@ -747,7 +709,7 @@ def test_autoprofile_callable_wrapper_objects(
 
         with ub.ChDir(temp_dpath):
             args = [sys.executable, '-m', 'kernprof',
-                    '-e', eager_preimports, '-lv', 'script.py']
+                    '-p', prof_mod, '-lv', 'script.py']
             python_path = os.environ.get('PYTHONPATH')
             if python_path:
                 python_path = '{}:{}'.format(path, python_path)
