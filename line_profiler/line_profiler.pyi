@@ -19,7 +19,7 @@ CLevelCallable = TypeVar('CLevelCallable',
 CallableLike = TypeVar('CallableLike',
                        FunctionType, partial, property, cached_property,
                        MethodType, staticmethod, classmethod, partialmethod)
-MatchScopeOption = Literal['exact', 'descendants', 'siblings', 'none']
+ScopingPolicyOption = Literal['exact', 'descendants', 'siblings', 'none']
 
 
 def is_c_level_callable(func: Any) -> TypeGuard[CLevelCallable]:
@@ -64,12 +64,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         ...
 
     def add_module(self, mod: ModuleType, *,
-                   match_scope: MatchScopeOption = 'siblings',
+                   scoping_policy: ScopingPolicyOption = 'siblings',
                    wrap: bool = False) -> int:
         ...
 
     def add_class(self, cls: type, *,
-                  match_scope: MatchScopeOption = 'siblings',
+                  scoping_policy: ScopingPolicyOption = 'siblings',
                   wrap: bool = False) -> int:
         ...
 

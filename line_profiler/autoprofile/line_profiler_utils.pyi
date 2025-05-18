@@ -2,13 +2,15 @@ from types import ModuleType
 from typing import overload, Any, Literal, TYPE_CHECKING
 
 if TYPE_CHECKING:  # Stub-only annotations
-    from ..line_profiler import CLevelCallable, CallableLike, MatchScopeOption
+    from ..line_profiler import (
+        CLevelCallable, CallableLike, ScopingPolicyOption,
+    )
 
 
 @overload
 def add_imported_function_or_module(
         self, item: CLevelCallable | Any,
-        match_scope: MatchScopeOption = 'siblings',
+        scoping_policy: ScopingPolicyOption = 'siblings',
         wrap: bool = False) -> Literal[0]:
     ...
 
@@ -16,6 +18,6 @@ def add_imported_function_or_module(
 @overload
 def add_imported_function_or_module(
         self, item: CallableLike | type | ModuleType,
-        match_scope: MatchScopeOption = 'siblings',
+        scoping_policy: ScopingPolicyOption = 'siblings',
         wrap: bool = False) -> Literal[0, 1]:
     ...

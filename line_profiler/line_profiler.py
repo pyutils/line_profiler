@@ -181,38 +181,39 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   stream=stream, stripzeros=stripzeros,
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
-    def _add_namespace(self, duplicate_tracker, namespace, *,
-                       match_scope='none', wrap=False):
+    def _add_namespace(self, namespace, *,
+                       seen=None, scoping_policy='none', wrap=False):
+        if seen is None:
+            seen = set()
         count = 0
-        add_cls = functools.partial(self._add_namespace, duplicate_tracker,
-                                    match_scope=match_scope, wrap=wrap)
-        add_func = self.add_callable
-        remember = duplicate_tracker.add
-        wrap_func = self.wrap_callable
+        add_cls = functools.partial(self._add_namespace,
+                                    seen=seen,
+                                    scoping_policy=scoping_policy,
+                                    wrap=wrap)
         wrap_failures = {}
-        if match_scope == 'none':
+        if scoping_policy == 'none':
             def check(*_):
                 return True
         elif isinstance(namespace, type):
-            check = self._add_class_filter(namespace, match_scope)
+            check = self._add_class_filter(namespace, scoping_policy)
         else:
-            check = self._add_module_filter(namespace, match_scope)
+            check = self._add_module_filter(namespace, scoping_policy)
 
         for attr, value in vars(namespace).items():
-            if id(value) in duplicate_tracker:
+            if id(value) in seen:
                 continue
-            remember(id(value))
+            seen.add(id(value))
             if isinstance(value, type):
                 if check(value) and add_cls(value):
                     count += 1
                 continue
             try:
-                if not add_func(value):
+                if not self.add_callable(value):
                     continue
             except TypeError:  # Not a callable (wrapper)
                 continue
             if wrap:
-                wrapper = wrap_func(value)
+                wrapper = self.wrap_callable(value)
                 if wrapper is not value:
                     try:
                         setattr(namespace, attr, wrapper)
@@ -232,7 +233,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         return count
 
     @staticmethod
-    def _add_module_filter(mod, match_scope):
+    def _add_module_filter(mod, scoping_policy):
         def match_prefix(s, prefix, sep='.'):
             return s == prefix or s.startswith(prefix + sep)
 
@@ -252,10 +253,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                 'descendants': class_is_descendant,
                 'siblings': (class_is_cousin  # Only if a pkg
                              if basename else
-                             class_is_descendant)}[match_scope]
+                             class_is_descendant)}[scoping_policy]
 
     @staticmethod
-    def _add_class_filter(cls, match_scope):
+    def _add_class_filter(cls, scoping_policy):
         def class_is_child(other):
             if not modules_are_equal(other):
                 return False
@@ -271,9 +272,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
         return {'exact': class_is_child,
                 'descendants': class_is_descendant,
-                'siblings': modules_are_equal}[match_scope]
+                'siblings': modules_are_equal}[scoping_policy]
 
-    def add_class(self, cls, *, match_scope='siblings', wrap=False):
+    def add_class(self, cls, *, scoping_policy='siblings', wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a class' local namespace and profile them.
@@ -281,8 +282,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             cls (type):
                 Class to be profiled.
-            match_scope (Literal['exact', 'siblings', 'descendants',
-                                 'none']):
+            scoping_policy (Literal['exact', 'siblings', 'descendants',
+                                    'none']):
                 Whether (and how) to match the scope of member classes
                 and decide on whether to add them:
                 - 'exact': only add classes defined locally in this
@@ -303,10 +304,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        return self._add_namespace(set(), cls,
-                                   match_scope=match_scope, wrap=wrap)
+        return self._add_namespace(cls,
+                                   scoping_policy=scoping_policy, wrap=wrap)
 
-    def add_module(self, mod, *, match_scope='siblings', wrap=False):
+    def add_module(self, mod, *, scoping_policy='siblings', wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a module's local namespace and profile them.
@@ -314,8 +315,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             mod (ModuleType):
                 Module to be profiled.
-            match_scope (Literal['exact', 'siblings', 'descendants',
-                                 'none']):
+            scoping_policy (Literal['exact', 'siblings', 'descendants',
+                                    'none']):
                 Whether (and how) to match the scope of member classes
                 and decide on whether to add them:
                 - 'exact': only add classes defined locally in this
@@ -336,8 +337,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        return self._add_namespace(set(), mod,
-                                   match_scope=match_scope, wrap=wrap)
+        return self._add_namespace(mod,
+                                   scoping_policy=scoping_policy, wrap=wrap)
 
     def _get_wrapper_info(self, func):
         info = getattr(func, self._profiler_wrapped_marker, None)

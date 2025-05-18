@@ -584,7 +584,7 @@ def test_profiler_warn_unwrappable():
 
 
 @pytest.mark.parametrize(
-    ('match_scope', 'add_module_targets', 'add_class_targets'),
+    ('scoping_policy', 'add_module_targets', 'add_class_targets'),
     [('exact',
       {'class2_method', 'child_class2_method'},
       {'class3_method', 'child_class3_method'}),
@@ -604,7 +604,7 @@ def test_profiler_warn_unwrappable():
       {'child_class1_method',
        'class3_method', 'child_class3_method', 'other_class3_method'})])
 def test_profiler_scope_matching(monkeypatch,
-                                 match_scope,
+                                 scoping_policy,
                                  add_module_targets,
                                  add_class_targets):
     """
@@ -677,13 +677,13 @@ def test_profiler_scope_matching(monkeypatch,
 
         # Add a module
         profile = LineProfiler()
-        profile.add_module(subpkg2, match_scope=match_scope)
+        profile.add_module(subpkg2, scoping_policy=scoping_policy)
         assert len(profile.functions) == len(add_module_targets)
         added = {func.__name__ for func in profile.functions}
         assert added == set(add_module_targets)
         # Add a class
         profile = LineProfiler()
-        profile.add_class(subpkg2.Class3, match_scope=match_scope)
+        profile.add_class(subpkg2.Class3, scoping_policy=scoping_policy)
         assert len(profile.functions) == len(add_class_targets)
         added = {func.__name__ for func in profile.functions}
         assert added == set(add_class_targets)
