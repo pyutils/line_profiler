@@ -41,7 +41,7 @@ available and compiled. Add the ``-l`` argument to the kernprof invocation.
 
 NOTE:
 
-    New in 4.3.0: more code execution options are added:
+    New in 4.3.0: More code execution options are added:
 
     * ``kernprof <options> -m some.module <args to module>`` parallels
       ``python -m`` and runs the provided module as ``__main__``.
@@ -88,15 +88,22 @@ which displays:
       -i, --output-interval [OUTPUT_INTERVAL]
                             Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to
                             disabled.
-      -p, --prof-mod PROF_MOD
-                            List of modules, functions and/or classes to profile specified by their name or path, if they are imported in the profiled script/module. These
-                            profiling targets can be supplied both as comma-separated items, or separately with multiple copies of this flag. Adding the current script/module
-                            profiles the entirety of it. Only works with line_profiler -l, --line-by-line.
-      -e, --eager-preimports
-                            List of modules, functions, and/or classes, to be imported and marked for profiling before running the script/module, regardless of whether they are
-                            directly imported in the script/module. Follows the same semantics as `--prof-mod`. If supplied without an argument, indicates that all `--prof-mod`
-                            targets are to be so profiled. Only works with line_profiler -l, --line-by-line.
+      -p, --prof-mod {path/to/script | object.dotted.path}[,...]
+                            List of modules, functions and/or classes to profile specified by their name or path. These profiling targets can be supplied both as comma-separated
+                            items, or separately with multiple copies of this flag. Adding the current script/module profiles the entirety of it. Only works with line_profiler -l,
+      --no-preimports       Instead of eagerly importing all profiling targets specified via -p and profiling them, only profile those that are directly imported in the profiled
+                            code. Only works with line_profiler -l, --line-by-line.
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
+
+NOTE:
+
+    New in 4.3.0: For more intuitive profiling behavior, profiling
+    targets in ``--prof-mod`` (except the profiled script/code) are now
+    eagerly pre-imported to be profiled
+    (see :py:mod:`line_profiler.autoprofile.eager_preimports`),
+    regardless of whether those imports directly occur in the profiled
+    script/module/code.
+    To restore the old behavior, pass the ``--no-preimports`` flag.
 """
 import builtins
 import functools
@@ -249,12 +256,13 @@ def _python_command():
 
 def _normalize_profiling_targets(targets):
     """
-    Normalize the parsed `--prof-mod` and `--eager-preimports` by:
-    - Normalizing file paths with `find_script()`, and subsequently
-      to absolute paths.
-    - Splitting non-file paths at commas into (presumably) file paths
+    Normalize the parsed ``--prof-mod`` by:
+
+    * Normalizing file paths with :py:func:`find_script()`, and
+      subsequently to absolute paths.
+    * Splitting non-file paths at commas into (presumably) file paths
       and/or dotted paths.
-    - Removing duplicates.
+    * Removing duplicates.
     """
     def find(path):
         try:
@@ -277,8 +285,8 @@ def _normalize_profiling_targets(targets):
 
 class _restore_list:
     """
-    Restore a list like `sys.path` after running code which potentially
-    modifies it.
+    Restore a list like ``sys.path`` after running code which
+    potentially modifies it.
 
     Example
     -------
@@ -320,8 +328,8 @@ class _restore_list:
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):
     """
-    Pre-parse high-priority single-argument directives like `-m module`
-    to emulate the behavior of `python [...]`.
+    Pre-parse high-priority single-argument directives like
+    ``-m module`` to emulate the behavior of ``python [...]``.
 
     Examples
     --------
@@ -455,28 +463,19 @@ def main(args=None):
                             metavar=("{path/to/script | object.dotted.path}"
                                      "[,...]"),
                             help="List of modules, functions and/or classes "
-                            "to profile specified by their name or path, "
-                            "if they are imported in the profiled "
-                            "script/module. "
+                            "to profile specified by their name or path. "
                             "These profiling targets can be supplied both as "
                             "comma-separated items, or separately with "
                             "multiple copies of this flag. "
                             "Adding the current script/module profiles the "
                             "entirety of it. "
                             "Only works with line_profiler -l, --line-by-line.")
-        parser.add_argument('-e', '--eager-preimports',
-                            action='append',
-                            const=True,
-                            metavar=("{path/to/script | object.dotted.path}"
-                                     "[,...]"),
-                            nargs='?',
-                            help="List of modules, functions, and/or classes, "
-                            "to be imported and marked for profiling before "
-                            "running the script/module, regardless of whether "
-                            "they are directly imported in the script/module. "
-                            "Follows the same semantics as `--prof-mod`. "
-                            "If supplied without an argument, indicates that "
-                            "all `--prof-mod` targets are to be so profiled. "
+        parser.add_argument('--no-preimports',
+                            action='store_true',
+                            help="Instead of eagerly importing all profiling "
+                            "targets specified via -p and profiling them, "
+                            "only profile those that are directly imported in "
+                            "the profiled code. "
                             "Only works with line_profiler -l, --line-by-line.")
         parser.add_argument('--prof-imports', action='store_true',
                             help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
@@ -619,20 +618,14 @@ def _main(options, module=False):
         # commas), so check against existing filenames before splitting
         # them
         options.prof_mod = _normalize_profiling_targets(options.prof_mod)
-    if options.eager_preimports:
-        if options.eager_preimports == [True]:
-            # Eager-import all of `--prof-mod`
-            options.eager_preimports = list(options.prof_mod or [])
-        else:  # Only eager-import the specified targets
-            options.eager_preimports = _normalize_profiling_targets([
-                target for target in options.eager_preimports
-                if target not in (True,)])
-    if options.line_by_line and options.eager_preimports:
-        # We assume most items in `.eager_preimports` to be import-able
-        # without significant side effects, but the same cannot be said
-        # if it contains the script file to be run. E.g. the script may
-        # not even have a `if __name__ == '__main__': ...` guard. So
-        # don't eager-import it.
+    if not options.prof_mod:
+        options.no_preimports = True
+    if options.line_by_line and not options.no_preimports:
+        # We assume most items in `.prof_mod` to be import-able without
+        # significant side effects, but the same cannot be said if it
+        # contains the script file to be run. E.g. the script may not
+        # even have a `if __name__ == '__main__': ...` guard. So don't
+        # eager-import it.
         from line_profiler.autoprofile.eager_preimports import (
             is_dotted_path, propose_names, write_eager_import_module)
         from line_profiler.autoprofile.util_static import modpath_to_modname
@@ -641,7 +634,7 @@ def _main(options, module=False):
 
         filtered_targets = []
         invalid_targets = []
-        for target in options.eager_preimports:
+        for target in options.prof_mod:
             if is_dotted_path(target):
                 filtered_targets.append(target)
                 continue
@@ -652,10 +645,8 @@ def _main(options, module=False):
                 continue
             if not module and os.path.samefile(target, script_file):
                 # Ignore the script to be run in eager importing
-                # (but make sure that it is handled by `--prof-mod`)
-                if options.prof_mod is None:
-                    options.prof_mod = []
-                options.prof_mod.append(script_file)
+                # (`line_profiler.autoprofile.autoprofile.run()` will
+                # handle it)
                 continue
             modname = modpath_to_modname(target)
             if modname is None:  # Not import-able
