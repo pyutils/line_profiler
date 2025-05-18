@@ -738,6 +738,9 @@ def _main(options, module=False):
                 print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+        # Fully disable the profiler
+        for _ in range(prof.enable_count):
+            prof.disable_by_count()
         # Restore the state of the global `@line_profiler.profile`
         if global_profiler:
             install_profiler(None)
