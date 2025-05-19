@@ -11,7 +11,8 @@ Ignore:
     # Assuming the cwd is the repo root.
     cythonize --annotate --inplace \
         ./line_profiler/_line_profiler.pyx \
-        ./line_profiler/timers.c
+        ./line_profiler/timers.c \
+        ./line_profiler/c_trace_callbacks.c
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from collections.abc import Callable
@@ -37,39 +38,23 @@ NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
 ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
-# FIXME: there might be something special we have to do here for Python 3.11
-cdef extern from "frameobject.h":
+cdef extern from "Python_wrapper.h":
     """
     inline PyObject* get_frame_code(PyFrameObject* frame) {
-        #if PY_VERSION_HEX < 0x030B0000
-            Py_INCREF(frame->f_code->co_code);
-            return frame->f_code->co_code;
-        #else
-            PyCodeObject* code = PyFrame_GetCode(frame);
-            PyObject* ret = PyCode_GetCode(code);
-            Py_DECREF(code);
-            return ret;
-        #endif
+        PyCodeObject* code = PyFrame_GetCode(frame);
+        PyObject* ret = PyCode_GetCode(code);
+        Py_DECREF(code);
+        return ret;
     }
     """
-    cdef object get_frame_code(PyFrameObject* frame)
-    ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
-
-cdef extern from "Python.h":
-    """
-    // CPython 3.11 broke some stuff by moving PyFrameObject :(
-    #if PY_VERSION_HEX >= 0x030b00a6
-      #ifndef Py_BUILD_CORE
-        #define Py_BUILD_CORE 1
-      #endif
-      #include "internal/pycore_frame.h"
-      #include "cpython/code.h"
-      #include "pyframe.h"
-    #endif
-    """
+    ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame,
+                                 int what, PyObject *arg)
     ctypedef struct PyFrameObject
     ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
+
+    cdef object get_frame_code(PyFrameObject* frame)
+
     cdef bint PyCFunction_Check(object obj)
     cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
@@ -100,204 +85,7 @@ cdef extern from "Python.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
 
-cdef extern from *:
-    r"""
-    #if PY_VERSION_HEX >= 0x030D00a1  // 3.13.0a0
-        #define add_module_ref PyImport_AddModuleRef
-    #else
-        inline PyObject *add_module_ref(const char *name) {
-            PyObject *mod = NULL, *name_str = NULL;
-            name_str = PyUnicode_FromString(name);
-            if (name_str == NULL) goto cleanup;
-            mod = PyImport_AddModuleObject(name_str);
-            Py_XINCREF(mod);
-        cleanup:
-            Py_XDECREF(name_str);
-            return mod;
-        }
-    #endif
-    #define THIS_MODULE "line_profiler._line_profiler"
-    #define DISABLE_CALLBACK "disable_line_events"
-    #define RAISE_IN_CALL(func_name, xc, const_msg) \
-        PyErr_SetString(xc, \
-                        "in `" THIS_MODULE "." func_name "()`: " \
-                        const_msg)
-
-    typedef struct TraceCallback {
-        /* Notes:
-         *     - These fields are synonymous with the corresponding
-         *       fields in a `PyThreadState` object;
-         *       however, note that `PyThreadState.c_tracefunc` is
-         *       considered a CPython implementation detail.
-         *     - It is necessary to reach into the thread-state
-         *       internals like this, because `sys.gettrace()` only
-         *       retrieves `.c_traceobj`, and is thus only valid for
-         *       Python-level trace callables set via `sys.settrace()`
-         *       (which implicitly sets `.c_tracefunc` to
-         *       `Python/sysmodule.c::trace_trampoline()`).
-         */
-        Py_tracefunc c_tracefunc; PyObject *c_traceobj;
-    } TraceCallback;
-
-    TraceCallback *alloc_callback() {
-        /* Heap-allocate a new `TraceCallback`. */
-        TraceCallback *callback = (TraceCallback*)malloc(sizeof(TraceCallback));
-        if (callback == NULL) RAISE_IN_CALL(
-            // If we're here we have bigger fish to fry... but be nice
-            // and raise an error explicitly anyway
-            "alloc_callback",
-            PyExc_MemoryError,
-            "failed to allocate memory for storing the existing "
-            "`sys` trace callback");
-        return callback;
-    }
-
-    void free_callback(TraceCallback *callback) {
-        /* Free a heap-allocated `TraceCallback`. */
-        if (callback != NULL) free(callback);
-        return;
-    }
-
-    void fetch_callback(TraceCallback *callback) {
-        /* Store the members `.c_tracefunc` and `.c_traceobj` of the
-         * current thread on `callback`.
-         */
-        // Shouldn't happen, but just to be safe
-        if (callback == NULL) return;
-        // No need to `Py_DECREF()` the thread callback, since it isn't
-        // a `PyObject`
-        PyThreadState *thread_state = PyThreadState_Get();
-        callback->c_tracefunc = thread_state->c_tracefunc;
-        callback->c_traceobj = thread_state->c_traceobj;
-        // No need for NULL check with `Py_XINCREF()`
-        Py_XINCREF(callback->c_traceobj);
-        return;
-    }
-
-    void nullify_callback(TraceCallback *callback) {
-        // No need for NULL check with `Py_XDECREF()`
-        Py_XDECREF(callback->c_traceobj);
-        callback->c_tracefunc = NULL;
-        callback->c_traceobj = NULL;
-        return;
-    }
-
-    void restore_callback(TraceCallback *callback) {
-        /* Use `PyEval_SetTrace()` to set the trace callback on the
-         * current thread to be consistent with the `callback`, then
-         * nullify the pointers on `callback`.
-         */
-        // Shouldn't happen, but just to be safe
-        if (callback == NULL) return;
-        PyEval_SetTrace(callback->c_tracefunc, callback->c_traceobj);
-        nullify_callback(callback);
-        return;
-    }
-
-    inline int is_null_callback(TraceCallback *callback) {
-        return (callback == NULL
-                || callback->c_tracefunc == NULL
-                || callback->c_traceobj == NULL);
-    }
-
-    int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
-                      int what, PyObject *arg) {
-        /* Call the cached trace callback `callback` where appropriate,
-         * and in a "safe" way so that:
-         * - If it alters the `sys` trace callback, or
-         * - If it sets `.f_trace_lines` to false,
-         * said alterations are reverted so as not to hinder profiling.
-         *
-         * Returns:
-         *     - 0 if `callback` is `NULL` or has nullified members;
-         *     - -1 if an error occurs (e.g. when the disabling of line
-         *       events for the frame-local trace function failed);
-         *     - The result of calling said callback otherwise.
-         *
-         * Side effects:
-         *     - If the callback unsets the `sys` callback, the `sys`
-         *       callback is preserved but `callback` itself is
-         *       nullified.
-         *       This is to comply with what Python usually does: if the
-         *       trace callback errors out, `sys.settrace(None)` is
-         *       called.
-         *     - If a frame-local callback sets the `.f_trace_lines` to
-         *       false, `.f_trace_lines` is reverted but `.f_trace` is
-         *       wrapped so that it no loger sees line events.
-         *
-         * Notes:
-         *     It is tempting to assume said current callback value to
-         *     be `{ python_trace_callback, <profiler> }`, but remember
-         *     that our callback may very well be called via another
-         *     callback, much like how we call the cached callback via
-         *     `python_trace_callback()`.
-         */
-        TraceCallback before, after;
-        PyObject *mod = NULL, *dle = NULL, *f_trace = NULL;
-        char f_trace_lines;
-        int result;
-
-        if (is_null_callback(callback)) return 0;
-
-        f_trace_lines = py_frame->f_trace_lines;
-        fetch_callback(&before);
-        result = (callback->c_tracefunc)(
-            callback->c_traceobj, py_frame, what, arg);
-
-        // Check if the callback has unset itself; if so, nullify
-        // `callback`
-        fetch_callback(&after);
-        if (is_null_callback(&after)) nullify_callback(callback);
-        nullify_callback(&after);
-        restore_callback(&before);
-
-        // Check if a callback has disabled future line events for the
-        // frame, and if so, revert the change while withholding future
-        // line events from the callback
-        if (!(py_frame->f_trace_lines)
-                && f_trace_lines != py_frame->f_trace_lines) {
-            py_frame->f_trace_lines = f_trace_lines;
-            if (py_frame->f_trace != NULL && py_frame->f_trace != Py_None) {
-                // FIXME: can we get more performance by stashing a
-                // somewhat permanent reference to
-                // `line_profiler._line_profiler.disable_line_events()`
-                // somewhere?
-                mod = add_module_ref(THIS_MODULE);
-                if (mod == NULL) {
-                    RAISE_IN_CALL("call_callback",
-                                  PyExc_ImportError,
-                                  "cannot import `" THIS_MODULE "`");
-                    result = -1;
-                    goto cleanup;
-                }
-                dle = PyObject_GetAttrString(mod, DISABLE_CALLBACK);
-                if (dle == NULL) {
-                    RAISE_IN_CALL("call_callback",
-                                  PyExc_AttributeError,
-                                  "`line_profiler._line_profiler` has no "
-                                  "attribute `" DISABLE_CALLBACK "`");
-                    result = -1;
-                    goto cleanup;
-                }
-                // Note: DON'T `Py_[X]DECREF()` the pointer! Nothing
-                // else is holding a reference to it.
-                f_trace = PyObject_CallFunctionObjArgs(
-                    dle, py_frame->f_trace, NULL);
-                if (f_trace == NULL) {
-                    // No need to raise another exception, it's already
-                    // raised in the call
-                    result = -1;
-                    goto cleanup;
-                }
-                py_frame->f_trace = f_trace;
-            }
-        }
-    cleanup:
-        Py_XDECREF(mod);
-        Py_XDECREF(dle);
-        return result;
-    }
-    """
+cdef extern from "c_trace_callbacks.c":
     ctypedef struct TraceCallback:
         Py_tracefunc c_tracefunc
         PyObject *c_traceobj
