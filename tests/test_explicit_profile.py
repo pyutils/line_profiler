@@ -1,20 +1,41 @@
-import contextlib
 import os
 import re
 import sys
 import tempfile
+from contextlib import ExitStack
 
 import pytest
 import ubelt as ub
 
 
-@contextlib.contextmanager
-def enter_tmpdir():
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
+class enter_tmpdir:
+    """
+    Set up a temporary directory and :cmd:`chdir` into it.
+    """
+    def __init__(self):
+        self.stack = ExitStack()
+
+    def __enter__(self):
+        """
+        Returns:
+            curdir (ubelt.Path)
+                Temporary directory :cmd:`chdir`-ed into.
+
+        Side effects:
+            ``curdir`` created and :cmd:`chdir`-ed into.
+        """
+        enter = self.stack.enter_context
         tmpdir = os.path.abspath(enter(tempfile.TemporaryDirectory()))
         enter(ub.ChDir(tmpdir))
-        yield ub.Path(tmpdir)
+        return ub.Path(tmpdir)
+
+    def __exit__(self, *_, **__):
+        """
+        Side effects:
+            * Original working directory restored.
+            * Temporary directory created deleted.
+        """
+        self.stack.close()
 
 
 def test_simple_explicit_nonglobal_usage():
