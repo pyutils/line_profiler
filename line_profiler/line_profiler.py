@@ -14,6 +14,7 @@ import tempfile
 import types
 import warnings
 from argparse import ArgumentError, ArgumentParser
+from enum import auto
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
@@ -22,6 +23,7 @@ except ImportError as ex:
         'The line_profiler._line_profiler c-extension is not importable. '
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
+from .line_profiler_utils import StringEnum
 from .profiler_mixin import (ByCountProfilerMixin,
                              is_property, is_cached_property,
                              is_boundmethod, is_classmethod, is_staticmethod,
@@ -33,7 +35,7 @@ __version__ = '4.3.0'
 
 # These objects are callables, but are defined in C so we can't handle
 # them anyway
-c_level_callable_types = (types.BuiltinFunctionType,
+C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.BuiltinMethodType,
                           types.ClassMethodDescriptorType,
                           types.MethodDescriptorType,
@@ -50,7 +52,7 @@ def is_c_level_callable(func):
             Whether a callable is defined at the C level (and is thus
             non-profilable).
     """
-    return isinstance(func, c_level_callable_types)
+    return isinstance(func, C_LEVEL_CALLABLE_TYPES)
 
 
 def load_ipython_extension(ip):
@@ -103,6 +105,136 @@ class _WrapperInfo:
     def __init__(self, func, profiler_id):
         self.func = func
         self.profiler_id = profiler_id
+
+
+class ScopingPolicy(StringEnum):
+    """
+    :py:class:`StrEnum` for scoping policies, that is, how nested
+    namespaces (classes and modules) are descended into when using
+    :py:meth:`LineProfiler.add_class`,
+    :py:meth:`LineProfiler.add_module`, and
+    :py:func:`~.add_imported_function_or_module()`.
+
+    Available policies are:
+
+    :py:attr:`ScopingPolicy.EXACT`
+        Only add classes defined locally in the very module, or
+        the very class as its "inner classes"
+    :py:attr:`ScopingPolicy.DESCENDANTS`
+        Only add locally-defined classes (see :py:attr:`EXACT`),
+        their locally-defined classes, and so on
+    :py:attr:`ScopingPolicy.SIBLINGS`
+        Only add classes fulfilling :py:attr:`DESCENDANTS`, or are
+        defined in the same module as this very class, or are
+        defined in sibling modules and subpackages (if a part of a
+        package) to this very module
+    :py:attr:`ScopingPolicy.NONE`
+        Don't check scopes and add all classes in the local
+        namespace of the class/module
+    """
+    EXACT = auto()
+    DESCENDANTS = auto()
+    SIBLINGS = auto()
+    NONE = auto()
+
+    def __init_subclass__(cls, *args, **kwargs):
+        """
+        Call :py:meth:`_check_class`.
+        """
+        super().__init_subclass__(*args, **kwargs)
+        cls._check_class()
+
+    @classmethod
+    def _check_class(cls):
+        """
+        Verify that :py:meth:`_add_module_filter` and
+        :py:meth:`_add_class_filter` returns a callable for all policy
+        values.
+        """
+        mock_module = types.ModuleType('mock_module')
+
+        class MockClass:
+            pass
+
+        for member in cls.__members__.values():
+            assert callable(member._add_module_filter(mock_module))
+            assert callable(member._add_class_filter(MockClass))
+
+    @staticmethod
+    def _no_op(_):
+        """
+        Filter that is always true.
+        """
+        return True
+
+    def _add_module_filter(self, mod):
+        """
+        Args:
+            mod (ModuleType):
+                Module to be profiled.
+
+        Returns:
+            func (Callable[[type], bool]):
+                Filter callable returning whether the argument, a class
+                in the local namespace of ``mod``, should be descended
+                into and added via :py:meth:`LineProfiler.add_class`
+        """
+        def match_prefix(s, prefix, sep='.'):
+            return s == prefix or s.startswith(prefix + sep)
+
+        def class_is_child(other):
+            return other.__module__ == mod.__name__
+
+        def class_is_descendant(other):
+            return match_prefix(other.__module__, mod.__name__)
+
+        def class_is_cousin(other):
+            if class_is_descendant(other):
+                return True
+            return match_prefix(other.__module__, parent)
+
+        parent, _, basename = mod.__name__.rpartition('.')
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': (class_is_cousin  # Only if a pkg
+                             if basename else
+                             class_is_descendant),
+                'none': self._no_op}[self.value]
+
+    def _add_class_filter(self, cls):
+        """
+        Args:
+            cls (type):
+                Class to be profiled.
+
+        Returns:
+            func (Callable[[type], bool]):
+                Filter callable returning whether the argument, a class
+                in the local namespace of ``cls``, should be descended
+                into and added via :py:meth:`LineProfiler.add_class`
+        """
+        def class_is_child(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
+
+        def modules_are_equal(other):  # = sibling check
+            return cls.__module__ == other.__module__
+
+        def class_is_descendant(other):
+            if not modules_are_equal(other):
+                return False
+            return other.__qualname__.startswith(cls.__qualname__ + '.')
+
+        return {'exact': class_is_child,
+                'descendants': class_is_descendant,
+                'siblings': modules_are_equal,
+                'none': self._no_op}[self.value]
+
+
+# Sanity check in case we extended `ScopingPolicy` and forgot to update
+# the corresponding methods
+ScopingPolicy._check_class()
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -165,8 +297,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         return 1 if nadded else 0
 
     def dump_stats(self, filename):
-        """ Dump a representation of the data to a file as a pickled LineStats
-        object from `get_stats()`.
+        """ Dump a representation of the data to a file as a pickled
+        :py:class:`~.LineStats` object from :py:meth:`~.get_stats()`.
         """
         lstats = self.get_stats()
         with open(filename, 'wb') as f:
@@ -181,8 +313,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   stream=stream, stripzeros=stripzeros,
                   details=details, summarize=summarize, sort=sort, rich=rich)
 
-    def _add_namespace(self, namespace, *,
-                       seen=None, scoping_policy='none', wrap=False):
+    def _add_namespace(
+            self, namespace, *,
+            seen=None, scoping_policy=ScopingPolicy.NONE, wrap=False):
         if seen is None:
             seen = set()
         count = 0
@@ -191,13 +324,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                                     scoping_policy=scoping_policy,
                                     wrap=wrap)
         wrap_failures = {}
-        if scoping_policy == 'none':
-            def check(*_):
-                return True
-        elif isinstance(namespace, type):
-            check = self._add_class_filter(namespace, scoping_policy)
+        if isinstance(namespace, type):
+            check = scoping_policy._add_class_filter(namespace)
         else:
-            check = self._add_module_filter(namespace, scoping_policy)
+            check = scoping_policy._add_module_filter(namespace)
 
         for attr, value in vars(namespace).items():
             if id(value) in seen:
@@ -232,49 +362,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             warnings.warn(msg, stacklevel=2)
         return count
 
-    @staticmethod
-    def _add_module_filter(mod, scoping_policy):
-        def match_prefix(s, prefix, sep='.'):
-            return s == prefix or s.startswith(prefix + sep)
-
-        def class_is_child(other):
-            return other.__module__ == mod.__name__
-
-        def class_is_descendant(other):
-            return match_prefix(other.__module__, mod.__name__)
-
-        def class_is_cousin(other):
-            if class_is_descendant(other):
-                return True
-            return match_prefix(other.__module__, parent)
-
-        parent, _, basename = mod.__name__.rpartition('.')
-        return {'exact': class_is_child,
-                'descendants': class_is_descendant,
-                'siblings': (class_is_cousin  # Only if a pkg
-                             if basename else
-                             class_is_descendant)}[scoping_policy]
-
-    @staticmethod
-    def _add_class_filter(cls, scoping_policy):
-        def class_is_child(other):
-            if not modules_are_equal(other):
-                return False
-            return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
-
-        def modules_are_equal(other):  # = sibling check
-            return cls.__module__ == other.__module__
-
-        def class_is_descendant(other):
-            if not modules_are_equal(other):
-                return False
-            return other.__qualname__.startswith(cls.__qualname__ + '.')
-
-        return {'exact': class_is_child,
-                'descendants': class_is_descendant,
-                'siblings': modules_are_equal}[scoping_policy]
-
-    def add_class(self, cls, *, scoping_policy='siblings', wrap=False):
+    def add_class(
+            self, cls, *, scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a class' local namespace and profile them.
@@ -282,19 +371,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             cls (type):
                 Class to be profiled.
-            scoping_policy (Literal['exact', 'siblings', 'descendants',
-                                    'none']):
+            scoping_policy (Union[str, ScopingPolicy]):
                 Whether (and how) to match the scope of member classes
                 and decide on whether to add them:
-                - 'exact': only add classes defined locally in this
-                  namespace, i.e. in the body of `cls`, as "inner
-                  classes"
-                - 'descendants': only add "inner classes", their "inner
-                  classes", and so on.
-                - 'siblings': only add classes fulfilling 'descendants',
-                  or defined in the same module as `cls`
-                - 'none': don't check scopes and add all classes in the
-                  namespace
+                see the documentation for :py:class:`ScopingPolicy`.
+                Strings are converted to :py:class:`ScopingPolicy`
+                instances in a case-insensitive manner.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -304,10 +386,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
+        scoping_policy = ScopingPolicy(scoping_policy)
         return self._add_namespace(cls,
                                    scoping_policy=scoping_policy, wrap=wrap)
 
-    def add_module(self, mod, *, scoping_policy='siblings', wrap=False):
+    def add_module(
+            self, mod, *, scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a module's local namespace and profile them.
@@ -315,19 +399,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             mod (ModuleType):
                 Module to be profiled.
-            scoping_policy (Literal['exact', 'siblings', 'descendants',
-                                    'none']):
+            scoping_policy (Union[str, ScopingPolicy]):
                 Whether (and how) to match the scope of member classes
-                and decide on whether to add them:
-                - 'exact': only add classes defined locally in this
-                  namespace, i.e. in the body of `mod`
-                - 'descendants': only add locally-defined classes,
-                  classes locally defined in their bodies, and so on
-                - 'siblings': only add classes fulfilling 'descendants',
-                  or defined in sibling modules/subpackages to `mod` (if
-                  `mod` is part of a package)
-                - 'none': don't check scopes and add all classes in the
-                  namespace
+                and decide on whether to add them;
+                see the documentation for :py:class:`ScopingPolicy`.
+                Strings are converted to :py:class:`ScopingPolicy`
+                instances in a case-insensitive manner.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -337,6 +414,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
+        scoping_policy = ScopingPolicy(scoping_policy)
         return self._add_namespace(mod,
                                    scoping_policy=scoping_policy, wrap=wrap)
 
@@ -660,8 +738,8 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 
 
 def load_stats(filename):
-    """ Utility function to load a pickled LineStats object from a given
-    filename.
+    """ Utility function to load a pickled :py:class:`~.LineStats`
+    object from a given filename.
     """
     with open(filename, 'rb') as f:
         return pickle.load(f)

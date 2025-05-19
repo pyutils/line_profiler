@@ -1,15 +1,21 @@
+import io
+from enum import auto
 from functools import cached_property, partial, partialmethod
 from inspect import isfunction as is_function
 from types import (FunctionType, MethodType, ModuleType,
                    BuiltinFunctionType, BuiltinMethodType,
                    ClassMethodDescriptorType, MethodDescriptorType,
                    MethodWrapperType, WrapperDescriptorType)
-from typing import (overload,
-                    Any, Literal, Callable, List, Tuple, TypeGuard, TypeVar)
-import io
-from ._line_profiler import LineProfiler as CLineProfiler
-from .profiler_mixin import ByCountProfilerMixin
+from typing import overload, Any, Literal, Callable, List, Tuple, TypeVar
+try:
+    from typing import (  # type: ignore[attr-defined]  # noqa: F401
+        TypeIs)
+except ImportError:  # Python < 3.13
+    from typing_extensions import TypeIs  # noqa: F401
 from _typeshed import Incomplete
+from ._line_profiler import LineProfiler as CLineProfiler
+from .line_profiler_utils import StringEnum
+from .profiler_mixin import ByCountProfilerMixin
 
 
 CLevelCallable = TypeVar('CLevelCallable',
@@ -22,12 +28,19 @@ CallableLike = TypeVar('CallableLike',
 ScopingPolicyOption = Literal['exact', 'descendants', 'siblings', 'none']
 
 
-def is_c_level_callable(func: Any) -> TypeGuard[CLevelCallable]:
+def is_c_level_callable(func: Any) -> TypeIs[CLevelCallable]:
     ...
 
 
 def load_ipython_extension(ip) -> None:
     ...
+
+
+class ScopingPolicy(StringEnum):
+    EXACT = auto()
+    DESCENDANTS = auto()
+    SIBLINGS = auto()
+    NONE = auto()
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -63,14 +76,16 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     rich: bool = ...) -> None:
         ...
 
-    def add_module(self, mod: ModuleType, *,
-                   scoping_policy: ScopingPolicyOption = 'siblings',
-                   wrap: bool = False) -> int:
+    def add_module(
+            self, mod: ModuleType, *,
+            scoping_policy: ScopingPolicy | str = ScopingPolicy.SIBLINGS,
+            wrap: bool = False) -> int:
         ...
 
-    def add_class(self, cls: type, *,
-                  scoping_policy: ScopingPolicyOption = 'siblings',
-                  wrap: bool = False) -> int:
+    def add_class(
+            self, cls: type, *,
+            scoping_policy: ScopingPolicy | str = ScopingPolicy.SIBLINGS,
+            wrap: bool = False) -> int:
         ...
 
 
