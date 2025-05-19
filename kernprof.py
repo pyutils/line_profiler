@@ -4,7 +4,7 @@ Script to conveniently run profilers on code in a variety of
 circumstances.
 
 To profile a script, decorate the functions of interest with
-:py:deco:`profile`:
+:py:deco:`profile <line_profiler.explicit_profiler.GlobalProfiler>`:
 
 .. code:: bash
 
@@ -19,12 +19,14 @@ NOTE:
 
     New in 4.1.0: Instead of relying on injecting :py:deco:`profile`
     into the builtins you can now ``import line_profiler`` and use
-    :py:deco:`line_profiler.profile` to decorate your functions. This
-    allows the script to remain functional even if it is not actively
-    profiled. See :py:mod:`line_profiler` for details.
+    :py:deco:`line_profiler.profile <line_profiler.explicit_profiler.GlobalProfiler>`
+    to decorate your functions.  This allows the script to remain
+    functional even if it is not actively profiled.  See
+    :py:mod:`!line_profiler` (:ref:`link <line-profiler-basic-usage>`) for
+    details.
 
 
-Then run the script using :command:`kernprof`:
+Then run the script using :program:`kernprof`:
 
 .. code:: bash
 
@@ -32,12 +34,12 @@ Then run the script using :command:`kernprof`:
 
 By default this runs with the default :py:mod:`cProfile` profiler and
 does not require compiled modules. Instructions to view the results will
-be given in the output. Alternatively, adding :option:`-v` to the
+be given in the output. Alternatively, adding :option:`!-v` to the
 command line will write results to stdout.
 
 To enable line-by-line profiling, :py:mod:`line_profiler` must be
-available and compiled, and the :option:`-l` argument should be added to
-the :command:`kernprof` invocation:
+available and compiled, and the :option:`!-l` argument should be added to
+the :program:`kernprof` invocation:
 
 .. code:: bash
 
@@ -49,19 +51,19 @@ NOTE:
 
     * :command:`kernprof <options> -m some.module <args to module>`
       parallels :command:`python -m` and runs the provided module as
-      ``__main__``.
+      :py:mod:`__main__`.
     * :command:`kernprof <options> -c "some code" <args to code>`
       parallels :command:`python -c` and executes the provided literal
       code.
     * :command:`kernprof <options> - <args to code>` parallels
       :command:`python -` and executes literal code passed via the
-      ``stdin``.
+      :file:`stdin`.
 
     See also
     :doc:`kernprof invocations </manual/examples/example_kernprof>`.
 
 For more details and options, refer to the CLI help.
-To view :command:`kernprof` help run:
+To view the :program:`kernprof` help text run:
 
 .. code:: bash
 
@@ -106,12 +108,12 @@ which displays:
 NOTE:
 
     New in 4.3.0: For more intuitive profiling behavior, profiling
-    targets in :option:`--prof-mod` (except the profiled script/code)
+    targets in :option:`!--prof-mod` (except the profiled script/code)
     are now eagerly pre-imported to be profiled
     (see :py:mod:`line_profiler.autoprofile.eager_preimports`),
     regardless of whether those imports directly occur in the profiled
     script/module/code.
-    To restore the old behavior, pass the :option:`--no-preimports`
+    To restore the old behavior, pass the :option:`!--no-preimports`
     flag.
 """
 import builtins
@@ -265,7 +267,7 @@ def _python_command():
 
 def _normalize_profiling_targets(targets):
     """
-    Normalize the parsed :option:`--prof-mod` by:
+    Normalize the parsed :option:`!--prof-mod` by:
 
     * Normalizing file paths with :py:func:`find_script()`, and
       subsequently to absolute paths.
@@ -338,7 +340,7 @@ class _restore_list:
 def pre_parse_single_arg_directive(args, flag, sep='--'):
     """
     Pre-parse high-priority single-argument directives like
-    :option:`-m module` to emulate the behavior of
+    :option:`!-m module` to emulate the behavior of
     :command:`python [...]`.
 
     Examples

@@ -33,11 +33,13 @@ installed via:
     pip install line_profiler[all]
 
 
+.. _line-profiler-basic-usage:
+
 Line Profiler Basic Usage
 =========================
 
 To demonstrate line profiling, we first need to generate a Python script to
-profile. Write the following code to a file called ``demo_primes.py``.
+profile. Write the following code to a file called :file:`demo_primes.py`:
 
 .. code:: python
 
@@ -80,8 +82,10 @@ profile. Write the following code to a file called ``demo_primes.py``.
         main()
 
 
-In this script we explicitly import the ``profile`` function from
-``line_profiler``, and then we decorate function of interest with ``@profile``.
+In this script we explicitly import the
+:py:deco:`profile <line_profiler.explicit_profiler.GlobalProfiler>` function
+from :py:mod:`line_profiler`, and then we decorate function of interest with
+:py:deco:`profile`.
 
 By default nothing is profiled when running the script.
 
@@ -99,17 +103,18 @@ The output will be
 
 
 The quickest way to enable profiling is to set the environment variable
-``LINE_PROFILE=1`` and running your script as normal.
+:envvar:`LINE_PROFILE=1 <LINE_PROFILE>` and running your script as normal.
 
-.... todo: add a link that points to docs showing all the different ways to enable profiling.
-
+.. .. todo: add a link that points to docs showing all the different ways to
+.. .. to enable profiling.
 
 .. code:: bash
 
     LINE_PROFILE=1 python demo_primes.py
 
-This will output 3 files: profile_output.txt, profile_output_<timestamp>.txt,
-and profile_output.lprof and stdout will look something like:
+This will output 3 files: :file:`profile_output.txt`,
+:file:`profile_output_<timestamp>.txt`, and :file:`profile_output.lprof`; and
+:file:`stdout` will look something like:
 
 
 .. code::
@@ -219,7 +224,7 @@ profiling tools:
 
 * `timeit <https://docs.python.org/3/library/timeit.html>`_: The builtin timeit module for profiling single statements.
 
-* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alternative to the builtin ``timeit`` module.
+* `timerit <https://github.com/Erotemic/timerit>`_: A multi-statements alternative to the builtin :py:mod:`timeit` module.
 
 * `torch.profiler <https://pytorch.org/docs/stable/profiler.html>`_ tools for profiling torch code.
 
