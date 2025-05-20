@@ -228,7 +228,9 @@ if __name__ == '__main__':
             return cythonize(
                 Extension(
                     name="line_profiler._line_profiler",
-                    sources=["line_profiler/_line_profiler.pyx", "line_profiler/timers.c", "line_profiler/unset_trace.c"],
+                    sources=["line_profiler/_line_profiler.pyx",
+                             "line_profiler/timers.c",
+                             "line_profiler/c_trace_callbacks.c"],
                     language="c++",
                     define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
                 ),

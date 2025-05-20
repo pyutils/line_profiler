@@ -12,9 +12,11 @@ Ignore:
     cythonize --annotate --inplace \
         ./line_profiler/_line_profiler.pyx \
         ./line_profiler/timers.c \
-        ./line_profiler/unset_trace.c
+        ./line_profiler/c_trace_callbacks.c
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
+from collections.abc import Callable
+from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
@@ -36,39 +38,23 @@ NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
 ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
-# FIXME: there might be something special we have to do here for Python 3.11
-cdef extern from "frameobject.h":
+cdef extern from "Python_wrapper.h":
     """
     inline PyObject* get_frame_code(PyFrameObject* frame) {
-        #if PY_VERSION_HEX < 0x030B0000
-            Py_INCREF(frame->f_code->co_code);
-            return frame->f_code->co_code;
-        #else
-            PyCodeObject* code = PyFrame_GetCode(frame);
-            PyObject* ret = PyCode_GetCode(code);
-            Py_DECREF(code);
-            return ret;
-        #endif
+        PyCodeObject* code = PyFrame_GetCode(frame);
+        PyObject* ret = PyCode_GetCode(code);
+        Py_DECREF(code);
+        return ret;
     }
     """
-    cdef object get_frame_code(PyFrameObject* frame)
-    ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
-
-cdef extern from "Python.h":
-    """
-    // CPython 3.11 broke some stuff by moving PyFrameObject :(
-    #if PY_VERSION_HEX >= 0x030b00a6
-      #ifndef Py_BUILD_CORE
-        #define Py_BUILD_CORE 1
-      #endif
-      #include "internal/pycore_frame.h"
-      #include "cpython/code.h"
-      #include "pyframe.h"
-    #endif
-    """
+    ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame,
+                                 int what, PyObject *arg)
     ctypedef struct PyFrameObject
     ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
+
+    cdef object get_frame_code(PyFrameObject* frame)
+
     cdef bint PyCFunction_Check(object obj)
     cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
 
@@ -99,12 +85,21 @@ cdef extern from "Python.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
 
+cdef extern from "c_trace_callbacks.c":
+    ctypedef struct TraceCallback:
+        Py_tracefunc c_tracefunc
+        PyObject *c_traceobj
+
+    cdef TraceCallback *alloc_callback() except *
+    cdef void free_callback(TraceCallback *callback)
+    cdef void fetch_callback(TraceCallback *callback)
+    cdef void restore_callback(TraceCallback *callback)
+    cdef int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
+                           int what, PyObject *arg)
+
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
-
-cdef extern from "unset_trace.c":
-    void unset_trace()
 
 cdef struct LineTime:
     int64 code
@@ -165,6 +160,23 @@ def label(code):
         return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
+def disable_line_events(trace_func: Callable) -> Callable:
+    """
+    Return a thin wrapper around `trace_func()` which withholds line
+    events. This is for when a frame-local `.f_trace` disables
+    `.f_trace_lines` -- we would like to keep line events enabled (so
+    that line profiling works) while "unsubscribing" the trace function
+    from it.
+    """
+    @wraps(trace_func)
+    def wrapper(frame, event, args):
+        if event == 'line':
+            return
+        return trace_func(frame, event, args)
+
+    return wrapper
+
+
 cpdef _code_replace(func, co_code):
     """
     Implements CodeType.replace for Python < 3.8
@@ -216,6 +228,30 @@ cdef class LineProfiler:
     This is the Cython base class for
     :class:`line_profiler.line_profiler.LineProfiler`.
 
+    Arguments:
+        *functions (types.FunctionType)
+            Function objects to be profiled.
+        wrap_trace (Optional[bool])
+            What to do if there is an existing (non-profiling) `sys`
+            trace callback when the profiler is `.enable()`-ed:
+            True:
+                WRAP AROUND said callback: at the end of running our
+                trace callback, also run the existing callback.
+            False:
+                REPLACE said callback as long as the profiler is
+                enabled.
+            None (default):
+                If the environment variable `${LINE_PROFILE_WRAP_TRACE}`
+                is undefined, or if it matches any of
+                `{'', '0', 'off', 'false', 'no'}` (case-insensitive):
+                  -> `False`;
+                Otherwise
+                  -> `True`.
+            In any case, when the profiler is `.disable()`-ed, it tries
+            to restore the `sys` trace callback (or the lack thereof) to
+            the state it was in from when the profiler was
+            `.enable()`-ed (but see Notes).
+
     Example:
         >>> import copy
         >>> import line_profiler
@@ -233,16 +269,42 @@ cdef class LineProfiler:
         >>> self.last_time
         >>> # Print stats
         >>> self.print_stats()
+
+    Notes:
+        - `wrap_trace = True` helps with using `LineProfiler`
+          cooperatively with other tools, like coverage and debugging
+          tools.
+        - However, it should be considered experimental and to be used
+          at one's own risk -- because tools generally assume that they
+          have sole control over system-wide tracing.
+        - In general, Python allows for trace callbacks to unset
+          themselves, either intentionally (via `sys.settrace(None)`) or
+          if it errors out. If the wrapped/cached trace callback does
+          so, profiling would continue, but:
+          - The cached callback is cleared and is no longer called, and
+          - The `sys` trace callback is set to `None` when the profiler
+            is `.disable()`-ed.
+        - It is also allowed for the frame-local trace callable
+          (`.f_trace`) to set `.f_trace_lines` to false in a frame to
+          disable line events. If the wrapped/cached trace callback does
+          so, profiling would continue, but `.f_trace` will no longer
+          receive line events.
     """
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
     # Mapping between thread-id and map of LastTime
     cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
+    # Mapping between thread-id and the thread-local tracing callbacks
+    # (It would've been cleaner to do this as a property using
+    # `.threaddata` like `.enable_count`, but I can't seem to figure out
+    # how to cast Cython pointers to/from Python integers...)
+    cdef unordered_map[int64, TraceCallback *] _trace_callbacks
+    cdef public int _wrap_trace
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
     cdef public object threaddata
 
-    def __init__(self, *functions):
+    def __init__(self, *functions, wrap_trace=None):
         self.functions = []
         self.code_hash_map = {}
         self.dupes_map = {}
@@ -250,6 +312,11 @@ cdef class LineProfiler:
         # Create a data store for thread-local objects
         # https://docs.python.org/3/library/threading.html#thread-local-data
         self.threaddata = threading.local()
+        if wrap_trace is None:
+            import os
+            wrap_trace = (os.environ.get('LINE_PROFILE_WRAP_TRACE', '').lower()
+                          not in {'', '0', 'off', 'false', 'no'})
+        self.wrap_trace = wrap_trace
 
         for func in functions:
             self.add_function(func)
@@ -330,12 +397,21 @@ cdef class LineProfiler:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disable_by_count()
 
-    def enable(self):
+    cpdef enable(self):
         # Register `line_profiler` with `sys.monitoring` in Python 3.12
         # and above;
         # see: https://docs.python.org/3/library/sys.monitoring.html
+        cdef TraceCallback *callback = alloc_callback()
         _sys_monitoring_register()
+        self._trace_callbacks[threading.get_ident()] = callback
+        fetch_callback(callback)
         PyEval_SetTrace(python_trace_callback, self)
+
+    property wrap_trace:
+        def __get__(self):
+            return bool(self._wrap_trace)
+        def __set__(self, wrap_trace):
+            self._wrap_trace = 1 if wrap_trace else 0
 
     @property
     def c_code_map(self):
@@ -386,8 +462,12 @@ cdef class LineProfiler:
 
 
     cpdef disable(self):
-        self._c_last_time[threading.get_ident()].clear()
-        unset_trace()
+        cdef int64 ident = threading.get_ident()
+        cdef TraceCallback *callback = self._trace_callbacks[ident]
+        self._c_last_time[ident].clear()
+        restore_callback(callback)
+        free_callback(callback)
+        self._trace_callbacks[ident] = NULL
         # Deregister `line_profiler` with `sys.monitoring` in Python
         # 3.12 and above;
         # see: https://docs.python.org/3/library/sys.monitoring.html
@@ -430,6 +510,7 @@ cdef class LineProfiler:
             stats[key] = entries
         return LineStats(stats, self.timer_unit)
 
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
@@ -441,8 +522,6 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
        https://github.com/python/cpython/blob/de2a4036/Include/cpython/pystate.h#L16 
     """
     cdef LineProfiler self
-    cdef object code
-    cdef LineTime entry
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
@@ -452,6 +531,7 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
     cdef uint64 linenum
 
     self = <LineProfiler>self_
+    ident = threading.get_ident()
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
@@ -462,7 +542,6 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
         
         if self._c_code_map.count(code_hash):
             time = hpTimer()
-            ident = threading.get_ident()
             if self._c_last_time[ident].count(block_hash):
                 old = self._c_last_time[ident][block_hash]
                 line_entries = self._c_code_map[code_hash]
@@ -481,4 +560,8 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
                 # are profiling a generator that is being pumped past its end.
                 self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
 
+    # Call the trace callback that we're wrapping around where
+    # appropriate
+    if self._wrap_trace:
+        return call_callback(self._trace_callbacks[ident], py_frame, what, arg)
     return 0
