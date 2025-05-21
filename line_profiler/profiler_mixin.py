@@ -207,15 +207,16 @@ class ByCountProfilerMixin:
             # Async generators are started by `.asend(None)`
             input_ = None
             while True:
-                self.enable_by_count()
+                enable()
                 try:
                     item = (await g.asend(input_))
                 except StopAsyncIteration:
                     return
                 finally:
-                    self.disable_by_count()
+                    disable()
                 input_ = (yield item)
 
+        enable, disable = self._get_toggle_callbacks(wrapper)
         return self._mark_wrapped(wrapper)
 
     def wrap_coroutine(self, func):
@@ -228,13 +229,14 @@ class ByCountProfilerMixin:
 
         @functools.wraps(func)
         async def wrapper(*args, **kwds):
-            self.enable_by_count()
+            enable()
             try:
                 result = await func(*args, **kwds)
             finally:
-                self.disable_by_count()
+                disable()
             return result
 
+        enable, disable = self._get_toggle_callbacks(wrapper)
         return self._mark_wrapped(wrapper)
 
     def wrap_generator(self, func):
@@ -251,15 +253,16 @@ class ByCountProfilerMixin:
             # Generators are started by `.send(None)`
             input_ = None
             while True:
-                self.enable_by_count()
+                enable()
                 try:
                     item = g.send(input_)
                 except StopIteration:
                     return
                 finally:
-                    self.disable_by_count()
+                    disable()
                 input_ = (yield item)
 
+        enable, disable = self._get_toggle_callbacks(wrapper)
         return self._mark_wrapped(wrapper)
 
     def wrap_function(self, func):
@@ -272,13 +275,14 @@ class ByCountProfilerMixin:
 
         @functools.wraps(func)
         def wrapper(*args, **kwds):
-            self.enable_by_count()
+            enable()
             try:
                 result = func(*args, **kwds)
             finally:
-                self.disable_by_count()
+                disable()
             return result
 
+        enable, disable = self._get_toggle_callbacks(wrapper)
         return self._mark_wrapped(wrapper)
 
     def _already_wrapped(self, func):
@@ -287,6 +291,17 @@ class ByCountProfilerMixin:
     def _mark_wrapped(self, func):
         setattr(func, self._profiler_wrapped_marker, id(self))
         return func
+
+    def _get_toggle_callbacks(self, wrapper):
+        """
+        Get the callbacks that should be called (1) before a profiled
+        function is used, and (2) when it returns, yields, or raises.
+
+        Arguments:
+            wrapper (types.FunctionType):
+                Wrapper function around the profiled function
+        """
+        return self.enable_by_count, self.disable_by_count
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.

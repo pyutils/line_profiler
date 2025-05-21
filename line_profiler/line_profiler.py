@@ -4,16 +4,21 @@ This module defines the core :class:`LineProfiler` class as well as methods to
 inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
-import pickle
 import inspect
 import linecache
-import tempfile
 import os
+import pickle
 import sys
+import tempfile
+import threading
 from argparse import ArgumentError, ArgumentParser
+from copy import deepcopy
+from weakref import WeakValueDictionary
 
 try:
-    from ._line_profiler import LineProfiler as CLineProfiler
+    from ._line_profiler import (NOP_BYTES as _NOP_BYTES,
+                                 LineProfiler as CLineProfiler, LineStats,
+                                 label as _get_stats_timing_label)
 except ImportError as ex:
     raise ImportError(
         'The line_profiler._line_profiler c-extension is not importable. '
@@ -66,7 +71,39 @@ def _get_underlying_functions(func):
     return [type(func).__call__]
 
 
-class LineProfiler(CLineProfiler, ByCountProfilerMixin):
+def _get_code(func_like):
+    try:
+        return func_like.__code__
+    except AttributeError:
+        return func_like.__func__.__code__
+
+
+class _WrappedTracker:
+    """
+    Helper object for holding the state of a wrapper function.
+
+    Attributes:
+        func (types.FunctionType):
+            The function it wraps.
+        c_profiler (int)
+            ID of the underlying Cython profiler.
+        profilers (set[int])
+            IDs of the `LineProfiler` objects "listening" to the
+            function.
+    """
+    def __init__(self, func, c_profiler, profilers=None):
+        self.func = func
+        self.c_profiler = c_profiler
+        self.profilers = set(profilers or ())
+
+    def __eq__(self, other):
+        if not isinstance(other, _WrappedTracker):
+            return False
+        return ((self.func, self.c_profiler, self.profilers)
+                == (other.func, other.c_profiler, other.profilers))
+
+
+class LineProfiler(ByCountProfilerMixin):
     """
     A profiler that records the execution times of individual lines.
 
@@ -83,6 +120,17 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> func()
         >>> profile.print_stats()
     """
+    def __init__(self, *functions):
+        self.functions = []
+        self.threaddata = threading.local()
+        for func in functions:
+            self.add_callable(func)
+        # Register the instance
+        try:
+            instances = type(self)._instances
+        except AttributeError:
+            instances = type(self)._instances = WeakValueDictionary()
+        instances[id(self)] = self
 
     def __call__(self, func):
         """
@@ -91,7 +139,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         exit.
         """
         # Note: if `func` is a `types.FunctionType` which is already
-        # decorated by the profiler, the same object is returned;
+        # decorated by the (underlying C-level) profiler, the same
+        # object is returned;
         # otherwise, wrapper objects are always returned.
         self.add_callable(func)
         return self.wrap_callable(func)
@@ -149,6 +198,246 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                 nfuncsadded += 1
 
         return nfuncsadded
+
+    # Helper methods and descriptors
+
+    def _call_func_wrapper(self, super_impl, func):
+        if self._is_wrapper_around_seen(func):
+            tracker = getattr(func, self._profiler_wrapped_marker)
+            tracker.profilers.add(id(self))
+            return func
+        return super_impl(func)
+
+    def _filter_code_mapping(self, name):
+        mapping = getattr(self._get_c_profiler(), name)
+        codes = self._code_objs
+        return {code: deepcopy(item) for code, item in mapping.items()
+                if code in codes}
+
+    @classmethod
+    def _is_wrapper_around_seen(cls, func):
+        """
+        Returns:
+            seem (bool):
+                Whether the ``func`` is a wrapper function around an
+                underlying function which has been by the C-level
+                profiler.
+        """
+        try:
+            tracker = getattr(func, cls._profiler_wrapped_marker)
+        except AttributeError:
+            return False
+        else:
+            return (isinstance(tracker, _WrappedTracker)
+                    and tracker.c_profiler == id(cls._get_c_profiler()))
+
+    @classmethod
+    def _get_c_profiler(cls):
+        """
+        Get the :py:class:`line_profiler._line_profiler.LineProfiler`
+        (C-level profiler) instance for the Python process; as opposed
+        to :py:class:`line_profiler.LineProfiler` (this class), there
+        should only be one (active) instance thereof.
+        """
+        try:
+            return cls._c_profiler
+        except AttributeError:
+            prof = cls._c_profiler = CLineProfiler()
+            return prof
+
+    @property
+    def _code_objs(self):
+        # Note: this has to be calculated live from the function objects
+        # since the C-level profiler replaces a function's code object
+        # whenever its `.add_function()` is called on it
+        return {_get_code(func) for func in self.functions}
+
+    # Override these `CLineProfiler` methods and attributes
+    # Note: `.__enter__()` and `.__exit__()` are already implemented in
+    # `ByCountProfilerMixin`
+
+    def add_function(self, func):
+        """
+        Register a function object with the underlying Cython profiler.
+
+        Note:
+            This is a low-level function which strictly works with
+            :py:type:`types.FunctionType`;  users should in general use
+            higher-level APIs like :py:meth:`.__call__()`,
+            :py:meth:`.add_callable()`, and :py:meth:`.wrap_callable()`.
+        """
+        if self._is_wrapper_around_seen(func):
+            # If `func` is already a profiling wrapper and the wrapped
+            # function is known to the C-level profiler, just mark that
+            # we also have a finger in the pie
+            tracker = getattr(func, self._profiler_wrapped_marker)
+            tracker.profilers.add(id(self))
+            self.functions.append(tracker.func)
+        else:
+            # Else, just pass it on to the C-level profiler
+            self._get_c_profiler().add_function(func)
+            self.functions.append(func)
+
+    def enable_by_count(self):
+        self.enable_count += 1
+        self._get_c_profiler().enable_by_count()
+
+    def disable_by_count(self):
+        if self.enable_count <= 0:
+            return
+        self.enable_count -= 1
+        self._get_c_profiler().disable_by_count()
+
+    def enable(self):
+        pass  # No-op, leave it to the underlying C-level profiler
+
+    def disable(self):
+        pass  # Ditto
+
+    def get_stats(self):
+        all_timings = self._get_c_profiler().get_stats().timings
+        tracked_keys = {_get_stats_timing_label(code)
+                        for code in self._code_objs}
+        timings = {key: entries for key, entries in all_timings.items()
+                   if key in tracked_keys}
+        return LineStats(timings, self.timer_unit)
+
+    @property
+    def code_hash_map(self):
+        return self._filter_code_mapping('code_hash_map')
+
+    @property
+    def dupes_map(self):
+        # Note: in general, `func.__code__` for the `func` in
+        # `.functions` do not line up with
+        # `._get_c_profiler().dupes_map`, because `func.__code__` is
+        # padded by `CLineProfiler.add_function()` while entries (both
+        # the `CodeType.co_code` keys and the `list[CodeType]` values)
+        # aren't
+        def strip_suffix(byte_code, suffix):
+            n = len(suffix)
+            while byte_code.endswith(suffix) and byte_code != suffix:
+                byte_code = byte_code[:-n]
+            return byte_code
+
+        assert _NOP_BYTES
+        stripped_codes = {
+            code.replace(co_code=strip_suffix(code.co_code, _NOP_BYTES))
+            for code in self._code_objs
+        }
+        dupes = {byte_code: [code for code in codes if code in stripped_codes]
+                 for byte_code, codes
+                 in self._get_c_profiler().dupes_map.items()}
+        return {byte_code: list(codes) for byte_code, codes in dupes.items()
+                if codes}
+
+    @property
+    def c_code_map(self):
+        hashes = {line_hash for hash_list in self.code_hash_map.values()
+                  for line_hash in hash_list}
+        return {line_hash: deepcopy(line_time)
+                for line_hash, line_time
+                in self._get_c_profiler().c_code_map.items()
+                if line_hash in hashes}
+
+    @property
+    def c_last_time(self):
+        # This should effectively be empty most of the time (and
+        # probably isn't meant for the end-user API), but do the
+        # filtering nonetheless
+        hashes = {hash(code.co_code) for code in self._code_objs}
+        return {block_hash: deepcopy(last_time)
+                for block_hash, last_time
+                in self._get_c_profiler().c_last_time.items()
+                if block_hash in hashes}
+
+    @property
+    def code_map(self):
+        return self._filter_code_mapping('code_map')
+
+    @property
+    def last_time(self):
+        return self._filter_code_mapping('last_time')
+
+    @property
+    def enable_count(self):
+        try:
+            return self.threaddata.enable_count
+        except AttributeError:
+            self.threaddata.enable_count = 0
+            return 0
+
+    @enable_count.setter
+    def enable_count(self, value):
+        self.threaddata.enable_count = value
+
+    @property
+    def timer_unit(self):
+        return self._get_c_profiler().timer_unit
+
+    # Override these mixed-in bookkeeping methods to take care of
+    # potential multiple profiler sequences
+
+    def wrap_async_generator(self, func):
+        return self._call_func_wrapper(super().wrap_async_generator, func)
+
+    def wrap_coroutine(self, func):
+        return self._call_func_wrapper(super().wrap_coroutine, func)
+
+    def wrap_generator(self, func):
+        return self._call_func_wrapper(super().wrap_generator, func)
+
+    def wrap_function(self, func):
+        return self._call_func_wrapper(super().wrap_function, func)
+
+    def _already_wrapped(self, func):
+        if not self._is_wrapper_around_seen(func):
+            return False
+        tracker = getattr(func, self._profiler_wrapped_marker)
+        return id(self) in tracker.profilers
+
+    def _mark_wrapped(self, func):
+        if self._is_wrapper_around_seen(func):
+            tracker = getattr(func, self._profiler_wrapped_marker)
+        else:
+            tracker = _WrappedTracker(func.__wrapped__,
+                                      id(self._get_c_profiler()))
+            setattr(func, self._profiler_wrapped_marker, tracker)
+        tracker.profilers.add(id(self))
+        return func
+
+    def _get_toggle_callbacks(self, wrapper):
+        # Notes:
+        # - The callbacks cannot be just `self.enable_by_count()`
+        #   and `self.disable_by_count()`, since we want all the
+        #   instances "listening" to the profiled function (plus the
+        #   C-level profiler) to be enabled and disabled accordingly
+        # - And we can't just call those methods on each instance
+        #   either, because they also call the corresponding methods
+        #   on the C-level profiler...
+
+        def enable():
+            for prof in get_listeners():
+                prof.enable_count += 1
+            cprof.enable_by_count()
+
+        def disable():
+            for prof in get_listeners():
+                if prof.enable_count <= 0:
+                    continue
+                prof.enable_count -= 1
+            cprof.disable_by_count()
+
+        def get_listeners():
+            tracker = getattr(wrapper, self._profiler_wrapped_marker)
+            return {
+                instances[prof_id] for prof_id in tracker.profilers
+                if prof_id in instances
+            }
+
+        cprof = self._get_c_profiler()
+        instances = type(self)._instances
+        return enable, disable
 
 
 # This could be in the ipython_extension submodule,
