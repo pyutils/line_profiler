@@ -471,7 +471,10 @@ cdef class LineProfiler:
 
     @property
     def c_last_time(self):
-        return (<dict>self._c_last_time)[threading.get_ident()]
+        try:
+            return (<dict>self._c_last_time)[threading.get_ident()]
+        except KeyError:  # We haven't actually profiled anything yet
+            return {}
 
     @property
     def code_map(self):
@@ -500,7 +503,7 @@ cdef class LineProfiler:
         line_profiler 4.0 no longer directly maintains last_time, but this will
         construct something similar for backwards compatibility.
         """
-        c_last_time = (<dict>self._c_last_time)[threading.get_ident()]
+        c_last_time = self.c_last_time
         code_hash_map = self.code_hash_map
         py_last_time = {}
         for code, code_hashes in code_hash_map.items():
