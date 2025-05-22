@@ -504,12 +504,11 @@ cdef class LineProfiler:
         construct something similar for backwards compatibility.
         """
         c_last_time = self.c_last_time
-        code_hash_map = self.code_hash_map
         py_last_time = {}
-        for code, code_hashes in code_hash_map.items():
-            for code_hash in code_hashes:
-                if code_hash in c_last_time:
-                    py_last_time[code] = c_last_time[code_hash]
+        for code in self.code_hash_map:
+            block_hash = hash(code.co_code)
+            if block_hash in c_last_time:
+                py_last_time[code] = c_last_time[block_hash]
         return py_last_time
 
 
