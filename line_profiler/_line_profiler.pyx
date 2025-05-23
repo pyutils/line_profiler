@@ -155,14 +155,18 @@ else:
 
 def label(code):
     """
-    Return a (filename, first_lineno, func_name) tuple for a given code object.
+    Return a (filename, first_lineno, qual_name) tuple for a given code object.
 
-    This is the same labelling as used by the cProfile module in Python 2.5.
+    This is the similar labelling as used by the cProfile module in Python 2.5.
     """
     if isinstance(code, str):
         return ('~', 0, code)    # built-in functions ('~' sorts at the end)
     else:
-        return (code.co_filename, code.co_firstlineno, code.co_name)
+        try:
+            # Python >=3.11a1
+            return (code.co_filename, code.co_firstlineno, code.co_qualname)
+        except AttributeError:
+            return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
 cpdef _code_replace(func, co_code):
