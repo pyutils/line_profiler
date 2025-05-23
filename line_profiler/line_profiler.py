@@ -424,30 +424,32 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 
     if summarize:
         # Summarize the total time for each function
+        import functools
+
         if rich:
             try:
                 from rich.console import Console
                 from rich.markup import escape
             except ImportError:
-                rich = 0
-        line_template = '%6.2f seconds - %s:%s - %s'
+                rich = False
+
+        line_template = "{:6.2f} seconds - {}:{} - {}"
+
+        def format_link_fn(fn):
+            return f'[link={fn}]{escape(fn)}[/link]'
+
         if rich:
-            write_console = Console(file=stream, soft_wrap=True,
-                                    color_system='standard')
-            for (fn, lineno, name), timings in stats_order:
-                total_time = sum(t[2] for t in timings) * unit
-                if not stripzeros or total_time:
-                    # Wrap the filename with link markup to allow the user to
-                    # open the file
-                    fn_link = f'[link={fn}]{escape(fn)}[/link]'
-                    line = line_template % (total_time, fn_link, lineno, escape(name))
-                    write_console.print(line)
+            printer = Console(file=stream, soft_wrap=True, color_system='standard').print
+            format_fn, format_name = format_link_fn, escape
         else:
-            for (fn, lineno, name), timings in stats_order:
-                total_time = sum(t[2] for t in timings) * unit
-                if not stripzeros or total_time:
-                    line = line_template % (total_time, fn, lineno, name)
-                    stream.write(line + '\n')
+            printer = functools.partial(print, file=stream)
+            format_fn = format_name = str
+
+        for (fn, lineno, name), timings in stats_order:
+            total_time = sum(t[2] for t in timings) * unit
+            if not stripzeros or total_time:
+                line = line_template.format(total_time, format_fn(fn), lineno, format_name(name))
+                printer(line)
 
 
 def load_stats(filename):
