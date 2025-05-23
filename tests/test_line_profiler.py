@@ -257,7 +257,7 @@ def test_classmethod_decorator():
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `Object.foo()`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that it has been run twice
     assert int(line.split()[1]) == 2
@@ -291,7 +291,7 @@ def test_staticmethod_decorator():
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `Object.foo()`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that it has been run twice
     assert int(line.split()[1]) == 2
@@ -332,7 +332,7 @@ def test_boundmethod_decorator():
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `Object.foo()`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* x'))
     # Check that the wrapped methods has been run twice in total
     assert int(line.split()[1]) == 2
@@ -368,7 +368,7 @@ def test_partialmethod_decorator():
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `Object.foo()` (via `.bar()`)
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* x'))
     # Check that the wrapped method has been run once
     assert int(line.split()[1]) == 1
@@ -408,7 +408,7 @@ def test_partial_decorator() -> None:
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `foo()`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('x + y'))
     # Check that the wrapped partials has been run twice in total
     assert int(line.split()[1]) == 2
@@ -457,7 +457,7 @@ def test_property_decorator():
         output = strip(sio.getvalue())
     print(output)
     # Check that we have profiled `Object.foo`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     getter_line, = (line for line in output.splitlines()
                     if line.endswith('* 2'))
     setter_line, = (line for line in output.splitlines()
@@ -498,9 +498,8 @@ def test_cached_property_decorator():
     with io.StringIO() as sio:
         profile.print_stats(stream=sio, summarize=True)
         output = strip(sio.getvalue())
-    print(output)
     # Check that we have profiled `Object.foo`
-    assert output.endswith('- foo')
+    assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that the getter has been run once
     assert int(line.split()[1]) == 1

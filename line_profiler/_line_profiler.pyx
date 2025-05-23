@@ -24,6 +24,7 @@ from libc.stdint cimport int64_t
 from libcpp.unordered_map cimport unordered_map
 import threading
 import opcode
+import types
 
 NOP_VALUE: int = opcode.opmap['NOP']
 
@@ -31,6 +32,9 @@ NOP_VALUE: int = opcode.opmap['NOP']
 # https://docs.python.org/3/library/dis.html
 # if sys.version_info[0:2] >= (3, 11):
 NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
+
+# This should be true for Python >=3.11a1
+HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
@@ -155,14 +159,21 @@ else:
 
 def label(code):
     """
-    Return a (filename, first_lineno, func_name) tuple for a given code object.
+    Return a (filename, first_lineno, _name) tuple for a given code object.
 
-    This is the same labelling as used by the cProfile module in Python 2.5.
+    This is the similar labelling as used by the cProfile module in Python 2.5.
+
+    Note:
+        In Python >=3.11 we use we return qualname for _name.
+        In older versions of Python we just return name.
     """
     if isinstance(code, str):
         return ('~', 0, code)    # built-in functions ('~' sorts at the end)
     else:
-        return (code.co_filename, code.co_firstlineno, code.co_name)
+        if HAS_CO_QUALNAME:
+            return (code.co_filename, code.co_firstlineno, code.co_qualname)
+        else:
+            return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
 cpdef _code_replace(func, co_code):
