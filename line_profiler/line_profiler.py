@@ -4,12 +4,12 @@ This module defines the core :class:`LineProfiler` class as well as methods to
 inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
-import pickle
 import inspect
 import linecache
-import tempfile
 import os
+import pickle
 import sys
+import tempfile
 from argparse import ArgumentError, ArgumentParser
 
 try:
@@ -66,6 +66,21 @@ def _get_underlying_functions(func):
     return [type(func).__call__]
 
 
+class _WrapperInfo:
+    """
+    Helper object for holding the state of a wrapper function.
+
+    Attributes:
+        func (types.FunctionType):
+            The function it wraps.
+        profiler_id (int)
+            ID of the `LineProfiler`.
+    """
+    def __init__(self, func, profiler_id):
+        self.func = func
+        self.profiler_id = profiler_id
+
+
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     """
     A profiler that records the execution times of individual lines.
@@ -83,7 +98,6 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> func()
         >>> profile.print_stats()
     """
-
     def __call__(self, func):
         """
         Decorate a function, method, property, partial object etc. to
@@ -104,12 +118,15 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Returns:
             1 if any function is added to the profiler, 0 otherwise
         """
-        guard = self._already_wrapped
-
         nadded = 0
         for impl in _get_underlying_functions(func):
-            if guard(impl):
+            info, wrapped_by_this_prof = self._get_wrapper_info(impl)
+            if wrapped_by_this_prof:
                 continue
+            if info:
+                # It's still a profiling wrapper, just wrapped by
+                # someone else -> extract the inner function
+                impl = info.func
             self.add_function(impl)
             nadded += 1
 
@@ -149,6 +166,25 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                 nfuncsadded += 1
 
         return nfuncsadded
+
+    def _get_wrapper_info(self, func):
+        info = getattr(func, self._profiler_wrapped_marker, None)
+        return info, bool(info and id(self) == info.profiler_id)
+
+    # Override these mixed-in bookkeeping methods to take care of
+    # potential multiple profiler sequences
+
+    def _already_a_wrapper(self, func):
+        return self._get_wrapper_info(func)[1]
+
+    def _mark_wrapper(self, wrapper):
+        # Are re-wrapping an existing wrapper (e.g. created by another
+        # profiler?)
+        wrapped = wrapper.__wrapped__
+        info = getattr(wrapped, self._profiler_wrapped_marker, None)
+        new_info = _WrapperInfo(info.func if info else wrapped, id(self))
+        setattr(wrapper, self._profiler_wrapped_marker, new_info)
+        return wrapper
 
 
 # This could be in the ipython_extension submodule,

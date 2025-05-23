@@ -14,6 +14,7 @@ Changes
 * ENH: Added CLI arguments ``-c`` to ``kernprof`` for (auto-)profiling module/package/inline-script execution instead of that of script files; passing ``'-'`` as the script-file name now also reads from and profiles ``stdin``
 * ENH: In Python >=3.11, profiled objects are reported using their qualified name.
 * ENH: Highlight final summary using rich if enabled
+* ENH: Made it possible to use multiple profiler instances simultaneously
 
 4.2.0
 ~~~~~

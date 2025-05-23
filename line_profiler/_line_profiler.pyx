@@ -253,6 +253,9 @@ cdef class LineProfiler:
     cdef public double timer_unit
     cdef public object threaddata
 
+    # This is shared between instances and threads
+    _all_active_instances = {}
+
     def __init__(self, *functions):
         self.functions = []
         self.code_hash_map = {}
@@ -319,6 +322,16 @@ cdef class LineProfiler:
         def __set__(self, value):
             self.threaddata.enable_count = value
 
+    # This is shared between instances, but thread-local
+    property _active_instances:
+        def __get__(self):
+            thread_id = threading.get_ident()
+            try:
+                return self._all_active_instances[thread_id]
+            except KeyError:
+                insts = self._all_active_instances[thread_id] = set()
+                return insts
+
     def enable_by_count(self):
         """ Enable the profiler if it hasn't been enabled before.
         """
@@ -345,8 +358,11 @@ cdef class LineProfiler:
         # Register `line_profiler` with `sys.monitoring` in Python 3.12
         # and above;
         # see: https://docs.python.org/3/library/sys.monitoring.html
-        _sys_monitoring_register()
-        PyEval_SetTrace(python_trace_callback, self)
+        instances = self._active_instances
+        if not instances:
+            _sys_monitoring_register()
+            PyEval_SetTrace(python_trace_callback, instances)
+        instances.add(self)
 
     @property
     def c_code_map(self):
@@ -397,12 +413,15 @@ cdef class LineProfiler:
 
 
     cpdef disable(self):
+        instances = self._active_instances
         self._c_last_time[threading.get_ident()].clear()
-        unset_trace()
-        # Deregister `line_profiler` with `sys.monitoring` in Python
-        # 3.12 and above;
-        # see: https://docs.python.org/3/library/sys.monitoring.html
-        _sys_monitoring_deregister()
+        instances.discard(self)
+        if not instances:
+            unset_trace()
+            # Deregister `line_profiler` with `sys.monitoring` in Python
+            # 3.12 and above;
+            # see: https://docs.python.org/3/library/sys.monitoring.html
+            _sys_monitoring_deregister()
 
     def get_stats(self):
         """
@@ -443,7 +462,8 @@ cdef class LineProfiler:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
+cdef extern int python_trace_callback(object instances,
+                                      PyFrameObject *py_frame,
                                       int what, PyObject *arg):
     """
     The PyEval_SetTrace() callback.
@@ -451,18 +471,18 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
     References:
        https://github.com/python/cpython/blob/de2a4036/Include/cpython/pystate.h#L16 
     """
-    cdef LineProfiler self
+    cdef object prof_
+    cdef LineProfiler prof
     cdef object code
     cdef LineTime entry
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
+    cdef int has_time = 0
     cdef int64 code_hash
     cdef int64 block_hash
     cdef unordered_map[int64, LineTime] line_entries
     cdef uint64 linenum
-
-    self = <LineProfiler>self_
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
         # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
@@ -471,25 +491,30 @@ cdef extern int python_trace_callback(object self_, PyFrameObject *py_frame,
         linenum = PyFrame_GetLineNumber(py_frame)
         code_hash = compute_line_hash(block_hash, linenum)
         
-        if self._c_code_map.count(code_hash):
-            time = hpTimer()
+        for prof_ in instances:
+            prof = <LineProfiler>prof_
+            if not prof._c_code_map.count(code_hash):
+                continue
+            if not has_time:
+                time = hpTimer()
+                has_time = 1
             ident = threading.get_ident()
-            if self._c_last_time[ident].count(block_hash):
-                old = self._c_last_time[ident][block_hash]
-                line_entries = self._c_code_map[code_hash]
+            if prof._c_last_time[ident].count(block_hash):
+                old = prof._c_last_time[ident][block_hash]
+                line_entries = prof._c_code_map[code_hash]
                 key = old.f_lineno
                 if not line_entries.count(key):
-                    self._c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
-                self._c_code_map[code_hash][key].nhits += 1
-                self._c_code_map[code_hash][key].total_time += time - old.time
+                    prof._c_code_map[code_hash][key] = LineTime(code_hash, key, 0, 0)
+                prof._c_code_map[code_hash][key].nhits += 1
+                prof._c_code_map[code_hash][key].total_time += time - old.time
             if what == PyTrace_LINE:
                 # Get the time again. This way, we don't record much time wasted
                 # in this function.
-                self._c_last_time[ident][block_hash] = LastTime(linenum, hpTimer())
-            elif self._c_last_time[ident].count(block_hash):
+                prof._c_last_time[ident][block_hash] = LastTime(linenum, hpTimer())
+            elif prof._c_last_time[ident].count(block_hash):
                 # We are returning from a function, not executing a line. Delete
                 # the last_time record. It may have already been deleted if we
                 # are profiling a generator that is being pumped past its end.
-                self._c_last_time[ident].erase(self._c_last_time[ident].find(block_hash))
+                prof._c_last_time[ident].erase(prof._c_last_time[ident].find(block_hash))
 
     return 0

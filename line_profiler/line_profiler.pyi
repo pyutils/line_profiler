@@ -1,5 +1,4 @@
-from typing import List
-from typing import Tuple
+from typing import Literal, List, Tuple
 import io
 from ._line_profiler import LineProfiler as CLineProfiler
 from .profiler_mixin import ByCountProfilerMixin
@@ -11,8 +10,7 @@ def load_ipython_extension(ip) -> None:
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
-
-    def add_callable(self, func) -> None:
+    def add_callable(self, func) -> Literal[0, 1]:
         ...
 
     def dump_stats(self, filename) -> None:
@@ -28,7 +26,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     rich: bool = ...) -> None:
         ...
 
-    def add_module(self, mod):
+    def add_module(self, mod) -> int:
         ...
 
 

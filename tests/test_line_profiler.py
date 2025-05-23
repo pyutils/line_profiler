@@ -622,3 +622,60 @@ def test_profile_generated_code():
 
     # .. as well as the generated code name
     assert generated_code_name in output
+
+
+def test_multiple_profilers_usage():
+    """
+    Test using more than one profilers simultaneously.
+    """
+    prof1 = LineProfiler()
+    prof2 = LineProfiler()
+
+    def sum_n(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+
+    @prof1
+    def sum_n_sq(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n ** 2
+        return x
+
+    @prof2
+    def sum_n_cb(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n ** 3
+        return x
+
+    # If we decorate a wrapper, just "register" the profiler with the
+    # existing wrapper and add the wrapped function
+    sum_n_wrapper_1 = prof1(sum_n)
+    assert prof1.functions == [sum_n_sq.__wrapped__, sum_n]
+    sum_n_wrapper_2 = prof2(sum_n_wrapper_1)
+    assert sum_n_wrapper_2 is not sum_n_wrapper_1
+    assert prof2.functions == [sum_n_cb.__wrapped__, sum_n]
+
+    # Call the functions
+    n = 400
+    assert sum_n_wrapper_1(n) == .5 * n * (n + 1)
+    assert sum_n_wrapper_2(n) == .5 * n * (n + 1)
+    assert 6 * sum_n_sq(n) == n * (n + 1) * (2 * n + 1)
+    assert sum_n_cb(n) == .25 * (n * (n + 1)) ** 2
+
+    # Inspect the timings
+    t1 = {fname.rpartition('.')[-1]: entries
+          for (*_, fname), entries in prof1.get_stats().timings.items()}
+    t2 = {fname.rpartition('.')[-1]: entries
+          for (*_, fname), entries in prof2.get_stats().timings.items()}
+    assert set(t1) == {'sum_n_sq', 'sum_n'}
+    assert set(t2) == {'sum_n_cb', 'sum_n'}
+    # Note: `prof1` active when both wrapper is called, but `prof2` only
+    # when `sum_n_wrapper_2()` is
+    assert t1['sum_n'][2][1] == 2 * n
+    assert t2['sum_n'][2][1] == n
+    assert t1['sum_n_sq'][2][1] == n
+    assert t2['sum_n_cb'][2][1] == n
