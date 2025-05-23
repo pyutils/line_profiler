@@ -254,7 +254,7 @@ cdef class LineProfiler:
     cdef public object threaddata
 
     # This is shared between instances and threads
-    _active_instances_getter = {}.setdefault
+    _all_active_instances = {}
 
     def __init__(self, *functions):
         self.functions = []
@@ -325,7 +325,12 @@ cdef class LineProfiler:
     # This is shared between instances, but thread-local
     property _active_instances:
         def __get__(self):
-            return self._active_instances_getter(threading.get_ident(), set())
+            thread_id = threading.get_ident()
+            try:
+                return self._all_active_instances[thread_id]
+            except KeyError:
+                insts = self._all_active_instances[thread_id] = set()
+                return insts
 
     def enable_by_count(self):
         """ Enable the profiler if it hasn't been enabled before.
@@ -473,6 +478,7 @@ cdef extern int python_trace_callback(object instances,
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
+    cdef int has_time = 0
     cdef int64 code_hash
     cdef int64 block_hash
     cdef unordered_map[int64, LineTime] line_entries
@@ -485,11 +491,13 @@ cdef extern int python_trace_callback(object instances,
         linenum = PyFrame_GetLineNumber(py_frame)
         code_hash = compute_line_hash(block_hash, linenum)
         
-        time = hpTimer()
         for prof_ in instances:
             prof = <LineProfiler>prof_
             if not prof._c_code_map.count(code_hash):
                 continue
+            if not has_time:
+                time = hpTimer()
+                has_time = 1
             ident = threading.get_ident()
             if prof._c_last_time[ident].count(block_hash):
                 old = prof._c_last_time[ident][block_hash]

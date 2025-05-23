@@ -73,12 +73,12 @@ class _WrapperInfo:
     Attributes:
         func (types.FunctionType):
             The function it wraps.
-        profiler (int)
+        profiler_id (int)
             ID of the `LineProfiler`.
     """
-    def __init__(self, func, profiler):
+    def __init__(self, func, profiler_id):
         self.func = func
-        self.profiler = profiler
+        self.profiler_id = profiler_id
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -169,7 +169,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def _get_wrapper_info(self, func):
         info = getattr(func, self._profiler_wrapped_marker, None)
-        return info, bool(info and id(self) == info.profiler)
+        return info, bool(info and id(self) == info.profiler_id)
 
     # Override these mixed-in bookkeeping methods to take care of
     # potential multiple profiler sequences
