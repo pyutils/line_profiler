@@ -667,9 +667,9 @@ def test_multiple_profilers_usage():
     assert sum_n_cb(n) == .25 * (n * (n + 1)) ** 2
 
     # Inspect the timings
-    t1 = {fname: entries
+    t1 = {fname.rpartition('.')[-1]: entries
           for (*_, fname), entries in prof1.get_stats().timings.items()}
-    t2 = {fname: entries
+    t2 = {fname.rpartition('.')[-1]: entries
           for (*_, fname), entries in prof2.get_stats().timings.items()}
     assert set(t1) == {'sum_n_sq', 'sum_n'}
     assert set(t2) == {'sum_n_cb', 'sum_n'}
