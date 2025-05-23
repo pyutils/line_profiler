@@ -155,9 +155,13 @@ else:
 
 def label(code):
     """
-    Return a (filename, first_lineno, qual_name) tuple for a given code object.
+    Return a (filename, first_lineno, _name) tuple for a given code object.
 
     This is the similar labelling as used by the cProfile module in Python 2.5.
+
+    Note:
+        In Python >=3.11 we use we return qualname for _name.
+        In older versions of Python we just return name.
     """
     if isinstance(code, str):
         return ('~', 0, code)    # built-in functions ('~' sorts at the end)
