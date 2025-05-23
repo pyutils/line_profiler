@@ -34,7 +34,7 @@ NOP_VALUE: int = opcode.opmap['NOP']
 NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
 
 # This should be true for Python >=3.11a1
-HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname'))
+HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
