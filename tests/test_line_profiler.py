@@ -577,3 +577,48 @@ def test_sys_monitoring():
     assert tool is None, (
         f'Expected no active profiling tool after profiling, got {tool!r}'
     )
+
+
+def test_profile_generated_code():
+    """
+    Test that profiling shows source information with generated code.
+    """
+    import linecache
+    from line_profiler import LineProfiler
+    from line_profiler.line_profiler import is_generated_code
+
+    # Simulate generated code in linecache
+
+    # Note: this test will fail if the generated code name does not
+    # start with "<generated: ".
+    generated_code_name = "<generated: 'test_fn'>"
+    assert is_generated_code(generated_code_name)
+
+    code_lines = [
+        "def test_fn():",
+        "    return 42"
+    ]
+
+    linecache.cache[generated_code_name] = (None, None, [l + "\n" for l in code_lines], None)
+
+    # Compile the generated code
+    ns = {}
+    exec(compile("".join(l + "\n" for l in code_lines), generated_code_name, "exec"), ns)
+    fn = ns["test_fn"]
+
+    # Profile the generated function
+    profiler = LineProfiler()
+    profiled_fn = profiler(fn)
+    profiled_fn()
+
+    import io
+    s = io.StringIO()
+    profiler.print_stats(stream=s)
+    output = s.getvalue()
+
+    # Check that the output contains the generated code's source lines
+    for line in code_lines:
+        assert line in output
+
+    # .. as well as the generated code name
+    assert generated_code_name in output

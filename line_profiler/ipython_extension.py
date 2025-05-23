@@ -157,7 +157,7 @@ class LineProfilerMagics(Magics):
 
         text_file = opts.T[0]
         if text_file:
-            pfile = open(text_file, "w")
+            pfile = open(text_file, "w", encoding="utf-8")
             pfile.write(output)
             pfile.close()
             print(f"\n*** Profile printout saved to text file {text_file!r}. {message}")
