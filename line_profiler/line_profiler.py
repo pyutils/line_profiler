@@ -387,7 +387,18 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
 def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
               details=True, summarize=False, sort=False, rich=False):
-    """ Show text for the given timings.
+    """
+    Show text for the given timings.
+
+    Ignore:
+        # For developer testing, generate some profile output
+        python -m kernprof -l -p uuid -m uuid
+
+        # Use this function to view it with rich
+        python -m line_profiler -rmtz "uuid.lprof"
+
+        # Use this function to view it without rich
+        python -m line_profiler -mtz "uuid.lprof"
     """
     if stream is None:
         stream = sys.stdout
@@ -413,11 +424,30 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 
     if summarize:
         # Summarize the total time for each function
-        for (fn, lineno, name), timings in stats_order:
-            total_time = sum(t[2] for t in timings) * unit
-            if not stripzeros or total_time:
-                line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
-                stream.write(line)
+        if rich:
+            try:
+                from rich.console import Console
+                from rich.markup import escape
+            except ImportError:
+                rich = 0
+        line_template = '%6.2f seconds - %s:%s - %s'
+        if rich:
+            write_console = Console(file=stream, soft_wrap=True,
+                                    color_system='standard')
+            for (fn, lineno, name), timings in stats_order:
+                total_time = sum(t[2] for t in timings) * unit
+                if not stripzeros or total_time:
+                    # Wrap the filename with link markup to allow the user to
+                    # open the file
+                    fn_link = f'[link={fn}]{escape(fn)}[/link]'
+                    line = line_template % (total_time, fn_link, lineno, escape(name))
+                    write_console.print(line)
+        else:
+            for (fn, lineno, name), timings in stats_order:
+                total_time = sum(t[2] for t in timings) * unit
+                if not stripzeros or total_time:
+                    line = line_template % (total_time, fn, lineno, name)
+                    stream.write(line + '\n')
 
 
 def load_stats(filename):
