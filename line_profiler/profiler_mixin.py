@@ -198,7 +198,7 @@ class ByCountProfilerMixin:
         Wrap an async generator function to profile it.
         """
         # Prevent double-wrap
-        if self._already_wrapped(func):
+        if self._already_a_wrapper(func):
             return func
 
         @functools.wraps(func)
@@ -207,44 +207,42 @@ class ByCountProfilerMixin:
             # Async generators are started by `.asend(None)`
             input_ = None
             while True:
-                enable()
+                self.enable_by_count()
                 try:
                     item = (await g.asend(input_))
                 except StopAsyncIteration:
                     return
                 finally:
-                    disable()
+                    self.disable_by_count()
                 input_ = (yield item)
 
-        enable, disable = self._get_toggle_callbacks(wrapper)
-        return self._mark_wrapped(wrapper)
+        return self._mark_wrapper(wrapper)
 
     def wrap_coroutine(self, func):
         """
         Wrap a coroutine function to profile it.
         """
         # Prevent double-wrap
-        if self._already_wrapped(func):
+        if self._already_a_wrapper(func):
             return func
 
         @functools.wraps(func)
         async def wrapper(*args, **kwds):
-            enable()
+            self.enable_by_count()
             try:
                 result = await func(*args, **kwds)
             finally:
-                disable()
+                self.disable_by_count()
             return result
 
-        enable, disable = self._get_toggle_callbacks(wrapper)
-        return self._mark_wrapped(wrapper)
+        return self._mark_wrapper(wrapper)
 
     def wrap_generator(self, func):
         """
         Wrap a generator function to profile it.
         """
         # Prevent double-wrap
-        if self._already_wrapped(func):
+        if self._already_a_wrapper(func):
             return func
 
         @functools.wraps(func)
@@ -253,55 +251,42 @@ class ByCountProfilerMixin:
             # Generators are started by `.send(None)`
             input_ = None
             while True:
-                enable()
+                self.enable_by_count()
                 try:
                     item = g.send(input_)
                 except StopIteration:
                     return
                 finally:
-                    disable()
+                    self.disable_by_count()
                 input_ = (yield item)
 
-        enable, disable = self._get_toggle_callbacks(wrapper)
-        return self._mark_wrapped(wrapper)
+        return self._mark_wrapper(wrapper)
 
     def wrap_function(self, func):
         """
         Wrap a function to profile it.
         """
         # Prevent double-wrap
-        if self._already_wrapped(func):
+        if self._already_a_wrapper(func):
             return func
 
         @functools.wraps(func)
         def wrapper(*args, **kwds):
-            enable()
+            self.enable_by_count()
             try:
                 result = func(*args, **kwds)
             finally:
-                disable()
+                self.disable_by_count()
             return result
 
-        enable, disable = self._get_toggle_callbacks(wrapper)
-        return self._mark_wrapped(wrapper)
+        return self._mark_wrapper(wrapper)
 
-    def _already_wrapped(self, func):
+    def _already_a_wrapper(self, func):
         return getattr(func, self._profiler_wrapped_marker, None) == id(self)
 
-    def _mark_wrapped(self, func):
-        setattr(func, self._profiler_wrapped_marker, id(self))
-        return func
-
-    def _get_toggle_callbacks(self, wrapper):
-        """
-        Get the callbacks that should be called (1) before a profiled
-        function is used, and (2) when it returns, yields, or raises.
-
-        Arguments:
-            wrapper (types.FunctionType):
-                Wrapper function around the profiled function
-        """
-        return self.enable_by_count, self.disable_by_count
+    def _mark_wrapper(self, wrapper):
+        setattr(wrapper, self._profiler_wrapped_marker, id(self))
+        return wrapper
 
     def run(self, cmd):
         """ Profile a single executable statment in the main namespace.
