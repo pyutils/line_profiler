@@ -622,3 +622,158 @@ def test_profile_generated_code():
 
     # .. as well as the generated code name
     assert generated_code_name in output
+
+
+def test_multiple_profilers_metadata():
+    """
+    Test the curation of profiler metadata (e.g. `.code_hash_map`,
+    `.dupes_map`, `.code_map`) from the underlying C-level profiler.
+    """
+    from copy import deepcopy
+    from operator import attrgetter
+    from warnings import warn
+
+    prof1 = LineProfiler()
+    prof2 = LineProfiler()
+    cprof = prof1._get_c_profiler()
+    assert prof2._get_c_profiler() is cprof
+
+    @prof1
+    @prof2
+    def f(c=False):
+        get_time = attrgetter('c_last_time' if c else 'last_time')
+        t1 = get_time(prof1)
+        t2 = get_time(prof2)
+        return [t1, t2, get_time(cprof)]
+
+    @prof1
+    def g():
+        return [prof1.enable_count, prof2.enable_count]
+
+    @prof2
+    def h():  # Same bytecode as `g()`
+        return [prof1.enable_count, prof2.enable_count]
+
+    get_code = attrgetter('__wrapped__.__code__')
+
+    # `.functions`
+    assert prof1.functions == [f.__wrapped__, g.__wrapped__]
+    assert prof2.functions == [f.__wrapped__, h.__wrapped__]
+    # `.enable_count`
+    # (Note: `.enable_count` is automatically in-/de-cremented in
+    # decorated functions, so we need to access it within a called
+    # function)
+    assert g() == [1, 0]
+    assert h() == [0, 1]
+    assert prof1.enable_count == prof2.enable_count == cprof.enable_count == 0
+    # `.timer_unit`
+    assert prof1.timer_unit == prof2.timer_unit == cprof.timer_unit
+    # `.code_hash_map`
+    assert set(prof1.code_hash_map) == {get_code(f), get_code(g)}
+    assert set(prof2.code_hash_map) == {get_code(f), get_code(h)}
+
+    # `.c_code_map`
+    prof1_line_hashes = {h for hashes in prof1.code_hash_map.values()
+                         for h in hashes}
+    assert set(prof1.c_code_map) == prof1_line_hashes
+    prof2_line_hashes = {h for hashes in prof2.code_hash_map.values()
+                         for h in hashes}
+    assert set(prof2.c_code_map) == prof2_line_hashes
+    # `.code_map`
+    assert set(prof1.code_map) == {get_code(f), get_code(g)}
+    assert len(prof1.code_map[get_code(f)]) == 0
+    assert len(prof1.code_map[get_code(g)]) == 1
+    assert set(prof2.code_map) == {get_code(f), get_code(h)}
+    assert len(prof2.code_map[get_code(f)]) == 0
+    assert len(prof2.code_map[get_code(h)]) == 1
+    t1, t2, _ = f()  # Timing info gathered after calling the function
+    assert len(prof1.code_map[get_code(f)]) == 4  # 4 real lines
+    assert len(prof2.code_map[get_code(f)]) == 4
+
+    # `.c_last_time`
+    # (Note: `.c_last_time` is transient, so we need to access it within
+    # a called function)
+    ct1, ct2, _ = f(c=True)
+    assert set(ct1) == set(ct2) == {hash(get_code(f).co_code)}
+    # `.last_time`
+    # (Note: `.last_time` is currently bugged; since `.c_last_time`
+    # stores code-block hashes and `.code_hash_map` line hashes,
+    # `line_profiler._line_profiler.LineProfiler.last_time` never gets a
+    # hash match and is thus always empty)
+    t1, t2, tc = f(c=False)
+    if tc:
+        expected = {get_code(f)}
+    else:
+        msg = ('`line_profiler/_line_profiler.pyx::LineProfiler.last_time` '
+               'is always empty because `.c_last_time` and `.code_hash_map` '
+               'use different types of hashes (see PR #344)')
+        warn(msg, DeprecationWarning)
+        expected = set()
+    assert set(t1) == set(t2) == set(tc) == expected
+
+    # `.dupes_map` (introduce a dupe for this)
+    # Note: `h.__wrapped__.__code__` is padded but the `.dupes_map`
+    # entries are not
+    assert prof1.dupes_map == {get_code(f).co_code: [get_code(f)],
+                               get_code(g).co_code: [get_code(g)]}
+    h = prof1(h)
+    dupes = deepcopy(prof1.dupes_map)
+    h_code = dupes[get_code(g).co_code][-1]
+    assert get_code(h).co_code.startswith(h_code.co_code)
+    dupes[get_code(g).co_code][-1] = (h_code
+                                      .replace(co_code=get_code(h).co_code))
+    assert dupes == {get_code(f).co_code: [get_code(f)],
+                     get_code(g).co_code: [get_code(g), get_code(h)]}
+
+
+def test_multiple_profilers_usage():
+    """
+    Test using more than one profilers simultaneously.
+    """
+    prof1 = LineProfiler()
+    prof2 = LineProfiler()
+
+    def sum_n(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+
+    @prof1
+    def sum_n_sq(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n ** 2
+        return x
+
+    @prof2
+    def sum_n_cb(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n ** 3
+        return x
+
+    # If we decorate a wrapper, just "register" the profiler with the
+    # existing wrapper and add the wrapped function
+    sum_n_wrapper = prof1(sum_n)
+    assert prof1.functions == [sum_n_sq.__wrapped__, sum_n]
+    sum_n_wrapper_2 = prof2(sum_n_wrapper)
+    assert prof2.functions == [sum_n_cb.__wrapped__, sum_n]
+    assert sum_n_wrapper_2 is sum_n_wrapper
+
+    # Call the functions
+    n = 400
+    assert sum_n_wrapper(n) == .5 * n * (n + 1)
+    assert 6 * sum_n_sq(n) == n * (n + 1) * (2 * n + 1)
+    assert sum_n_cb(n) == .25 * (n * (n + 1)) ** 2
+
+    # Inspect the timings
+    t1 = {fname: entries
+          for (*_, fname), entries in prof1.get_stats().timings.items()}
+    t2 = {fname: entries
+          for (*_, fname), entries in prof2.get_stats().timings.items()}
+    assert set(t1) == {'sum_n_sq', 'sum_n'}
+    assert set(t2) == {'sum_n_cb', 'sum_n'}
+    assert t1['sum_n'][2][1] == t2['sum_n'][2][1] == n
+    assert t1['sum_n_sq'][2][1] == n
+    assert t2['sum_n_cb'][2][1] == n
