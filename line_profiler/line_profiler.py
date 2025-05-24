@@ -145,6 +145,13 @@ class ScopingPolicy(StringEnum):
         * Their child classes, functions, and modules, ...
         * ... and so on
 
+        Note:
+            Since imported submodule module objects are by default
+            placed into the namespace of their parent-package module
+            objects, this functions largely identical to
+            :py:attr:`ScopingPolicy.CHILDREN` for descension from module
+            objects into other modules objects.
+
     :py:attr:`ScopingPolicy.SIBLINGS`
         Only profile/descend into *sibling* and descendant objects,
         which are:
@@ -164,7 +171,9 @@ class ScopingPolicy(StringEnum):
         namespaces recursively
 
         Note:
-            This is probably a very bad idea for module scoping;
+            This is probably a *very* bad idea for module scoping,
+            potentially resulting in accidentally recusing through a
+            significant portion of loaded modules;
             proceed with care.
 
     Note:

@@ -38,6 +38,26 @@ class enter_tmpdir:
         self.stack.close()
 
 
+class restore_sys_modules:
+    """
+    Restore :py:attr:`sys.modules` after exiting the context.
+    """
+    def __enter__(self):
+        self.old = sys.modules.copy()
+
+    def __exit__(self, *_, **__):
+        sys.modules.clear()
+        sys.modules.update(self.old)
+
+
+def write(path, code=None):
+    path.parent.mkdir(exist_ok=True, parents=True)
+    if code is None:
+        path.touch()
+    else:
+        path.write_text(ub.codeblock(code))
+
+
 def test_simple_explicit_nonglobal_usage():
     """
     python -c "from test_explicit_profile import *; test_simple_explicit_nonglobal_usage()"
@@ -450,9 +470,6 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
     `line_profiler.autoprofile.autoprofile.
     _extend_line_profiler_for_profiling_imports()`) methods.
     """
-    def write(path, code):
-        path.write_text(ub.codeblock(code))
-
     script = ub.codeblock('''
         from line_profiler import LineProfiler
         from line_profiler.autoprofile.autoprofile import (
@@ -630,17 +647,13 @@ def test_profiler_class_scope_matching(monkeypatch,
                                        add_module_targets,
                                        add_class_targets):
     """
-    Test for the (class-)scope-matching strategies of the
+    Test for the class-scope-matching strategies of the
     `LineProfiler.add_*()` methods.
     """
-    def write(path, code=None):
-        path.parent.mkdir(exist_ok=True, parents=True)
-        if code is None:
-            path.touch()
-        else:
-            path.write_text(ub.codeblock(code))
+    with ExitStack() as stack:
+        stack.enter_context(restore_sys_modules())
+        curdir = stack.enter_context(enter_tmpdir())
 
-    with enter_tmpdir() as curdir:
         pkg_dir = curdir / 'packages' / 'my_pkg'
         write(pkg_dir / '__init__.py')
         write(pkg_dir / 'submod1.py',
@@ -713,7 +726,184 @@ def test_profiler_class_scope_matching(monkeypatch,
         assert added == set(add_class_targets)
 
 
-# TODO: add similar tests for function and module scoping
+@pytest.mark.parametrize(
+    ('scoping_policy', 'add_module_targets', 'add_subpackage_targets'),
+    [('exact', {'func4'}, {'class_method'}),
+     ('children', {'func4'}, {'class_method', 'func2'}),
+     ('descendants', {'func4'}, {'class_method', 'func2'}),
+     ('siblings', {'func4'}, {'class_method', 'func2', 'func3'}),
+     ('none',
+      {'func4', 'func5'},
+      {'class_method', 'func2', 'func3', 'func4', 'func5'})])
+def test_profiler_module_scope_matching(monkeypatch,
+                                        scoping_policy,
+                                        add_module_targets,
+                                        add_subpackage_targets):
+    """
+    Test for the module-scope-matching strategies of the
+    `LineProfiler.add_*()` methods.
+    """
+    with ExitStack() as stack:
+        stack.enter_context(restore_sys_modules())
+        curdir = stack.enter_context(enter_tmpdir())
+
+        pkg_dir = curdir / 'packages' / 'my_pkg'
+        write(pkg_dir / '__init__.py')
+        write(pkg_dir / 'subpkg1' / '__init__.py',
+              """
+              import my_mod4  # Unrelated
+              from .. import submod3  # Sibling
+              from . import submod2  # Child
+
+
+              class Class:
+                  @classmethod
+                  def class_method(cls):
+                      pass
+
+                  # We shouldn't descend into this no matter what
+                  import my_mod5 as module
+              """)
+        write(pkg_dir / 'subpkg1' / 'submod2.py',
+              """
+              def func2():
+                  pass
+              """)
+        write(pkg_dir / 'submod3.py',
+              """
+              def func3():
+                  pass
+              """)
+        write(curdir / 'packages' / 'my_mod4.py',
+              """
+              import my_mod5  # Unrelated
+
+
+              def func4():
+                  pass
+              """)
+        write(curdir / 'packages' / 'my_mod5.py',
+              """
+              def func5():
+                  pass
+              """)
+        monkeypatch.syspath_prepend(pkg_dir.parent)
+
+        import my_mod4
+        from my_pkg import subpkg1
+        from line_profiler import LineProfiler
+
+        policies = {'func': 'none', 'class': 'children',
+                    'module': scoping_policy}
+        # Add a module
+        profile = LineProfiler()
+        profile.add_module(my_mod4, scoping_policy=policies)
+        assert len(profile.functions) == len(add_module_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_module_targets)
+        # Add a subpackage
+        profile = LineProfiler()
+        profile.add_module(subpkg1, scoping_policy=policies)
+        assert len(profile.functions) == len(add_subpackage_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_subpackage_targets)
+        # Add a class
+        profile = LineProfiler()
+        profile.add_class(subpkg1.Class, scoping_policy=policies)
+        assert [func.__name__ for func in profile.functions] == ['class_method']
+
+
+@pytest.mark.parametrize(
+    ('scoping_policy', 'add_module_targets', 'add_class_targets'),
+    [('exact', {'func1'}, {'method'}),
+     ('children', {'func1'}, {'method'}),
+     ('descendants', {'func1', 'func2'}, {'method', 'child_class_method'}),
+     ('siblings',
+      {'func1', 'func2', 'func3'},
+      {'method', 'child_class_method', 'func1'}),
+     ('none',
+      {'func1', 'func2', 'func3', 'func4'},
+      {'method', 'child_class_method', 'func1', 'another_func4'})])
+def test_profiler_func_scope_matching(monkeypatch,
+                                      scoping_policy,
+                                      add_module_targets,
+                                      add_class_targets):
+    """
+    Test for the class-scope-matching strategies of the
+    `LineProfiler.add_*()` methods.
+    """
+    with ExitStack() as stack:
+        stack.enter_context(restore_sys_modules())
+        curdir = stack.enter_context(enter_tmpdir())
+
+        pkg_dir = curdir / 'packages' / 'my_pkg'
+        write(pkg_dir / '__init__.py')
+        write(pkg_dir / 'subpkg1' / '__init__.py',
+              """
+              from ..submod3 import func3  # Sibling
+              from .submod2 import func2  # Descendant
+              from my_mod4 import func4  # Unrelated
+
+              def func1():
+                  pass
+
+              class Class:
+                  def method(self):
+                      pass
+
+                  class ChildClass:
+                      @classmethod
+                      def child_class_method(cls):
+                          pass
+
+                  # Descendant
+                  descdent_method = ChildClass.child_class_method
+
+                  # Sibling
+                  sibling_method = staticmethod(func1)
+
+                  # Unrelated
+                  from my_mod4 import another_func4 as imported_method
+              """)
+        write(pkg_dir / 'subpkg1' / 'submod2.py',
+              """
+              def func2():
+                  pass
+              """)
+        write(pkg_dir / 'submod3.py',
+              """
+              def func3():
+                  pass
+              """)
+        write(curdir / 'packages' / 'my_mod4.py',
+              """
+              def func4():
+                  pass
+
+
+              def another_func4(_):
+                  pass
+              """)
+        monkeypatch.syspath_prepend(pkg_dir.parent)
+
+        from my_pkg import subpkg1
+        from line_profiler import LineProfiler
+
+        policies = {'func': scoping_policy,
+                    # No descensions
+                    'class': 'exact', 'module': 'exact'}
+        # Add a module
+        profile = LineProfiler()
+        profile.add_module(subpkg1, scoping_policy=policies)
+        assert len(profile.functions) == len(add_module_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_module_targets)
+        # Add a class
+        profile = LineProfiler()
+        profile.add_module(subpkg1.Class, scoping_policy=policies)
+        assert len(profile.functions) == len(add_class_targets)
+        added = {func.__name__ for func in profile.functions}
+        assert added == set(add_class_targets)
 
 
 if __name__ == '__main__':
