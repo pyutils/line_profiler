@@ -15,6 +15,7 @@ import types
 import warnings
 from argparse import ArgumentError, ArgumentParser
 from enum import auto
+from typing import Union, TypedDict
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
@@ -109,33 +110,76 @@ class _WrapperInfo:
 
 class ScopingPolicy(StringEnum):
     """
-    :py:class:`StrEnum` for scoping policies, that is, how nested
-    namespaces (classes and modules) are descended into when using
-    :py:meth:`LineProfiler.add_class`,
+    :py:class:`StrEnum` for scoping policies, that is, how it is
+    decided whether to:
+
+    * Profile a function found in a namespace (a class or a module), and
+    * Descend into nested namespaces so that their methods and functions
+      are profiled,
+
+    when using :py:meth:`LineProfiler.add_class`,
     :py:meth:`LineProfiler.add_module`, and
     :py:func:`~.add_imported_function_or_module()`.
 
     Available policies are:
 
     :py:attr:`ScopingPolicy.EXACT`
-        Only add classes defined locally in the very module, or
-        the very class as its "inner classes"
+        Only profile *functions* found in the namespace fulfilling
+        :py:attr:`ScopingPolicy.CHILDREN` as defined below, without
+        descending into nested namespaces
+
+    :py:attr:`ScopingPolicy.CHILDREN`
+        Only profile/descend into *child* objects, which are:
+
+        * Classes and functions defined *locally* in the very
+          module, or in the very class as its "inner classes" and
+          methods
+        * Direct submodules, in case when the namespace is a module
+          object representing a package
+
     :py:attr:`ScopingPolicy.DESCENDANTS`
-        Only add locally-defined classes (see :py:attr:`EXACT`),
-        their locally-defined classes, and so on
+        Only profile/descend into *descendant* objects, which are:
+
+        * Child classes, functions, and modules, as defined above in
+          :py:attr:`ScopingPolicy.CHILDREN`
+        * Their child classes, functions, and modules, ...
+        * ... and so on
+
     :py:attr:`ScopingPolicy.SIBLINGS`
-        Only add classes fulfilling :py:attr:`DESCENDANTS`, or are
-        defined in the same module as this very class, or are
-        defined in sibling modules and subpackages (if a part of a
-        package) to this very module
+        Only profile/descend into *sibling* and descendant objects,
+        which are:
+
+        * Descendant classes, functions, and modules, as defined above
+          in :py:attr:`ScopingPolicy.DESCENDANTS`
+        * Classes and functions (and descendants thereof) defined in the
+          same parent namespace to this very class, or in modules (and
+          subpackages and their descendants) sharing a parent package
+          to this very module
+        * Modules (and subpackages and their descendants) sharing a
+          parent package, when the namespace is a module
+
     :py:attr:`ScopingPolicy.NONE`
-        Don't check scopes and add all classes in the local
-        namespace of the class/module
+        Don't check scopes;  profile all functions found in the local
+        namespace of the class/module, and descend into all nested
+        namespaces recursively
+
+        Note:
+            This is probably a very bad idea for module scoping;
+            proceed with care.
+
+    Note:
+        Other than :py:class:`enum.Enum` methods starting and ending
+        with single underscores (e.g. :py:meth:`!_missing_`), all
+        methods prefixed with a single underscore are to be considered
+        implementation details.
     """
     EXACT = auto()
+    CHILDREN = auto()
     DESCENDANTS = auto()
     SIBLINGS = auto()
     NONE = auto()
+
+    # Verification
 
     def __init_subclass__(cls, *args, **kwargs):
         """
@@ -147,9 +191,8 @@ class ScopingPolicy(StringEnum):
     @classmethod
     def _check_class(cls):
         """
-        Verify that :py:meth:`_add_module_filter` and
-        :py:meth:`_add_class_filter` returns a callable for all policy
-        values.
+        Verify that :py:meth:`.get_filter` return a callable for all
+        policy values and object types.
         """
         mock_module = types.ModuleType('mock_module')
 
@@ -157,63 +200,118 @@ class ScopingPolicy(StringEnum):
             pass
 
         for member in cls.__members__.values():
-            assert callable(member._add_module_filter(mock_module))
-            assert callable(member._add_class_filter(MockClass))
+            for obj_type in 'func', 'class', 'module':
+                for namespace in mock_module, MockClass:
+                    assert callable(member.get_filter(namespace, obj_type))
+
+    # Filtering
+
+    def get_filter(self, namespace, obj_type):
+        """
+        Args:
+            namespace (Union[type, types.ModuleType]):
+                Class or module to be profiled.
+            obj_type (Literal['func', 'class', 'module']):
+                Type of object encountered in ``namespace``:
+
+                ``'func'``
+                    Either a function, or a component function of a
+                    callable-like object (e.g. :py:class:`property`)
+
+                ``'class'`` (resp. ``'module'``)
+                    A class (resp. a module)
+
+        Returns:
+            func (Callable[..., bool]):
+                Filter callable returning whether the argument (as
+                specified by ``obj_type``) should be added
+                via :py:meth:`LineProfiler.add_class`,
+                :py:meth:`LineProfiler.add_module`, or
+                :py:meth:`LineProfiler.add_callable`
+        """
+        is_class = isinstance(namespace, type)
+        if obj_type == 'module':
+            if is_class:
+                return self._return_const(False)
+            return self._get_module_filter_in_module(namespace)
+        if is_class:
+            method = self._get_callable_filter_in_class
+        else:
+            method = self._get_callable_filter_in_module
+        return method(namespace, is_class=(obj_type == 'class'))
+
+    @classmethod
+    def to_policies(cls, policies):
+        """
+        Normalize ``policies`` into a dictionary of policies for various
+        object types.
+
+        Args:
+            policies (Union[str, ScopingPolicy, ScopingPolicyDict]):
+                :py:class:`ScopingPolicy`, string convertible thereto
+                (case-insensitive), or a mapping containing such values
+                and the keys as outlined in the return value
+
+        Returns:
+            normalized_policies (dict[str, ScopingPolicy]):
+                Dictionary with the following key-value pairs:
+
+                ``'func'``
+                    :py:class:`ScopingPolicy` for profiling functions
+                    and other callable-like objects composed thereof
+                    (e.g. :py:class:`property`).
+
+                ``'class'``
+                    :py:class:`ScopingPolicy` for descending into
+                    classes.
+
+                ``'module'``
+                    :py:class:`ScopingPolicy` for descending into
+                    modules (if the namespace is itself a module).
+
+        Note:
+            If ``policies`` is a mapping, it is required to contain all
+            three of the aforementioned keys.
+
+        Example:
+
+            >>> assert (ScopingPolicy.to_policies('children')
+            ...         == dict.fromkeys(['func', 'class', 'module'],
+            ...                          ScopingPolicy.CHILDREN))
+            >>> assert (ScopingPolicy.to_policies({
+            ...             'func': 'NONE',
+            ...             'class': 'descendants',
+            ...             'module': 'exact',
+            ...             'unused key': 'unused value'})
+            ...         == {'func': ScopingPolicy.NONE,
+            ...             'class': ScopingPolicy.DESCENDANTS,
+            ...             'module': ScopingPolicy.EXACT})
+            >>> ScopingPolicy.to_policies({})
+            Traceback (most recent call last):
+            ...
+            KeyError: 'func'
+        """
+        if isinstance(policies, str):
+            policy = cls(policies)
+            return _ScopingPolicyDict(
+                dict.fromkeys(['func', 'class', 'module'], policy))
+        return _ScopingPolicyDict({'func': cls(policies['func']),
+                                   'class': cls(policies['class']),
+                                   'module': cls(policies['module'])})
 
     @staticmethod
-    def _no_op(_):
-        """
-        Filter that is always true.
-        """
-        return True
+    def _return_const(value):
+        def return_const(*_, **__):
+            return value
 
-    def _add_module_filter(self, mod):
-        """
-        Args:
-            mod (ModuleType):
-                Module to be profiled.
+        return return_const
 
-        Returns:
-            func (Callable[[type], bool]):
-                Filter callable returning whether the argument, a class
-                in the local namespace of ``mod``, should be descended
-                into and added via :py:meth:`LineProfiler.add_class`
-        """
-        def match_prefix(s, prefix, sep='.'):
-            return s == prefix or s.startswith(prefix + sep)
+    @staticmethod
+    def _match_prefix(s, prefix, sep='.'):
+        return s == prefix or s.startswith(prefix + sep)
 
-        def class_is_child(other):
-            return other.__module__ == mod.__name__
-
-        def class_is_descendant(other):
-            return match_prefix(other.__module__, mod.__name__)
-
-        def class_is_cousin(other):
-            if class_is_descendant(other):
-                return True
-            return match_prefix(other.__module__, parent)
-
-        parent, _, basename = mod.__name__.rpartition('.')
-        return {'exact': class_is_child,
-                'descendants': class_is_descendant,
-                'siblings': (class_is_cousin  # Only if a pkg
-                             if basename else
-                             class_is_descendant),
-                'none': self._no_op}[self.value]
-
-    def _add_class_filter(self, cls):
-        """
-        Args:
-            cls (type):
-                Class to be profiled.
-
-        Returns:
-            func (Callable[[type], bool]):
-                Filter callable returning whether the argument, a class
-                in the local namespace of ``cls``, should be descended
-                into and added via :py:meth:`LineProfiler.add_class`
-        """
-        def class_is_child(other):
+    def _get_callable_filter_in_class(self, cls, is_class):
+        def func_is_child(other):
             if not modules_are_equal(other):
                 return False
             return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
@@ -221,20 +319,74 @@ class ScopingPolicy(StringEnum):
         def modules_are_equal(other):  # = sibling check
             return cls.__module__ == other.__module__
 
-        def class_is_descendant(other):
+        def func_is_descdendant(other):
             if not modules_are_equal(other):
                 return False
             return other.__qualname__.startswith(cls.__qualname__ + '.')
 
-        return {'exact': class_is_child,
-                'descendants': class_is_descendant,
+        return {'exact': (self._return_const(False)
+                          if is_class else
+                          func_is_child),
+                'children': func_is_child,
+                'descendants': func_is_descdendant,
                 'siblings': modules_are_equal,
-                'none': self._no_op}[self.value]
+                'none': self._return_const(True)}[self.value]
+
+    def _get_callable_filter_in_module(self, mod, is_class):
+        def func_is_child(other):
+            return other.__module__ == mod.__name__
+
+        def func_is_descdendant(other):
+            return self._match_prefix(other.__module__, mod.__name__)
+
+        def func_is_cousin(other):
+            if func_is_descdendant(other):
+                return True
+            return self._match_prefix(other.__module__, parent)
+
+        parent, _, basename = mod.__name__.rpartition('.')
+        return {'exact': (self._return_const(False)
+                          if is_class else
+                          func_is_child),
+                'children': func_is_child,
+                'descendants': func_is_descdendant,
+                'siblings': (func_is_cousin  # Only if a pkg
+                             if basename else
+                             func_is_descdendant),
+                'none': self._return_const(True)}[self.value]
+
+    def _get_module_filter_in_module(self, mod):
+        def module_is_descendant(other):
+            return other.__name__.startswith(mod.__name__ + '.')
+
+        def module_is_child(other):
+            return other.__name__.rpartition('.')[0] == mod.__name__
+
+        def module_is_sibling(other):
+            return other.__name__.startswith(parent + '.')
+
+        parent, _, basename = mod.__name__.rpartition('.')
+        return {'exact': self._return_const(False),
+                'children': module_is_child,
+                'descendants': module_is_descendant,
+                'siblings': (module_is_sibling  # Only if a pkg
+                             if basename else
+                             self._return_const(False)),
+                'none': self._return_const(True)}[self.value]
 
 
 # Sanity check in case we extended `ScopingPolicy` and forgot to update
 # the corresponding methods
 ScopingPolicy._check_class()
+
+ScopingPolicyDict = TypedDict('ScopingPolicyDict',
+                              {'func': Union[str, ScopingPolicy],
+                               'class': Union[str, ScopingPolicy],
+                               'module': Union[str, ScopingPolicy]})
+_ScopingPolicyDict = TypedDict('_ScopingPolicyDict',
+                               {'func': ScopingPolicy,
+                                'class': ScopingPolicy,
+                                'module': ScopingPolicy})
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -256,9 +408,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     """
     def __call__(self, func):
         """
-        Decorate a function, method, property, partial object etc. to
-        start the profiler on function entry and stop it on function
-        exit.
+        Decorate a function, method, :py:class:`property`,
+        :py:func:`~functools.partial` object etc. to start the profiler
+        on function entry and stop it on function exit.
         """
         # The same object is returned when:
         # - `func` is a `types.FunctionType` which is already
@@ -274,18 +426,35 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             return func
         return super().wrap_callable(func)
 
-    def add_callable(self, func):
+    def add_callable(self, func, guard=None):
         """
-        Register a function, method, property, partial object, etc. with
-        the underlying Cython profiler.
+        Register a function, method, :py:class:`property`,
+        :py:func:`~functools.partial` object, etc. with the underlying
+        Cython profiler.
+
+        Args:
+            func (...):
+                Function, class/static/bound method, property, etc.
+            guard (Optional[Callable[[types.FunctionType], bool]])
+                Optional checker callable, which takes a function object
+                and returns true(-y) if it *should not* be passed to
+                :py:meth:`.add_function()`.  Defaults to checking
+                whether the function is already a profiling wrapper.
 
         Returns:
             1 if any function is added to the profiler, 0 otherwise.
+
+        Note:
+            This method should in general be called instead of the more
+            low-level :py:meth:`.add_function()`.
         """
+        if guard is None:
+            guard = self._already_a_wrapper
+
         nadded = 0
         for impl in _get_underlying_functions(func):
             info, wrapped_by_this_prof = self._get_wrapper_info(impl)
-            if wrapped_by_this_prof:
+            if wrapped_by_this_prof if guard is None else guard(impl):
                 continue
             if info:
                 # It's still a profiling wrapper, just wrapped by
@@ -315,30 +484,43 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def _add_namespace(
             self, namespace, *,
-            seen=None, scoping_policy=ScopingPolicy.NONE, wrap=False):
+            seen=None,
+            func_scoping_policy=ScopingPolicy.NONE,
+            class_scoping_policy=ScopingPolicy.NONE,
+            module_scoping_policy=ScopingPolicy.NONE,
+            wrap=False):
+        def func_guard(func):
+            return self._already_a_wrapper(func) or not func_check(func)
+
         if seen is None:
             seen = set()
         count = 0
-        add_cls = functools.partial(self._add_namespace,
-                                    seen=seen,
-                                    scoping_policy=scoping_policy,
-                                    wrap=wrap)
+        add_namespace = functools.partial(
+            self._add_namespace,
+            seen=seen,
+            func_scoping_policy=func_scoping_policy,
+            class_scoping_policy=class_scoping_policy,
+            module_scoping_policy=module_scoping_policy,
+            wrap=wrap)
         wrap_failures = {}
-        if isinstance(namespace, type):
-            check = scoping_policy._add_class_filter(namespace)
-        else:
-            check = scoping_policy._add_module_filter(namespace)
+        func_check = func_scoping_policy.get_filter(namespace, 'func')
+        cls_check = class_scoping_policy.get_filter(namespace, 'class')
+        mod_check = module_scoping_policy.get_filter(namespace, 'module')
 
         for attr, value in vars(namespace).items():
             if id(value) in seen:
                 continue
             seen.add(id(value))
             if isinstance(value, type):
-                if check(value) and add_cls(value):
+                if cls_check(value) and add_namespace(value):
+                    count += 1
+                continue
+            elif isinstance(value, types.ModuleType):
+                if mod_check(value) and add_namespace(value):
                     count += 1
                 continue
             try:
-                if not self.add_callable(value):
+                if not self.add_callable(value, guard=func_guard):
                     continue
             except TypeError:  # Not a callable (wrapper)
                 continue
@@ -371,12 +553,17 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             cls (type):
                 Class to be profiled.
-            scoping_policy (Union[str, ScopingPolicy]):
-                Whether (and how) to match the scope of member classes
-                and decide on whether to add them:
+            scoping_policy (Union[str, ScopingPolicy, ScopingPolicyDict]):
+                Whether (and how) to match the scope of members and
+                decide on whether to add them:
                 see the documentation for :py:class:`ScopingPolicy`.
                 Strings are converted to :py:class:`ScopingPolicy`
                 instances in a case-insensitive manner.
+                Can also be a mapping from the keys ``'func'``,
+                ``'class'``, and ``'module'`` to
+                :py:class:`ScopingPolicy` objects or strings convertible
+                thereto, in which case different policies can be enacted
+                for these object types.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -386,9 +573,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        scoping_policy = ScopingPolicy(scoping_policy)
+        policies = ScopingPolicy.to_policies(scoping_policy)
         return self._add_namespace(cls,
-                                   scoping_policy=scoping_policy, wrap=wrap)
+                                   func_scoping_policy=policies['func'],
+                                   class_scoping_policy=policies['class'],
+                                   module_scoping_policy=policies['module'],
+                                   wrap=wrap)
 
     def add_module(
             self, mod, *, scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
@@ -399,12 +589,17 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             mod (ModuleType):
                 Module to be profiled.
-            scoping_policy (Union[str, ScopingPolicy]):
-                Whether (and how) to match the scope of member classes
-                and decide on whether to add them;
+            scoping_policy (Union[str, ScopingPolicy, ScopingPolicyDict]):
+                Whether (and how) to match the scope of members and
+                decide on whether to add them:
                 see the documentation for :py:class:`ScopingPolicy`.
                 Strings are converted to :py:class:`ScopingPolicy`
                 instances in a case-insensitive manner.
+                Can also be a mapping from the keys ``'func'``,
+                ``'class'``, and ``'module'`` to
+                :py:class:`ScopingPolicy` objects or strings convertible
+                thereto, in which case different policies can be enacted
+                for these object types.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -414,9 +609,12 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             n (int):
                 Number of members added to the profiler.
         """
-        scoping_policy = ScopingPolicy(scoping_policy)
+        policies = ScopingPolicy.to_policies(scoping_policy)
         return self._add_namespace(mod,
-                                   scoping_policy=scoping_policy, wrap=wrap)
+                                   func_scoping_policy=policies['func'],
+                                   class_scoping_policy=policies['class'],
+                                   module_scoping_policy=policies['module'],
+                                   wrap=wrap)
 
     def _get_wrapper_info(self, func):
         info = getattr(func, self._profiler_wrapped_marker, None)

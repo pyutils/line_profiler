@@ -25,6 +25,10 @@ def add_imported_function_or_module(
             details.
             Strings are converted to :py:class:`~.ScopingPolicy`
             instances in a case-insensitive manner.
+            Can also be a mapping from the keys ``'func'``, ``'class'``,
+            and ``'module'`` to :py:class:`~.ScopingPolicy` objects or
+            strings convertible thereto, in which case different
+            policies can be enacted for these object types.
         wrap (bool):
             Whether to replace the wrapped members with wrappers which
             automatically enable/disable the profiler when called.

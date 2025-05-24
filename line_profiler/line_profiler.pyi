@@ -6,7 +6,8 @@ from types import (FunctionType, MethodType, ModuleType,
                    BuiltinFunctionType, BuiltinMethodType,
                    ClassMethodDescriptorType, MethodDescriptorType,
                    MethodWrapperType, WrapperDescriptorType)
-from typing import overload, Any, Literal, Callable, List, Tuple, TypeVar
+from typing import (overload,
+                    Any, Callable, List, Literal, Tuple, TypeVar, TypedDict)
 try:
     from typing import (  # type: ignore[attr-defined]  # noqa: F401
         TypeIs)
@@ -25,7 +26,6 @@ CLevelCallable = TypeVar('CLevelCallable',
 CallableLike = TypeVar('CallableLike',
                        FunctionType, partial, property, cached_property,
                        MethodType, staticmethod, classmethod, partialmethod)
-ScopingPolicyOption = Literal['exact', 'descendants', 'siblings', 'none']
 
 
 def is_c_level_callable(func: Any) -> TypeIs[CLevelCallable]:
@@ -37,10 +37,48 @@ def load_ipython_extension(ip) -> None:
 
 
 class ScopingPolicy(StringEnum):
-    EXACT = auto()
+    CHILDREN = auto()
     DESCENDANTS = auto()
     SIBLINGS = auto()
     NONE = auto()
+
+    @overload
+    def get_filter(
+            self,
+            namespace: type | ModuleType,
+            obj_type: Literal['func']) -> Callable[[FunctionType], bool]:
+        ...
+
+    @overload
+    def get_filter(
+            self,
+            namespace: type | ModuleType,
+            obj_type: Literal['class']) -> Callable[[type], bool]:
+        ...
+
+    @overload
+    def get_filter(
+            self,
+            namespace: type | ModuleType,
+            obj_type: Literal['module']) -> Callable[[ModuleType], bool]:
+        ...
+
+    @classmethod
+    def to_policies(cls,
+                    policies: (str
+                               | 'ScopingPolicy'
+                               | ScopingPolicyDict)) -> _ScopingPolicyDict:
+        ...
+
+
+ScopingPolicyDict = TypedDict('ScopingPolicyDict',
+                              {'func': str | ScopingPolicy,
+                               'class': str | ScopingPolicy,
+                               'module': str | ScopingPolicy})
+_ScopingPolicyDict = TypedDict('_ScopingPolicyDict',
+                               {'func': str | ScopingPolicy,
+                                'class': str | ScopingPolicy,
+                                'module': str | ScopingPolicy})
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -60,7 +98,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     def __call__(self, func: Callable) -> FunctionType:
         ...
 
-    def add_callable(self, func) -> Literal[0, 1]:
+    def add_callable(
+            self, func, guard: (Callable[[FunctionType], bool]
+                                | None) = None) -> Literal[0, 1]:
         ...
 
     def dump_stats(self, filename) -> None:
@@ -78,13 +118,17 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def add_module(
             self, mod: ModuleType, *,
-            scoping_policy: ScopingPolicy | str = ScopingPolicy.SIBLINGS,
+            scoping_policy: (ScopingPolicy
+                             | str
+                             | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
             wrap: bool = False) -> int:
         ...
 
     def add_class(
             self, cls: type, *,
-            scoping_policy: ScopingPolicy | str = ScopingPolicy.SIBLINGS,
+            scoping_policy: (ScopingPolicy
+                             | str
+                             | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
             wrap: bool = False) -> int:
         ...
 

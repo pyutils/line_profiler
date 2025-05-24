@@ -606,7 +606,8 @@ def test_profiler_warn_unwrappable():
 
 @pytest.mark.parametrize(
     ('scoping_policy', 'add_module_targets', 'add_class_targets'),
-    [('exact',
+    [('exact', {}, {'class3_method'}),
+     ('children',
       {'class2_method', 'child_class2_method'},
       {'class3_method', 'child_class3_method'}),
      ('descendants',
@@ -624,13 +625,13 @@ def test_profiler_warn_unwrappable():
        'class3_method', 'child_class3_method', 'other_class3_method'},
       {'child_class1_method',
        'class3_method', 'child_class3_method', 'other_class3_method'})])
-def test_profiler_scope_matching(monkeypatch,
-                                 scoping_policy,
-                                 add_module_targets,
-                                 add_class_targets):
+def test_profiler_class_scope_matching(monkeypatch,
+                                       scoping_policy,
+                                       add_module_targets,
+                                       add_class_targets):
     """
-    Test for the scope-matching strategies of the `LineProfiler.add_*()`
-    methods.
+    Test for the (class-)scope-matching strategies of the
+    `LineProfiler.add_*()` methods.
     """
     def write(path, code=None):
         path.parent.mkdir(exist_ok=True, parents=True)
@@ -655,7 +656,7 @@ def test_profiler_scope_matching(monkeypatch,
         write(pkg_dir / 'subpkg2' / '__init__.py',
               """
         from ..submod1 import Class1  # Import from a sibling
-        from .submod3 import Class3  # Import from a descendant
+        from .submod3 import Class3  # Import descendant from a child
 
 
         class Class2:
@@ -696,18 +697,23 @@ def test_profiler_scope_matching(monkeypatch,
         from my_pkg import subpkg2
         from line_profiler import LineProfiler
 
+        policies = {'func': 'none', 'class': scoping_policy,
+                    'module': 'exact'}  # Don't descend into submodules
         # Add a module
         profile = LineProfiler()
-        profile.add_module(subpkg2, scoping_policy=scoping_policy)
+        profile.add_module(subpkg2, scoping_policy=policies)
         assert len(profile.functions) == len(add_module_targets)
         added = {func.__name__ for func in profile.functions}
         assert added == set(add_module_targets)
         # Add a class
         profile = LineProfiler()
-        profile.add_class(subpkg2.Class3, scoping_policy=scoping_policy)
+        profile.add_class(subpkg2.Class3, scoping_policy=policies)
         assert len(profile.functions) == len(add_class_targets)
         added = {func.__name__ for func in profile.functions}
         assert added == set(add_class_targets)
+
+
+# TODO: add similar tests for function and module scoping
 
 
 if __name__ == '__main__':
