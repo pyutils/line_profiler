@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """
-Script to conveniently run profilers on code in a variety of circumstances.
+Script to conveniently run profilers on code in a variety of
+circumstances.
 
-To profile a script, decorate the functions of interest with ``@profile``
+To profile a script, decorate the functions of interest with
+:py:deco:`profile <line_profiler.explicit_profiler.GlobalProfiler>`:
 
 .. code:: bash
 
@@ -15,25 +17,29 @@ To profile a script, decorate the functions of interest with ``@profile``
 
 NOTE:
 
-    New in 4.1.0: Instead of relying on injecting ``profile`` into the builtins
-    you can now ``import line_profiler`` and use ``line_profiler.profile`` to
-    decorate your functions. This allows the script to remain functional even
-    if it is not actively profiled. See :py:mod:`line_profiler` for details.
+    New in 4.1.0: Instead of relying on injecting :py:deco:`profile`
+    into the builtins you can now ``import line_profiler`` and use
+    :py:deco:`line_profiler.profile <line_profiler.explicit_profiler.GlobalProfiler>`
+    to decorate your functions.  This allows the script to remain
+    functional even if it is not actively profiled.  See
+    :py:mod:`!line_profiler` (:ref:`link <line-profiler-basic-usage>`) for
+    details.
 
 
-Then run the script using kernprof:
+Then run the script using :program:`kernprof`:
 
 .. code:: bash
 
     kernprof -b script_to_profile.py
 
-By default this runs with the default :py:mod:`cProfile` profiler and does not
-require compiled modules. Instructions to view the results will be given in the
-output. Alternatively, adding ``-v`` to the command line will write results to
-stdout.
+By default this runs with the default :py:mod:`cProfile` profiler and
+does not require compiled modules. Instructions to view the results will
+be given in the output. Alternatively, adding :option:`!-v` to the
+command line will write results to stdout.
 
-To enable line-by-line profiling, then :py:mod:`line_profiler` must be
-available and compiled. Add the ``-l`` argument to the kernprof invocation.
+To enable line-by-line profiling, :py:mod:`line_profiler` must be
+available and compiled, and the :option:`!-l` argument should be added to
+the :program:`kernprof` invocation:
 
 .. code:: bash
 
@@ -41,19 +47,23 @@ available and compiled. Add the ``-l`` argument to the kernprof invocation.
 
 NOTE:
 
-    New in 4.3.0: more code execution options are added:
+    New in 4.3.0: More code execution options are added:
 
-    * ``kernprof <options> -m some.module <args to module>`` parallels
-      ``python -m`` and runs the provided module as ``__main__``.
-    * ``kernprof <options> -c "some code" <args to code>`` parallels
-      ``python -c`` and executes the provided literal code.
-    * ``kernprof <options> - <args to code>`` parallels ``python -`` and
-      executes literal code passed via the ``stdin``.
+    * :command:`kernprof <options> -m some.module <args to module>`
+      parallels :command:`python -m` and runs the provided module as
+      :py:mod:`__main__`.
+    * :command:`kernprof <options> -c "some code" <args to code>`
+      parallels :command:`python -c` and executes the provided literal
+      code.
+    * :command:`kernprof <options> - <args to code>` parallels
+      :command:`python -` and executes literal code passed via the
+      :file:`stdin`.
 
-    See also :doc:`kernprof invocations </manual/examples/example_kernprof>`.
+    See also
+    :doc:`kernprof invocations </manual/examples/example_kernprof>`.
 
 For more details and options, refer to the CLI help.
-To view kernprof help run:
+To view the :program:`kernprof` help text run:
 
 .. code:: bash
 
@@ -88,10 +98,23 @@ which displays:
       -i, --output-interval [OUTPUT_INTERVAL]
                             Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. Minimum value is 1 (second). Defaults to
                             disabled.
-      -p, --prof-mod PROF_MOD
-                            List of modules, functions and/or classes to profile specified by their name or path. List is comma separated, adding the current script path profiles
-                            the full script. Multiple copies of this flag can be supplied and the.list is extended. Only works with line_profiler -l, --line-by-line
+      -p, --prof-mod {path/to/script | object.dotted.path}[,...]
+                            List of modules, functions and/or classes to profile specified by their name or path. These profiling targets can be supplied both as comma-separated
+                            items, or separately with multiple copies of this flag. Adding the current script/module profiles the entirety of it. Only works with line_profiler -l,
+      --no-preimports       Instead of eagerly importing all profiling targets specified via -p and profiling them, only profile those that are directly imported in the profiled
+                            code. Only works with line_profiler -l, --line-by-line.
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
+
+NOTE:
+
+    New in 4.3.0: For more intuitive profiling behavior, profiling
+    targets in :option:`!--prof-mod` (except the profiled script/code)
+    are now eagerly pre-imported to be profiled
+    (see :py:mod:`line_profiler.autoprofile.eager_preimports`),
+    regardless of whether those imports directly occur in the profiled
+    script/module/code.
+    To restore the old behavior, pass the :option:`!--no-preimports`
+    flag.
 """
 import builtins
 import functools
@@ -102,6 +125,8 @@ import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import tempfile
 import time
+import traceback
+import warnings
 from argparse import ArgumentError, ArgumentParser
 from runpy import run_module
 
@@ -120,15 +145,15 @@ from line_profiler.profiler_mixin import ByCountProfilerMixin
 
 
 def execfile(filename, globals=None, locals=None):
-    """ Python 3.x doesn't have 'execfile' builtin """
+    """ Python 3.x doesn't have :py:func:`execfile` builtin """
     with open(filename, 'rb') as f:
         exec(compile(f.read(), filename, 'exec'), globals, locals)
 # =====================================
 
 
 class ContextualProfile(ByCountProfilerMixin, Profile):
-    """ A subclass of Profile that adds a context manager for Python
-    2.5 with: statements and a decorator.
+    """ A subclass of :py:class:`Profile` that adds a context manager
+    for Python 2.5 with: statements and a decorator.
     """
     def __init__(self, *args, **kwds):
         super(ByCountProfilerMixin, self).__init__(*args, **kwds)
@@ -160,7 +185,7 @@ class ContextualProfile(ByCountProfilerMixin, Profile):
 
 class RepeatedTimer:
     """
-    Background timer for outputting file every n seconds.
+    Background timer for outputting file every ``n`` seconds.
 
     Adapted from [SO474528]_.
 
@@ -206,10 +231,10 @@ def find_module_script(module_name):
     raise SystemExit(1)
 
 
-def find_script(script_name):
+def find_script(script_name, exit_on_error=True):
     """ Find the script.
 
-    If the input is not a file, then $PATH will be searched.
+    If the input is not a file, then :envvar:`PATH` will be searched.
     """
     if os.path.isfile(script_name):
         return script_name
@@ -221,13 +246,17 @@ def find_script(script_name):
         if os.path.isfile(fn):
             return fn
 
-    sys.stderr.write('Could not find script %s\n' % script_name)
-    raise SystemExit(1)
+    msg = f'Could not find script {script_name!r}'
+    if exit_on_error:
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        raise FileNotFoundError(msg)
 
 
 def _python_command():
     """
-    Return a command that corresponds to :py:obj:`sys.executable`.
+    Return a command that corresponds to :py:data:`sys.executable`.
     """
     import shutil
     for abbr in 'python', 'python3':
@@ -236,10 +265,39 @@ def _python_command():
     return sys.executable
 
 
+def _normalize_profiling_targets(targets):
+    """
+    Normalize the parsed :option:`!--prof-mod` by:
+
+    * Normalizing file paths with :py:func:`find_script()`, and
+      subsequently to absolute paths.
+    * Splitting non-file paths at commas into (presumably) file paths
+      and/or dotted paths.
+    * Removing duplicates.
+    """
+    def find(path):
+        try:
+            path = find_script(path, exit_on_error=False)
+        except FileNotFoundError:
+            return None
+        return os.path.abspath(path)
+
+    results = {}
+    for chunk in targets:
+        filename = find(chunk)
+        if filename is not None:
+            results.setdefault(filename)
+            continue
+        for subchunk in chunk.split(','):
+            filename = find(subchunk)
+            results.setdefault(subchunk if filename is None else filename)
+    return list(results)
+
+
 class _restore_list:
     """
-    Restore a list like `sys.path` after running code which potentially
-    modifies it.
+    Restore a list like :py:data:`sys.path` after running code which
+    potentially modifies it.
 
     Example
     -------
@@ -281,8 +339,9 @@ class _restore_list:
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):
     """
-    Pre-parse high-priority single-argument directives like `-m module`
-    to emulate the behavior of `python [...]`.
+    Pre-parse high-priority single-argument directives like
+    :option:`!-m module` to emulate the behavior of
+    :command:`python [...]`.
 
     Examples
     --------
@@ -411,11 +470,25 @@ def main(args=None):
         parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
                             help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
                             "Minimum value is 1 (second). Defaults to disabled.")
-        parser.add_argument('-p', '--prof-mod', action='append', type=str,
-                            help="List of modules, functions and/or classes to profile specified by their name or path. "
-                            "List is comma separated, adding the current script path profiles the full script. "
-                            "Multiple copies of this flag can be supplied and the.list is extended. "
-                            "Only works with line_profiler -l, --line-by-line")
+        parser.add_argument('-p', '--prof-mod',
+                            action='append',
+                            metavar=("{path/to/script | object.dotted.path}"
+                                     "[,...]"),
+                            help="List of modules, functions and/or classes "
+                            "to profile specified by their name or path. "
+                            "These profiling targets can be supplied both as "
+                            "comma-separated items, or separately with "
+                            "multiple copies of this flag. "
+                            "Adding the current script/module profiles the "
+                            "entirety of it. "
+                            "Only works with line_profiler -l, --line-by-line.")
+        parser.add_argument('--no-preimports',
+                            action='store_true',
+                            help="Instead of eagerly importing all profiling "
+                            "targets specified via -p and profiling them, "
+                            "only profile those that are directly imported in "
+                            "the profiled code. "
+                            "Only works with line_profiler -l, --line-by-line.")
         parser.add_argument('--prof-imports', action='store_true',
                             help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
                             "Only works with line_profiler -l, --line-by-line")
@@ -460,7 +533,8 @@ def main(args=None):
 
 def _write_tempfile(source, content, options, tmpdir):
     """
-    Called by ``main()`` to handle ``kernprof -c`` and ``kernprof -``;
+    Called by :py:func:`main()` to handle :command:`kernprof -c` and
+    :command:`kernprof -`;
     not to be invoked on its own.
     """
     import textwrap
@@ -487,9 +561,81 @@ def _write_tempfile(source, content, options, tmpdir):
                                               suffix='.' + extension)
 
 
+def _write_preimports(prof, prof_mod, exclude):
+    """
+    Called by :py:func:`main()` to handle eager pre-imports;
+    not to be invoked on its own.
+    """
+    from line_profiler.autoprofile.eager_preimports import (
+        is_dotted_path, propose_names, write_eager_import_module)
+    from line_profiler.autoprofile.util_static import modpath_to_modname
+    from line_profiler.autoprofile.autoprofile import (
+        _extend_line_profiler_for_profiling_imports as upgrade_profiler)
+
+    filtered_targets = []
+    invalid_targets = []
+    for target in prof_mod:
+        if is_dotted_path(target):
+            filtered_targets.append(target)
+            continue
+        # Paths already normalized by `_normalize_profiling_targets()`
+        if not os.path.exists(target):
+            invalid_targets.append(target)
+            continue
+        if any(os.path.samefile(target, excluded) for excluded in exclude):
+            # Ignore the script to be run in eager importing
+            # (`line_profiler.autoprofile.autoprofile.run()` will handle
+            # it)
+            continue
+        modname = modpath_to_modname(target)
+        if modname is None:  # Not import-able
+            invalid_targets.append(target)
+            continue
+        filtered_targets.append(modname)
+    if invalid_targets:
+        invalid_targets = sorted(set(invalid_targets))
+        msg = ('{} profile-on-import target{} cannot be converted to '
+               'dotted-path form: {!r}'
+               .format(len(invalid_targets),
+                       '' if len(invalid_targets) == 1 else 's',
+                       invalid_targets))
+        warnings.warn(msg)
+    if not filtered_targets:
+        return
+    # - We could've done everything in-memory with `io.StringIO` and
+    #   `exec()`, but that results in indecipherable tracebacks should
+    #   anything goes wrong;
+    #   so we write to a tempfile and `execfile()` it
+    # - While this works theoretically for preserving traceback, the
+    #   catch is that the tempfile will already have been deleted by the
+    #   time the traceback is formatted;
+    #   so we have to format the traceback and manually print the
+    #   context before re-raising the error
+    upgrade_profiler(prof)
+    temp_mod_name = next(
+        name for name in propose_names(['_kernprof_eager_preimports'])
+        if name not in sys.modules)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_mod_path = os.path.join(tmpdir, temp_mod_name + '.py')
+        with open(temp_mod_path, mode='w') as fobj:
+            write_eager_import_module(filtered_targets, stream=fobj)
+        ns = {}  # Use a fresh namespace
+        try:
+            execfile(temp_mod_path, ns, ns)
+        except Exception as e:
+            tb_lines = traceback.format_tb(e.__traceback__)
+            i_last_temp_frame = max(
+                i for i, line in enumerate(tb_lines)
+                if temp_mod_path in line)
+            print('\nContext:', ''.join(tb_lines[i_last_temp_frame:]),
+                  end='', sep='\n', file=sys.stderr)
+            raise
+
+
 def _main(options, module=False):
     """
-    Called by ``main()`` for the actual execution and profiling of code;
+    Called by :py:func:`main()` for the actual execution and profiling
+    of code;
     not to be invoked on its own.
     """
     if not options.outfile:
@@ -550,6 +696,24 @@ def _main(options, module=False):
     __file__ = script_file
     __name__ = '__main__'
 
+    # If using eager pre-imports, write a dummy module which contains
+    # all those imports and marks them for profiling, then run it
+    if options.prof_mod:
+        # Note: `prof_mod` entries can be filenames (which can contain
+        # commas), so check against existing filenames before splitting
+        # them
+        options.prof_mod = _normalize_profiling_targets(options.prof_mod)
+    if not options.prof_mod:
+        options.no_preimports = True
+    if options.line_by_line and not options.no_preimports:
+        # We assume most items in `.prof_mod` to be import-able without
+        # significant side effects, but the same cannot be said if it
+        # contains the script file to be run. E.g. the script may not
+        # even have a `if __name__ == '__main__': ...` guard. So don't
+        # eager-import it.
+        exclude = set() if module else {script_file}
+        _write_preimports(prof, options.prof_mod, exclude)
+
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     original_stdout = sys.stdout
@@ -563,16 +727,8 @@ def _main(options, module=False):
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                # Note: `prof_mod` entries can be filenames (which can
-                # contain commas), so check against existing filenames
-                # before splitting them
-                prof_mod = sum(
-                    ([spec] if os.path.exists(spec) else spec.split(',')
-                     for spec in options.prof_mod),
-                    [])
-                autoprofile.run(script_file,
-                                ns,
-                                prof_mod=prof_mod,
+                autoprofile.run(script_file, ns,
+                                prof_mod=options.prof_mod,
                                 profile_imports=options.prof_imports,
                                 as_module=module is not None)
             elif module and options.builtin:
@@ -605,6 +761,9 @@ def _main(options, module=False):
                 print(f'{py_exe} -m pstats "{options.outfile}"')
             else:
                 print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+        # Fully disable the profiler
+        for _ in range(prof.enable_count):
+            prof.disable_by_count()
         # Restore the state of the global `@line_profiler.profile`
         if global_profiler:
             install_profiler(None)
