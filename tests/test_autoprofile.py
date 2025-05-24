@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import shlex
@@ -720,4 +721,12 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
         proc.check_returncode()
 
     for func in all_checked_funcs:
-        assert (f'Function: {func}' in raw_output) == (func in profiled_funcs)
+        if sys.version_info[:2] >= (3, 11) and func != 'function':
+            # Match qualnames, see PR #345
+            prefix = r'.*\.'
+        else:
+            prefix = ''
+        in_output = re.search(f'^Function: {prefix}{func}',
+                              raw_output,
+                              re.MULTILINE)
+        assert bool(in_output) == (func in profiled_funcs)
