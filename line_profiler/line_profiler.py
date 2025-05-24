@@ -43,6 +43,17 @@ C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.MethodWrapperType,
                           types.WrapperDescriptorType)
 
+#: Default scoping policies:
+#:
+#: * Profile sibling and descendant functions
+#:   (:py:attr:`ScopingPolicy.SIBLINGS`)
+#: * Descend ingo sibling and descendant classes
+#:   (:py:attr:`ScopingPolicy.SIBLINGS`)
+#: * Don't descend into modules (:py:attr:`ScopingPolicy.EXACT`)
+DEFAULT_SCOPING_POLICIES = types.MappingProxyType({'func': 'siblings',
+                                                   'class': 'siblings',
+                                                   'module': 'exact'})
+
 is_function = inspect.isfunction
 
 
@@ -149,7 +160,7 @@ class ScopingPolicy(StringEnum):
             Since imported submodule module objects are by default
             placed into the namespace of their parent-package module
             objects, this functions largely identical to
-            :py:attr:`ScopingPolicy.CHILDREN` for descension from module
+            :py:attr:`ScopingPolicy.CHILDREN` for descent from module
             objects into other modules objects.
 
     :py:attr:`ScopingPolicy.SIBLINGS`
@@ -172,7 +183,7 @@ class ScopingPolicy(StringEnum):
 
         Note:
             This is probably a *very* bad idea for module scoping,
-            potentially resulting in accidentally recusing through a
+            potentially resulting in accidentally recursing through a
             significant portion of loaded modules;
             proceed with care.
 
@@ -250,19 +261,23 @@ class ScopingPolicy(StringEnum):
         return method(namespace, is_class=(obj_type == 'class'))
 
     @classmethod
-    def to_policies(cls, policies):
+    def to_policies(cls, policies=None):
         """
         Normalize ``policies`` into a dictionary of policies for various
         object types.
 
         Args:
-            policies (Union[str, ScopingPolicy, ScopingPolicyDict]):
+            policies (Union[str, ScopingPolicy, \
+ScopingPolicyDict, None]):
                 :py:class:`ScopingPolicy`, string convertible thereto
                 (case-insensitive), or a mapping containing such values
-                and the keys as outlined in the return value
+                and the keys as outlined in the return value;
+                the default :py:const:`None` is equivalent to
+                :py:data:`DEFAULT_SCOPING_POLICIES`.
 
         Returns:
-            normalized_policies (dict[str, ScopingPolicy]):
+            normalized_policies (dict[Literal['func', 'class', \
+'module'], ScopingPolicy]):
                 Dictionary with the following key-value pairs:
 
                 ``'func'``
@@ -300,6 +315,8 @@ class ScopingPolicy(StringEnum):
             ...
             KeyError: 'func'
         """
+        if policies is None:
+            policies = DEFAULT_SCOPING_POLICIES
         if isinstance(policies, str):
             policy = cls(policies)
             return _ScopingPolicyDict(
@@ -553,8 +570,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             warnings.warn(msg, stacklevel=2)
         return count
 
-    def add_class(
-            self, cls, *, scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
+    def add_class(self, cls, *, scoping_policy=None, wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a class' local namespace and profile them.
@@ -562,17 +578,26 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             cls (type):
                 Class to be profiled.
-            scoping_policy (Union[str, ScopingPolicy, ScopingPolicyDict]):
+            scoping_policy (Union[str, ScopingPolicy, \
+ScopingPolicyDict, None]):
                 Whether (and how) to match the scope of members and
                 decide on whether to add them:
-                see the documentation for :py:class:`ScopingPolicy`.
-                Strings are converted to :py:class:`ScopingPolicy`
-                instances in a case-insensitive manner.
-                Can also be a mapping from the keys ``'func'``,
-                ``'class'``, and ``'module'`` to
-                :py:class:`ScopingPolicy` objects or strings convertible
-                thereto, in which case different policies can be enacted
-                for these object types.
+
+                :py:class:`str` (incl. :py:class:`ScopingPolicy`):
+                    Strings are converted to :py:class:`ScopingPolicy`
+                    instances in a case-insensitive manner, and the same
+                    policy applies to all members.
+
+                ``{'func': ..., 'class': ..., 'module': ...}``
+                    Mapping specifying individual policies to be enacted
+                    for the corresponding member types.
+
+                :py:const:`None`
+                    The default, equivalent to
+                    :py:data:`DEFAULT_SCOPING_POLICIES`.
+
+                See :py:class:`ScopingPolicy` and
+                :py:meth:`~ScopingPolicy.to_policies` for details.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -589,8 +614,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                                    module_scoping_policy=policies['module'],
                                    wrap=wrap)
 
-    def add_module(
-            self, mod, *, scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
+    def add_module(self, mod, *, scoping_policy=None, wrap=False):
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a module's local namespace and profile them.
@@ -598,17 +622,26 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             mod (ModuleType):
                 Module to be profiled.
-            scoping_policy (Union[str, ScopingPolicy, ScopingPolicyDict]):
+            scoping_policy (Union[str, ScopingPolicy, \
+ScopingPolicyDict, None]):
                 Whether (and how) to match the scope of members and
                 decide on whether to add them:
-                see the documentation for :py:class:`ScopingPolicy`.
-                Strings are converted to :py:class:`ScopingPolicy`
-                instances in a case-insensitive manner.
-                Can also be a mapping from the keys ``'func'``,
-                ``'class'``, and ``'module'`` to
-                :py:class:`ScopingPolicy` objects or strings convertible
-                thereto, in which case different policies can be enacted
-                for these object types.
+
+                :py:class:`str` (incl. :py:class:`ScopingPolicy`):
+                    Strings are converted to :py:class:`ScopingPolicy`
+                    instances in a case-insensitive manner, and the same
+                    policy applies to all members.
+
+                ``{'func': ..., 'class': ..., 'module': ...}``
+                    Mapping specifying individual policies to be enacted
+                    for the corresponding member types.
+
+                :py:const:`None`
+                    The default, equivalent to
+                    :py:data:`DEFAULT_SCOPING_POLICIES`.
+
+                See :py:class:`ScopingPolicy` and
+                :py:meth:`~ScopingPolicy.to_policies` for details.
             wrap (bool):
                 Whether to replace the wrapped members with wrappers
                 which automatically enable/disable the profiler when
@@ -954,7 +987,7 @@ def load_stats(filename):
 
 def main():
     """
-    The line profiler CLI to view output from ``kernprof -l``.
+    The line profiler CLI to view output from :command:`kernprof -l`.
     """
     def positive_float(value):
         val = float(value)

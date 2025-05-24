@@ -1,10 +1,8 @@
 import inspect
-from ..line_profiler import ScopingPolicy
 
 
-def add_imported_function_or_module(
-        self, item, *,
-        scoping_policy=ScopingPolicy.SIBLINGS, wrap=False):
+def add_imported_function_or_module(self, item, *,
+                                    scoping_policy=None, wrap=False):
     """
     Method to add an object to
     :py:class:`~.line_profiler.LineProfiler` to be profiled.
@@ -17,18 +15,27 @@ def add_imported_function_or_module(
     Args:
         item (Union[Callable, Type, ModuleType]):
             Object to be profiled.
-        scoping_policy (Union[ScopingPolicy, str]):
-            Whether (and how) to match the scope of member classes to
-            ``item`` (if a class or module) and decide on whether to add
-            them;
-            see the documentation for :py:class:`~.ScopingPolicy` for
-            details.
-            Strings are converted to :py:class:`~.ScopingPolicy`
-            instances in a case-insensitive manner.
-            Can also be a mapping from the keys ``'func'``, ``'class'``,
-            and ``'module'`` to :py:class:`~.ScopingPolicy` objects or
-            strings convertible thereto, in which case different
-            policies can be enacted for these object types.
+        scoping_policy (Union[ScopingPolicy, str, ScopingPolicyDict, \
+None]):
+            Whether (and how) to match the scope of members and decide
+            on whether to add them:
+
+            :py:class:`str` (incl. :py:class:`~.ScopingPolicy`):
+                Strings are converted to :py:class:`~.ScopingPolicy`
+                instances in a case-insensitive manner, and the same
+                policy applies to all members.
+
+            ``{'func': ..., 'class': ..., 'module': ...}``
+                Mapping specifying individual policies to be enacted for
+                the corresponding member types.
+
+            :py:const:`None`
+                The default, equivalent to
+                :py:data:`~line_profiler.line_profiler\
+.DEFAULT_SCOPING_POLICIES`.
+
+            See :py:class:`line_profiler.line_profiler.ScopingPolicy`
+            and :py:meth:`~.ScopingPolicy.to_policies` for details.
         wrap (bool):
             Whether to replace the wrapped members with wrappers which
             automatically enable/disable the profiler when called.
@@ -37,9 +44,14 @@ def add_imported_function_or_module(
         1 if any function is added to the profiler, 0 otherwise.
 
     See also:
+        :py:data:`~line_profiler.line_profiler\
+.DEFAULT_SCOPING_POLICIES`,
         :py:meth:`.LineProfiler.add_callable()`,
         :py:meth:`.LineProfiler.add_module()`,
-        :py:meth:`.LineProfiler.add_class()`
+        :py:meth:`.LineProfiler.add_class()`,
+        :py:class:`~.ScopingPolicy`,
+        :py:meth:`ScopingPolicy.to_policies() \
+<line_profiler.line_profiler.ScopingPolicy.to_policies>`
     """
     if inspect.isclass(item):
         count = self.add_class(item, scoping_policy=scoping_policy, wrap=wrap)

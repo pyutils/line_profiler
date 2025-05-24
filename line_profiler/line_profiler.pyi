@@ -64,10 +64,10 @@ class ScopingPolicy(StringEnum):
         ...
 
     @classmethod
-    def to_policies(cls,
-                    policies: (str
-                               | 'ScopingPolicy'
-                               | ScopingPolicyDict)) -> _ScopingPolicyDict:
+    def to_policies(
+        cls,
+        policies: (str | 'ScopingPolicy'
+                   | ScopingPolicyDict | None) = None) -> _ScopingPolicyDict:
         ...
 
 
@@ -118,17 +118,15 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def add_module(
             self, mod: ModuleType, *,
-            scoping_policy: (ScopingPolicy
-                             | str
-                             | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
+            scoping_policy: (
+                ScopingPolicy | str | ScopingPolicyDict | None) = None,
             wrap: bool = False) -> int:
         ...
 
     def add_class(
             self, cls: type, *,
-            scoping_policy: (ScopingPolicy
-                             | str
-                             | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
+            scoping_policy: (
+                ScopingPolicy | str | ScopingPolicyDict | None) = None,
             wrap: bool = False) -> int:
         ...
 

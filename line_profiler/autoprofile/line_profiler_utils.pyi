@@ -9,9 +9,8 @@ if TYPE_CHECKING:  # Stub-only annotations
 @overload
 def add_imported_function_or_module(
         self, item: CLevelCallable | Any,
-        scoping_policy: (ScopingPolicy
-                         | str
-                         | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
+        scoping_policy: (
+            ScopingPolicy | str | ScopingPolicyDict | None) = None,
         wrap: bool = False) -> Literal[0]:
     ...
 
@@ -19,8 +18,7 @@ def add_imported_function_or_module(
 @overload
 def add_imported_function_or_module(
         self, item: CallableLike | type | ModuleType,
-        scoping_policy: (ScopingPolicy
-                         | str
-                         | ScopingPolicyDict) = ScopingPolicy.SIBLINGS,
+        scoping_policy: (
+            ScopingPolicy | str | ScopingPolicyDict | None) = None,
         wrap: bool = False) -> Literal[0, 1]:
     ...
