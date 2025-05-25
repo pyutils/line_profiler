@@ -190,16 +190,18 @@ if CAN_USE_SYS_MONITORING:
 
 def label(code):
     """
-    Return a (filename, first_lineno, _name) tuple for a given code object.
+    Return a ``(filename, first_lineno, _name)`` tuple for a given code
+    object.
 
-    This is the similar labelling as used by the cProfile module in Python 2.5.
+    This is the similar labelling as used by the :py:mod:`cProfile`
+    module in Python 2.5.
 
     Note:
-        In Python >=3.11 we use we return qualname for _name.
+        In Python >= 3.11 we use we return qualname for ``_name``.
         In older versions of Python we just return name.
     """
     if isinstance(code, str):
-        return ('~', 0, code)    # built-in functions ('~' sorts at the end)
+        return ('~', 0, code)  # built-in functions ('~' sorts at the end)
     else:
         if HAS_CO_QUALNAME:
             return (code.co_filename, code.co_firstlineno, code.co_qualname)
@@ -255,7 +257,7 @@ def disable_line_events(trace_func: Callable) -> Callable:
 
 cpdef _code_replace(func, co_code):
     """
-    Implements CodeType.replace for Python < 3.8
+    Implements :py:mod:`types.CodeType.replace` for Python < 3.8
     """
     try:
         code = func.__code__
@@ -283,11 +285,13 @@ class LineStats(object):
 
     Attributes:
 
-        timings (dict):
-            Mapping from (filename, first_lineno, function_name) of the
-            profiled function to a list of (lineno, nhits, total_time) tuples
-            for each profiled line. total_time is an integer in the native
-            units of the timer.
+        timings (dict[tuple[str, int, str], \
+list[tuple[int, int, int]]]):
+            Mapping from ``(filename, first_lineno, function_name)`` of
+            the profiled function to a list of
+            ``(lineno, nhits, total_time)`` tuples for each profiled
+            line. ``total_time`` is an integer in the native units of
+            the timer.
 
         unit (float):
             The number of seconds per timer unit.
@@ -343,8 +347,26 @@ cdef class ThreadState:
         self._handle_exit_event(
             sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
 
+    cpdef handle_raise_event(
+            self, object code, int instruction_offset, object exception):
+        """
+        Raise-event (`sys.monitoring.events.RAISE`) callback passed
+        to :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.RAISE, code, instruction_offset, exception)
+
+    cpdef handle_reraise_event(
+            self, object code, int instruction_offset, object exception):
+        """
+        Reraise-event (`sys.monitoring.events.RERAISE`) callback passed
+        to :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.RERAISE, code, instruction_offset, exception)
+
     cpdef _handle_exit_event(
-            self, int event_id, object code, int offset, object retval):
+            self, int event_id, object code, int offset, object obj):
         """
         Base for the frame-exit-event (e.g. via returning or yielding)
         callback passed to :py:func:`sys.monitoring.register_callback`.
@@ -355,7 +377,7 @@ cdef class ThreadState:
         if self.wrap_trace:  # Call wrapped callback
             callback = self.mon_callbacks.get(event_id)
             if callback is not None:
-                callback(code, offset, retval)
+                callback(code, offset, obj)
 
     cpdef _handle_enable_event(self, prof):
         cdef TraceCallback* legacy_callback
@@ -409,12 +431,16 @@ cdef class ThreadState:
         events = (mon.get_events(mon.PROFILER_ID)
                   | mon.events.LINE
                   | mon.events.PY_RETURN
-                  | mon.events.PY_YIELD)
+                  | mon.events.PY_YIELD
+                  | mon.events.RAISE
+                  | mon.events.RERAISE)
         mon.set_events(mon.PROFILER_ID, events)
         for event_id, callback in [
                 (mon.events.LINE, self.handle_line_event),
                 (mon.events.PY_RETURN, self.handle_return_event),
-                (mon.events.PY_YIELD, self.handle_yield_event)]:
+                (mon.events.PY_YIELD, self.handle_yield_event),
+                (mon.events.RAISE, self.handle_raise_event),
+                (mon.events.RERAISE, self.handle_reraise_event)]:
             self.mon_callbacks[event_id] = mon.register_callback(
                 mon.PROFILER_ID, event_id, callback)
 
@@ -578,7 +604,9 @@ cdef class LineProfiler:
                 func_id = id(func.__func__)
             except AttributeError:
                 import warnings
-                warnings.warn("Could not extract a code object for the object %r" % (func,))
+                warnings.warn(
+                    "Could not extract a code object for the object %r"
+                    % (func,))
                 return
 
         # Note: if we are to alter the code object, other profilers
@@ -723,8 +751,9 @@ cdef class LineProfiler:
         self.enable_count += 1
 
     def disable_by_count(self):
-        """ Disable the profiler if the number of disable requests matches the
-        number of enable requests.
+        """
+        Disable the profiler if the number of disable requests matches
+        (or exceeds) the number of enable requests.
         """
         if self.enable_count > 0:
             self.enable_count -= 1
@@ -766,8 +795,9 @@ cdef class LineProfiler:
     @property
     def code_map(self):
         """
-        line_profiler 4.0 no longer directly maintains code_map, but this will
-        construct something similar for backwards compatibility.
+        :py:mod:`line_profiler` 4.0 no longer directly maintains
+        :py:attr:`~.code_map`, but this will construct something similar
+        for backwards compatibility.
         """
         c_code_map = self.c_code_map
         code_hash_map = self.code_hash_map
@@ -787,8 +817,9 @@ cdef class LineProfiler:
     @property
     def last_time(self):
         """
-        line_profiler 4.0 no longer directly maintains last_time, but this will
-        construct something similar for backwards compatibility.
+        :py:mod:`line_profiler` 4.0 no longer directly maintains
+        :py:attr:`~.last_time`, but this will construct something similar
+        for backwards compatibility.
         """
         c_last_time = self.c_last_time
         py_last_time = {}
