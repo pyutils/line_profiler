@@ -73,8 +73,7 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p {path/to/script | object.dotted.path}[,...]]
-                    [--recursive-prof-mod [{path/to/script | object.dotted.path}[,...]]] [--no-preimports] [--prof-imports]
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports]
                     {path/to/script | -m path.to.module | -c "literal code"} ...
 
     Run and profile a python script.
@@ -101,11 +100,8 @@ which displays:
                             disabled.
       -p, --prof-mod {path/to/script | object.dotted.path}[,...]
                             List of modules, functions and/or classes to profile specified by their name or path. These profiling targets can be supplied both as comma-separated
-                            items, or separately with multiple copies of this flag. Adding the current script/module profiles the entirety of it. Only works with line_profiler -l,
-                            --line-by-line.
-      --recursive-prof-mod [{path/to/script | object.dotted.path}[,...]]
-                            List of packages to recurse into, profiling each of the submodules. The semantics are the same as --prof-mod. Only works with line_profiler -l, --line-
-                            by-line.
+                            items, or separately with multiple copies of this flag. Packages are automatically recursed into unless they are specified with `<pkg>.__init__`. Adding
+                            the current script/module profiles the entirety of it. Only works with line_profiler -l, --line-by-line.
       --no-preimports       Instead of eagerly importing all profiling targets specified via -p and profiling them, only profile those that are directly imported in the profiled
                             code. Only works with line_profiler -l, --line-by-line.
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
@@ -128,6 +124,7 @@ import sys
 import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
+import pkgutil
 import tempfile
 import time
 import traceback
@@ -484,18 +481,10 @@ def main(args=None):
                             "These profiling targets can be supplied both as "
                             "comma-separated items, or separately with "
                             "multiple copies of this flag. "
+                            "Packages are automatically recursed into unless "
+                            "they are specified with `<pkg>.__init__`. "
                             "Adding the current script/module profiles the "
                             "entirety of it. "
-                            "Only works with line_profiler -l, --line-by-line.")
-        parser.add_argument('--recursive-prof-mod',
-                            action='append',
-                            const=True,
-                            metavar=("{path/to/script | object.dotted.path}"
-                                     "[,...]"),
-                            nargs='?',
-                            help="List of packages to recurse into, profiling "
-                            "each of the submodules. The semantics are the "
-                            "same as --prof-mod. "
                             "Only works with line_profiler -l, --line-by-line.")
         parser.add_argument('--no-preimports',
                             action='store_true',
@@ -576,7 +565,7 @@ def _write_tempfile(source, content, options, tmpdir):
                                               suffix='.' + extension)
 
 
-def _write_preimports(prof, prof_mod, recursive_prof_mod, exclude):
+def _write_preimports(prof, prof_mod, exclude):
     """
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
@@ -587,41 +576,41 @@ def _write_preimports(prof, prof_mod, recursive_prof_mod, exclude):
     from line_profiler.autoprofile.autoprofile import (
         _extend_line_profiler_for_profiling_imports as upgrade_profiler)
 
-    filtered_prof_mod = []
-    filtered_rpm = []
-    to_filter = [(filtered_prof_mod, prof_mod)]
-    if recursive_prof_mod in (True, False):
-        filtered_rpm = recursive_prof_mod
-    else:
-        to_filter.append((filtered_rpm, recursive_prof_mod))
-    invalid_targets = set()
-    for filtered, targets in to_filter:
-        for target in targets:
-            if is_dotted_path(target):
-                filtered.append(target)
-                continue
+    filtered_targets = []
+    recurse_targets = []
+    invalid_targets = []
+    for target in prof_mod:
+        if is_dotted_path(target):
+            modname = target
+        else:
             # Paths already normalized by `_normalize_profiling_targets()`
             if not os.path.exists(target):
-                invalid_targets.add(target)
+                invalid_targets.append(target)
                 continue
             if any(os.path.samefile(target, excluded) for excluded in exclude):
                 # Ignore the script to be run in eager importing
                 # (`line_profiler.autoprofile.autoprofile.run()` will handle
                 # it)
                 continue
-            modname = modpath_to_modname(target)
-            if modname is None:  # Not import-able
-                invalid_targets.add(target)
-                continue
-            filtered.append(modname)
+            modname = modpath_to_modname(target, hide_init=False)
+        if modname is None:  # Not import-able
+            invalid_targets.append(target)
+            continue
+        if modname.endswith('.__init__'):
+            modname = modname.rpartition('.')[0]
+            targets = filtered_targets
+        else:
+            targets = recurse_targets
+        targets.append(modname)
     if invalid_targets:
+        invalid_targets = sorted(set(invalid_targets))
         msg = ('{} profile-on-import target{} cannot be converted to '
                'dotted-path form: {!r}'
                .format(len(invalid_targets),
                        '' if len(invalid_targets) == 1 else 's',
-                       sorted(invalid_targets)))
+                       invalid_targets))
         warnings.warn(msg)
-    if not filtered_prof_mod:
+    if not (filtered_targets or recurse_targets):
         return
     # - We could've done everything in-memory with `io.StringIO` and
     #   `exec()`, but that results in indecipherable tracebacks should
@@ -639,8 +628,8 @@ def _write_preimports(prof, prof_mod, recursive_prof_mod, exclude):
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_mod_path = os.path.join(tmpdir, temp_mod_name + '.py')
         with open(temp_mod_path, mode='w') as fobj:
-            write_eager_import_module(filtered_prof_mod,
-                                      recurse=filtered_rpm,
+            write_eager_import_module(filtered_targets,
+                                      recurse=recurse_targets,
                                       stream=fobj)
         ns = {}  # Use a fresh namespace
         try:
@@ -721,29 +710,12 @@ def _main(options, module=False):
 
     # If using eager pre-imports, write a dummy module which contains
     # all those imports and marks them for profiling, then run it
-    all_prof_mod_targets = []
     if options.prof_mod:
         # Note: `prof_mod` entries can be filenames (which can contain
         # commas), so check against existing filenames before splitting
         # them
         options.prof_mod = _normalize_profiling_targets(options.prof_mod)
-        all_prof_mod_targets.extend(options.prof_mod)
-    if options.recursive_prof_mod:
-        rpm_has_true = any(target in (True,)
-                           for target in options.recursive_prof_mod)
-        rpm_targets = _normalize_profiling_targets(
-            target for target in options.recursive_prof_mod
-            if target not in (True,))
-        if rpm_has_true and not rpm_targets:
-            options.recursive_prof_mod = True
-        elif rpm_targets:
-            options.recursive_prof_mod = rpm_targets
-            all_prof_mod_targets.extend(rpm_targets)
-        else:
-            options.recursive_prof_mod = False
-    else:
-        options.recursive_prof_mod = False
-    if not all_prof_mod_targets:
+    if not options.prof_mod:
         options.no_preimports = True
     if options.line_by_line and not options.no_preimports:
         # We assume most items in `.prof_mod` to be import-able without
@@ -752,10 +724,7 @@ def _main(options, module=False):
         # even have a `if __name__ == '__main__': ...` guard. So don't
         # eager-import it.
         exclude = set() if module else {script_file}
-        _write_preimports(prof,
-                          options.prof_mod,
-                          options.recursive_prof_mod,
-                          exclude)
+        _write_preimports(prof, options.prof_mod, exclude)
 
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
@@ -768,10 +737,10 @@ def _main(options, module=False):
             rmod_ = functools.partial(run_module,
                                       run_name='__main__', alter_sys=True)
             ns = locals()
-            if all_prof_mod_targets and options.line_by_line:
+            if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
                 autoprofile.run(script_file, ns,
-                                prof_mod=all_prof_mod_targets,
+                                prof_mod=options.prof_mod,
                                 profile_imports=options.prof_imports,
                                 as_module=module is not None)
             elif module and options.builtin:

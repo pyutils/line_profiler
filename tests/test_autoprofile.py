@@ -200,7 +200,10 @@ def _write_demo_module(temp_dpath):
     (temp_dpath / 'test_mod/subpkg').ensuredir()
 
     (temp_dpath / 'test_mod/__init__.py').touch()
-    (temp_dpath / 'test_mod/subpkg/__init__.py').touch()
+    (temp_dpath / 'test_mod/subpkg/__init__.py').write_text(ub.codeblock(
+        '''
+        from .submod3 import add_three
+        '''))
 
     (temp_dpath / 'test_mod/__main__.py').write_text(ub.codeblock(
         '''
@@ -503,7 +506,14 @@ def test_autoprofile_exec_package(use_kernprof_exec, prof_mod,
       '--prof-imports',
       {'add_one', 'add_two', 'add_four', 'add_operator', '_main'}),
      (False, None, '--prof-imports', {}),
-     (True, None, '--prof-imports', {})])
+     (True, None, '--prof-imports', {}),
+     # Packages are descended into by default, unless they are specified
+     # with `<pkg>.__init__`
+     (False, 'test_mod', '',
+      {'add_one', 'add_two', 'add_three', 'add_four', 'add_operator',
+       '_main'}),
+     (False, 'test_mod.subpkg', '', {'add_three', 'add_four', '_main'}),
+     (False, 'test_mod.subpkg.__init__', '', {'add_three'})])
 def test_autoprofile_exec_module(use_kernprof_exec, prof_mod,
                                  flags, profiled_funcs):
     """
