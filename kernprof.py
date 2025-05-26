@@ -73,7 +73,8 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports]
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p {path/to/script | object.dotted.path}[,...]]
+                    [--recursive-prof-mod [{path/to/script | object.dotted.path}[,...]]] [--no-preimports] [--prof-imports]
                     {path/to/script | -m path.to.module | -c "literal code"} ...
 
     Run and profile a python script.
@@ -101,6 +102,10 @@ which displays:
       -p, --prof-mod {path/to/script | object.dotted.path}[,...]
                             List of modules, functions and/or classes to profile specified by their name or path. These profiling targets can be supplied both as comma-separated
                             items, or separately with multiple copies of this flag. Adding the current script/module profiles the entirety of it. Only works with line_profiler -l,
+                            --line-by-line.
+      --recursive-prof-mod [{path/to/script | object.dotted.path}[,...]]
+                            List of packages to recurse into, profiling each of the submodules. The semantics are the same as --prof-mod. Only works with line_profiler -l, --line-
+                            by-line.
       --no-preimports       Instead of eagerly importing all profiling targets specified via -p and profiling them, only profile those that are directly imported in the profiled
                             code. Only works with line_profiler -l, --line-by-line.
       --prof-imports        If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. Only works with line_profiler -l, --line-by-line
@@ -488,7 +493,10 @@ def main(args=None):
                             metavar=("{path/to/script | object.dotted.path}"
                                      "[,...]"),
                             nargs='?',
-                            help="...")  # TODO
+                            help="List of packages to recurse into, profiling "
+                            "each of the submodules. The semantics are the "
+                            "same as --prof-mod. "
+                            "Only works with line_profiler -l, --line-by-line.")
         parser.add_argument('--no-preimports',
                             action='store_true',
                             help="Instead of eagerly importing all profiling "
