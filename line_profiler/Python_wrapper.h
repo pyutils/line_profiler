@@ -5,18 +5,16 @@
 
 #include "Python.h"
 
+// Ensure PyFrameObject availability as a concretely declared struct
 // CPython 3.11 broke some stuff by moving PyFrameObject :(
-#if PY_VERSION_HEX >= 0x030b00a6
+#if PY_VERSION_HEX >= 0x030b00a6  // 3.11.0a6
     #ifndef Py_BUILD_CORE
         #define Py_BUILD_CORE 1
     #endif
     #include "internal/pycore_frame.h"
     #include "cpython/code.h"
     #include "pyframe.h"
-#endif
-
-// Ensure PyFrameObject availability
-#if PY_VERSION_HEX < 0x030900b1  // 3.9.0b1
+#else
     #include "frameobject.h"
 #endif
 
