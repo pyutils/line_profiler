@@ -16,6 +16,7 @@ import inspect
 import linecache
 import os
 import subprocess
+import shlex
 import sys
 import time
 import tempfile
@@ -23,9 +24,10 @@ import textwrap
 import threading
 import pytest
 from ast import literal_eval
+from contextlib import nullcontext
 from io import StringIO
 from types import FrameType
-from typing import Any, Callable, List, Literal, Union
+from typing import Any, Optional, Union, Callable, List, Literal
 from line_profiler import LineProfiler
 
 
@@ -41,10 +43,12 @@ def strip(s: str) -> str:
     return textwrap.dedent(s).strip('\n')
 
 
-def isolate_test_in_subproc(func: Callable) -> Callable:
+def isolate_test_in_subproc(
+        func: Optional[Callable] = None, debug: bool = DEBUG) -> Callable:
     """
     Run the test function with the supplied arguments in a subprocess so
     that it doesn't pollute the state of the current interpretor.
+    If `debug` is true, run with `pytest` for more detailed traceback.
 
     Notes
     -----
@@ -54,6 +58,9 @@ def isolate_test_in_subproc(func: Callable) -> Callable:
     - All the arguments should be `ast.literal_eval()`-able.
     - Beware of using fixtures for these tests.
     """
+    if func is None:
+        return functools.partial(isolate_test_in_subproc, debug=debug)
+
     def message(msg: str, header: str, *,
                 short: bool = False, **kwargs) -> None:
         header = strip(header)
@@ -76,35 +83,46 @@ def isolate_test_in_subproc(func: Callable) -> Callable:
         assert literal_eval(repr(kwargs)) == kwargs
 
         # Write a test script
-        args_repr = ', '.join([repr(arg) for arg in args]
-                              + [f'{k}={v!r}' for k, v in kwargs.items()])
+        args_reprs = ([repr(a) for a in args]
+                      + [f'{k}={v!r}' for k, v in kwargs.items()])
+        if len(args_reprs) > 1:
+            args_repr = '\n' + textwrap.indent(',\n'.join(args_reprs), ' ' * 8)
+        else:
+            args_repr = ', '.join(args_reprs)
         code_template = strip("""
         import sys
         sys.path.insert(0,  # Let the test import from this file
                         {path!r})
         from {mod} import (  # Import the test func from this file
-            {test})
+            {test} as _{test})
+
+        def {test}():
+            _{test}.__subproc_test_inner__({args})
 
         if __name__ == '__main__':
-            {test}.__subproc_test_inner__({args})
+            {test}()
         """)
         test_dir, test_filename = os.path.split(__file__)
         test_module_name, dot_py = os.path.splitext(test_filename)
         assert dot_py == '.py'
         code = code_template.format(path=test_dir, mod=test_module_name,
                                     test=test_func, args=args_repr)
-        message(code, 'Test code run')
-
         # Run the test script in a subprocess
+        if debug:  # Use `pytest` to get perks like assertion rewriting
+            cmd = [sys.executable, '-m', 'pytest', '-s']
+        else:
+            cmd = [sys.executable]
         with tempfile.TemporaryDirectory() as tmpdir:
             curdir = os.path.abspath(os.curdir)
             os.chdir(tmpdir)
+            fname = 'my_test.py'
+            cmd.append(fname)
+            message(code, f'Test code run ({shlex.quote(fname)})')
+            message(shlex.join(cmd), 'Executed command')
             try:
-                fname = 'my_test.py'
                 with open(fname, mode='w') as fobj:
                     print(code, file=fobj)
-                proc = subprocess.run([sys.executable, fname],
-                                      capture_output=True, text=True)
+                proc = subprocess.run(cmd, capture_output=True, text=True)
             finally:
                 os.chdir(curdir)
         if proc.stdout:
@@ -142,6 +160,19 @@ def baz(n: int) -> int:
     return result
 
 
+class suspend_tracing:
+    def __init__(self):
+        self.callback = None
+
+    def __enter__(self):
+        self.callback = sys.gettrace()
+        sys.settrace(None)
+
+    def __exit__(self, *_, **__):
+        sys.settrace(self.callback)
+        self.callback = None
+
+
 def get_incr_logger(logs: List[str], func: Literal[foo, bar, baz] = foo, *,
                     bugged: bool = False,
                     report_return: bool = False) -> TracingFunc:
@@ -153,7 +184,8 @@ def get_incr_logger(logs: List[str], func: Literal[foo, bar, baz] = foo, *,
     If `report_return` is true, a 'Returning from <func>()' log entry
     is written on return.
     '''
-    def callback(frame: FrameType, event: Event, _) -> Union[TracingFunc, None]:
+    def callback(
+            frame: FrameType, event: Event, _) -> Union[TracingFunc, None]:
         if DEBUG and callback.emit_debug:
             print('{0.co_filename}:{1.f_lineno} - {0.co_name} ({2})'
                   .format(frame.f_code, frame, event))
@@ -201,7 +233,8 @@ def get_return_logger(logs: List[str], *, bugged: bool = False) -> TracingFunc:
     panics and errors out when returning from `bar`, thus unsetting the
     `sys` trace.
     '''
-    def callback(frame: FrameType, event: Event, _) -> Union[TracingFunc, None]:
+    def callback(
+            frame: FrameType, event: Event, _) -> Union[TracingFunc, None]:
         if DEBUG and callback.emit_debug:
             print('{0.co_filename}:{1.f_lineno} - {0.co_name} ({2})'
                   .format(frame.f_code, frame, event))
@@ -500,7 +533,8 @@ def test_wrapping_thread_local_callbacks(label: str,
             _test_helper_wrapping_thread_local_callbacks, profile))
         # This is run on the main thread
         results.add(_test_helper_wrapping_thread_local_callbacks(profile))
-        results.update(future.result()
+        results.update(
+            future.result()
             for future in concurrent.futures.as_completed(tasks))
     assert results == expected_results, (f'expected {expected_results!r}, '
                                          f'got {results!r}')
@@ -517,3 +551,74 @@ def test_wrapping_thread_local_callbacks(label: str,
                  if line.endswith('+= ' + var))
         nhits = int(line.split()[1])
         assert nhits == 5, f'expected 5 profiler hits, got {nhits!r}'
+
+
+@pytest.mark.parametrize(
+    ('stay_in_scope', 'set_frame_local_trace', 'n', 'nhits'),
+    [(True, True, 100, {0: 2,  # Both calls are traced
+                        5: 0,  # Tracing suspended
+                        7: 100}),  # Tracing restored (both calls)
+     # If `set_frame_local_trace` is false, tracing is suspended for the
+     # rest of the frame
+     (True, False, 100, {0: 2, 5: 0, 7: 0}),
+     # Calling a function always triggers `<trace>.__call__()`
+     (False, True, 100, {0: 1,  # Only one of the calls is traced
+                         2: 100}),  # 100 hits on the line in the loop
+     (False, False, 100, {0: 1, 2: 100})])
+@isolate_test_in_subproc
+def test_python_level_trace_manipulation(
+        stay_in_scope, set_frame_local_trace, n, nhits):
+    """
+    Test that:
+    - When Python code retrieves the trace object set by `line_profiler`
+      with `sys.gettrace()` and later restores it via `sys.settrace()`,
+      it doesn't break anything, and
+    - Resumption of line profiling in the same frame thereafter happens
+      if and only if `set_frame_local_trace` is true.
+    """
+    prof = LineProfiler(set_frame_local_trace=set_frame_local_trace)
+
+    def func_no_break(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+
+    @prof
+    def func_break_in_middle(n):
+        x = 0
+        n_not_traced = n // 2
+        n_traced = n - n_not_traced
+        with suspend_tracing():
+            for n in range(1, n_not_traced + 1):
+                x += n
+        for n in range(n_not_traced + 1, n_not_traced + n_traced + 1):
+            x += n
+        return x
+
+    prof.add_callable(func_no_break)
+    expected = n * (n + 1) // 2
+
+    if stay_in_scope:
+        # Do two calls, each with tracing suspended for half of the loop
+        outer_ctx = inner_ctx = nullcontext()
+        func = func_break_in_middle
+    else:
+        # Do one call with tracing suspended, then another with it
+        # restored
+        outer_ctx = prof
+        inner_ctx = suspend_tracing()
+        func = func_no_break
+    with outer_ctx:
+        with inner_ctx:
+            assert func(n) == expected
+        assert func(n) == expected
+    timings = prof.get_stats().timings
+    print(timings)
+    entries = next(entries for (*_, func_name), entries in timings.items()
+                   if func_name.endswith(func.__name__))
+    body_start_line = min(lineno for (lineno, *_) in entries)
+    all_nhits = {lineno - body_start_line: _nhits
+                 for (lineno, _nhits, _) in entries}
+    all_nhits = {lineno: all_nhits.get(lineno, 0) for lineno in nhits}
+    assert all_nhits == nhits
