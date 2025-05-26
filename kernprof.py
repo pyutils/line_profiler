@@ -110,10 +110,17 @@ NOTE:
 
     New in 4.3.0: For more intuitive profiling behavior, profiling
     targets in :option:`!--prof-mod` (except the profiled script/code)
-    are now eagerly pre-imported to be profiled
-    (see :py:mod:`line_profiler.autoprofile.eager_preimports`),
-    regardless of whether those imports directly occur in the profiled
-    script/module/code.
+    are now:
+
+    * Eagerly pre-imported to be profiled (see
+      :py:mod:`line_profiler.autoprofile.eager_preimports`),
+      regardless of whether those imports directly occur in the profiled
+      script/module/code.
+    * Descended/Recursed into if they are packages; pass
+      ``<pkg_name>.__init__`` instead of ``<pkg_name>`` to curtail
+      descent and limit profiling to classes and functions in the local
+      namespace of the :file:`__init__.py`.
+
     To restore the old behavior, pass the :option:`!--no-preimports`
     flag.
 """
@@ -124,7 +131,6 @@ import sys
 import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
-import pkgutil
 import tempfile
 import time
 import traceback
