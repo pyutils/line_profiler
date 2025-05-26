@@ -1,14 +1,18 @@
 """
 Tools for eagerly pre-importing everything as specified in
-`line_profiler.autoprof.run(prof_mod=...)`.
+``line_profiler.autoprof.run(prof_mod=...)``.
 """
 import ast
 import functools
 import itertools
+from collections.abc import Collection
 from keyword import iskeyword
 from importlib.util import find_spec
-from textwrap import dedent
+from os.path import isdir
+from pkgutil import walk_packages
+from textwrap import dedent, indent as indent_
 from warnings import warn
+from .util_static import modname_to_modpath
 
 
 def is_dotted_path(obj):
@@ -51,21 +55,26 @@ def split_dotted_path(dotted_path):
     Arguments:
         dotted_path (str):
             Dotted path indicating an import target (module, package, or
-            a `from ... import ...`-able name under that), or an object
-            accessible via (chained) attribute access thereon
+            a ``from ... import ...``-able name under that), or an
+            object accessible via (chained) attribute access thereon
 
     Returns:
         module, target (tuple[str, Union[str, None]]):
-        - module: dotted path indicating the module that should be
+
+        * ``module``: dotted path indicating the module that should be
           imported
-        - target: dotted path indicating the chained attribute access
-          target on the imported module corresponding to `dotted_path`;
-          if the import is just a module, this is set to `None`
+        * ``target``: dotted path indicating the chained-attribute
+          access target on the imported module corresponding to
+          ``dotted_path``;
+          if the import is just a module, this is set to
+          :py:const:`None`
 
     Raises:
-        - `TypeError` if `dotted_path` is not a dotted path (Python
-          identifiers joined by periods)
-        - `ModuleNotFoundError` if a matching module cannot be found
+        TypeError
+            If ``dotted_path`` is not a dotted path (Python identifiers
+            joined by periods)
+        ModuleNotFoundError
+            If a matching module cannot be found
 
     Example:
         >>> split_dotted_path('importlib.util.find_spec')
@@ -117,10 +126,10 @@ def strip(s):
 class LoadedNameFinder(ast.NodeVisitor):
     """
     Find the names loaded in an AST. A name is considered to be loaded
-    if it appears with the context `ast.Load()` and is not an argument
-    of any surrounding function-definition contexts
-    (`def func(...): ...`, `async def func(...): ...`, or
-    `lambda ...: ...`).
+    if it appears with the context :py:class:`ast.Load()` and is not an
+    argument of any surrounding function-definition contexts
+    (``def func(...): ...``, ``async def func(...): ...``, or
+    ``lambda ...: ...``).
 
     Example:
         >>> import ast
@@ -213,7 +222,9 @@ def propose_names(prefixes):
 
 
 def write_eager_import_module(dotted_paths, stream=None, *,
-                              adder='profile.add_imported_function_or_module'):
+                              recurse=False,
+                              adder='profile.add_imported_function_or_module',
+                              indent='    '):
     r"""
     Write a module which autoprofiles all its imports.
 
@@ -224,23 +235,41 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         stream (Union[TextIO, None]):
             Optional text-mode writable file object to which to write
             the module
+        recurse (Union[Collection[str], bool]):
+            Dotted paths (strings of period-joined identifiers)
+            indicating the profiling targets that should be recursed
+            into if they are packages;
+            can also be a boolean value, indicating:
+
+            :py:const:`True`
+                Recurse into any entry in ``dotted_paths`` that is a
+                package
+            :py:const:`False`
+                Don't recurse into any entry
         adder (str):
-            Single-line string `ast.parse(mode='eval')`-able to a single
-            expression, indicating the callable (which is assumed to
-            exist in the builtin namespace by the time the module is
+            Single-line string ``ast.parse(mode='eval')``-able to a
+            single expression, indicating the callable (which is assumed
+            to exist in the builtin namespace by the time the module is
             executed) to be called to add the profiling target
+        indent (str):
+            Single-line, non-empty whitespace string to indent the
+            output with
 
     Side effects:
-        - `stream` (or stdout if none) written to
-        - Warning issued if the module can't be located for one or more
+        * ``stream`` (or :py:data:`sys.stdout` if :py:const:`None`)
+          written to
+        * Warning issued if the module can't be located for one or more
           dotted paths
 
     Raises:
-        - `TypeError` if `adder` is not a string
-        - `ValueError` if `adder` is a non-single-line string or is not
-          parsable to a single expression
-        - `TypeError` if `dotted_paths` is not a collection of dotted
-          paths
+        TypeError
+            * If ``adder`` and ``indent`` are not strings
+            * If ``dotted_paths`` is not a collection of dotted paths
+        ValueError
+            * If ``adder`` is a non-single-line string or is not
+              parsable to a single expression
+            * If ``indent`` isn't single-line, non-empty, and
+              whitespace
 
     Example:
         >>> import io
@@ -266,20 +295,27 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         ... add = profile.add_imported_function_or_module
         ... failures = []
         ...
-        ... import importlib.abc as module
+        ... try:
+        ...     import importlib.abc as module
+        ... except ImportError:
+        ...     pass
+        ... else:
+        ...     try:
+        ...         add(module.Loader.exec_module)
+        ...     except AttributeError:
+        ...         failures.append('importlib.abc.Loader.exec_module')
+        ...     try:
+        ...         add(module.Loader.find_module)
+        ...     except AttributeError:
+        ...         failures.append('importlib.abc.Loader.find_module')
         ...
         ... try:
-        ...     add(module.Loader.exec_module)
-        ... except AttributeError:
-        ...     failures.append('importlib.abc.Loader.exec_module')
-        ... try:
-        ...     add(module.Loader.find_module)
-        ... except AttributeError:
-        ...     failures.append('importlib.abc.Loader.find_module')
+        ...     import importlib.util as module
+        ... except ImportError:
+        ...     pass
+        ... else:
+        ...     add(module)
         ...
-        ... import importlib.util as module
-        ...
-        ... add(module)
         ...
         ... if failures:
         ...     import warnings
@@ -309,6 +345,15 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         raise AdderError(f'adder = {adder!r}: '
                          'expected a single-line string parsable to a single '
                          'expression')
+    if not isinstance(indent, str):
+        IndentError = TypeError
+    elif len(indent.splitlines()) == 1 and indent.isspace():
+        IndentError = None
+    else:
+        IndentError = ValueError
+    if IndentError:
+        raise IndentError(f'indent = {indent!r}: '
+                          'expected a single-line non-empty whitespace string')
 
     # Get the names loaded by `adder`;
     # these names are not allowed in the namespace
@@ -331,6 +376,13 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         if name not in forbidden_names)
 
     # Figure out the import targets to profile
+    dotted_paths = set(dotted_paths)
+    if isinstance(recurse, Collection):
+        recurse = set(recurse)
+    else:
+        recurse = dotted_paths if recurse else set()
+    dotted_paths |= recurse
+
     imports = {}
     unknown_locs = []
     for path in sorted(set(dotted_paths)):
@@ -339,7 +391,17 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         except ModuleNotFoundError:
             unknown_locs.append(path)
             continue
-        imports.setdefault(module, []).append(target)
+        if path in recurse and target is None:
+            recurse_root = modname_to_modpath(path, hide_init=True)
+            if recurse_root and not isdir(recurse_root):
+                recurse_root = None
+        else:  # Not a recurse target nor a module
+            recurse_root = None
+        imports.setdefault(module, set()).add(target)
+        # FIXME: how do we handle namespace packages?
+        if recurse_root is not None:
+            for info in walk_packages([recurse_root], prefix=module + '.'):
+                imports.setdefault(info.name, set()).add(None)
 
     # Warn against failed imports
     if unknown_locs:
@@ -353,28 +415,42 @@ def write_eager_import_module(dotted_paths, stream=None, *,
     write = functools.partial(print, file=stream)
     write(f'{adder_name} = {adder}\n{failures_name} = []')
     for module, targets in imports.items():
-        write(f'\nimport {module} as {module_name}\n')
-        for target in targets:
-            if target is None:
-                write(f'{adder_name}({module_name})')
-                continue
-            path = f'{module}.{target}'
-            write(strip(f"""
+        assert targets
+        write('\n'
+              + strip(f"""
             try:
-                {adder_name}({module_name}.{target})
+            {indent}import {module} as {module_name}
+            except ImportError:
+            {indent}pass
+            else:
+                """))
+        chunks = []
+        try:
+            targets.remove(None)
+        except KeyError:  # Not found
+            pass
+        else:  # Add the whole module
+            chunks.append(f'{adder_name}({module_name})')
+        for target in sorted(targets):
+            path = f'{module}.{target}'
+            chunks.append(strip(f"""
+            try:
+            {indent}{adder_name}({module_name}.{target})
             except AttributeError:
-                {failures_name}.append({path!r})
+            {indent}{failures_name}.append({path!r})
             """))
+        for chunk in chunks:
+            write(indent_(chunk, indent))
     # Issue a warning if any of the targets doesn't exist
     if imports:
-        write('')
+        write('\n')
         write(strip(f"""
         if {failures_name}:
-            import warnings
+        {indent}import warnings
 
-            msg = '{{}} target{{}} cannot be imported: {{!r}}'.format(
-                len({failures_name}),
-                '' if len({failures_name}) == 1 else 's',
-                {failures_name})
-            warnings.warn(msg, stacklevel=2)
+        {indent}msg = '{{}} target{{}} cannot be imported: {{!r}}'.format(
+        {indent * 2}len({failures_name}),
+        {indent * 2}'' if len({failures_name}) == 1 else 's',
+        {indent * 2}{failures_name})
+        {indent}warnings.warn(msg, stacklevel=2)
         """))

@@ -44,5 +44,7 @@ def propose_names(prefixes: Collection[str]) -> Generator[str, None, None]:
 
 def write_eager_import_module(
         dotted_paths: Collection[str], stream: Union[TextIO, None] = None, *,
-        adder: str = 'profile.add_imported_function_or_module') -> None:
+        recurse: Union[Collection[str], bool] = False,
+        adder: str = 'profile.add_imported_function_or_module',
+        indent: str = '    ') -> None:
     ...
