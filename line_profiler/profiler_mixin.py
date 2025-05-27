@@ -61,15 +61,17 @@ def is_cached_property(f):
 class ByCountProfilerMixin:
     """
     Mixin class for profiler methods built around the
-    `.enable_by_count()` and `.disable_by_count()` methods, rather than
-    the `.enable()` and `.disable()` methods.
+    :py:meth:`!enable_by_count()` and :py:meth:`!disable_by_count()`
+    methods, rather than the :py:meth:`!enable()` and
+    :py:meth:`!disable()` methods.
 
-    Used by `line_profiler.line_profiler.LineProfiler` and
-    `kernprof.ContextualProfile`.
+    Used by :py:class:`line_profiler.line_profiler.LineProfiler` and
+    :py:class:`kernprof.ContextualProfile`.
     """
     def wrap_callable(self, func):
-        """ Decorate a function to start the profiler on function entry and stop
-        it on function exit.
+        """
+        Decorate a function to start the profiler on function entry and
+        stop it on function exit.
         """
         if is_classmethod(func):
             return self.wrap_classmethod(func)
@@ -173,12 +175,13 @@ class ByCountProfilerMixin:
 
         Args:
             wrapper (W):
-                Wrapper object around regular callables, like
-                `property`, `staticmethod`, `functools.partial`, etc.
+                Wrapper object around other callables, like
+                :py:class:`property`, :py:func:`staticmethod`,
+                :py:func:`functools.partial`, etc.
             impl_attrs (Sequence[str]):
                 Attribute names whence to retrieve the individual
-                callables to be wrapped and profiled, like `.fget`,
-                `.fset`, and `.fdel` for `property`;
+                callables to be wrapped and profiled, like ``.fget``,
+                ``.fset``, and ``.fdel`` for :py:class:`property`;
                 the retrieved values are wrapped and passed as
                 positional arguments to the wrapper constructor.
             args (Optional[str | Sequence[str]]):
@@ -192,16 +195,18 @@ class ByCountProfilerMixin:
                 retrieve extra keyword arguments to pass to the wrapper
                 constructor;
                 if a single name, the retrieved values is unpacked;
-                else, the attribute of `wrapper` at the mapping value is
-                used to populate the keyword arg at the mapping key.
+                else, the attribute of ``wrapper`` at the mapping value
+                is used to populate the keyword arg at the mapping key.
             name_attr (Optional[str]):
                 Optional attribute name whence to retrieve the name of
-                `wrapper` to be carried over in the new wrapper, like
-                `__name__` for `property` (Python 3.13+) and `attrname`
-                for `functools.cached_property`.
+                ``wrapper`` to be carried over in the new wrapper, like
+                ``.__name__`` for :py:class:`property` (Python 3.13+)
+                and ``.attrname`` for
+                :py:func:`functools.cached_property`.
 
         Returns:
-            (W): new wrapper of the type of `wrapper`
+            new_wrapper (W):
+                New wrapper of the type of ``wrapper``
         """
         # Wrap implementations
         impls = [getattr(wrapper, attr) for attr in impl_attrs]
@@ -248,7 +253,8 @@ class ByCountProfilerMixin:
 
     def _wrap_class_and_static_method(self, func):
         """
-        Wrap a class/static method to profile it.
+        Wrap a :py:func:`classmethod` or :py:func:`staticmethod` to
+        profile it.
         """
         return self._wrap_callable_wrapper(func, ('__func__',))
 
@@ -256,14 +262,15 @@ class ByCountProfilerMixin:
 
     def wrap_boundmethod(self, func):
         """
-        Wrap a bound method to profile it.
+        Wrap a :py:class:`types.MethodType` to profile it.
         """
         return self._wrap_callable_wrapper(func, ('__func__',),
                                            args=('__self__',))
 
     def _wrap_partial(self, func):
         """
-        Wrap a `functools.partial[method]` to profile it.
+        Wrap a :py:func:`functools.partial` or
+        :py:class:`functools.partialmethod` to profile it.
         """
         return self._wrap_callable_wrapper(func, ('func',),
                                            args='args', kwargs='keywords')
@@ -272,7 +279,7 @@ class ByCountProfilerMixin:
 
     def wrap_property(self, func):
         """
-        Wrap a property to profile it.
+        Wrap a :py:class:`property` to profile it.
         """
         return self._wrap_callable_wrapper(func, ('fget', 'fset', 'fdel'),
                                            kwargs={'doc': '__doc__'},
@@ -280,7 +287,7 @@ class ByCountProfilerMixin:
 
     def wrap_cached_property(self, func):
         """
-        Wrap a `functools.cached_property` to profile it.
+        Wrap a :py:func:`functools.cached_property` to profile it.
         """
         return self._wrap_callable_wrapper(func, ('func',),
                                            name_attr='attrname')
@@ -377,6 +384,17 @@ class ByCountProfilerMixin:
         """
         Wrap a class by wrapping all locally-defined callables and
         callable wrappers.
+
+        Returns:
+            func (type):
+                The class passed in, with its locally-defined
+                callables and wrappers wrapped.
+
+        Warns:
+            UserWarning
+                If any of the locally-defined callables and wrappers
+                cannot be replaced with the appropriate wrapper returned
+                from :py:meth:`.wrap_callable()`.
         """
         get_filter = self._class_scoping_policy.get_filter
         func_check = get_filter(func, 'func')
