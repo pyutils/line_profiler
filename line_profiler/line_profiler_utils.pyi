@@ -1,5 +1,4 @@
 import enum
-from typing import Type, TypeVar, Union
 try:
     from typing import Self  # type: ignore[attr-defined]  # noqa: F401
 except ImportError:  # Python < 3.11
@@ -23,5 +22,5 @@ class StringEnum(str, enum.Enum):  # type: ignore[misc]
         ...
 
     @classmethod
-    def _missing_(cls, value) -> Union[Self, None]:
+    def _missing_(cls, value) -> Self | None:
         ...
