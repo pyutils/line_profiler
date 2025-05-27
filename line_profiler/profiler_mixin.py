@@ -1,11 +1,33 @@
 import functools
 import inspect
 import types
+from warnings import warn
+from .scoping_policy import ScopingPolicy
 
 
 is_coroutine = inspect.iscoroutinefunction
+is_function = inspect.isfunction
 is_generator = inspect.isgeneratorfunction
 is_async_generator = inspect.isasyncgenfunction
+
+# These objects are callables, but are defined in C so we can't handle
+# them anyway
+C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
+                          types.BuiltinMethodType,
+                          types.ClassMethodDescriptorType,
+                          types.MethodDescriptorType,
+                          types.MethodWrapperType,
+                          types.WrapperDescriptorType)
+
+
+def is_c_level_callable(func):
+    """
+    Returns:
+        func_is_c_level (bool):
+            Whether a callable is defined at the C level (and is thus
+            non-profilable).
+    """
+    return isinstance(func, C_LEVEL_CALLABLE_TYPES)
 
 
 def is_classmethod(f):
@@ -50,28 +72,98 @@ class ByCountProfilerMixin:
         it on function exit.
         """
         if is_classmethod(func):
-            wrapper = self.wrap_classmethod(func)
-        elif is_staticmethod(func):
-            wrapper = self.wrap_staticmethod(func)
-        elif is_boundmethod(func):
-            wrapper = self.wrap_boundmethod(func)
-        elif is_partialmethod(func):
-            wrapper = self.wrap_partialmethod(func)
-        elif is_partial(func):
-            wrapper = self.wrap_partial(func)
-        elif is_property(func):
-            wrapper = self.wrap_property(func)
-        elif is_cached_property(func):
-            wrapper = self.wrap_cached_property(func)
-        elif is_async_generator(func):
-            wrapper = self.wrap_async_generator(func)
-        elif is_coroutine(func):
-            wrapper = self.wrap_coroutine(func)
-        elif is_generator(func):
-            wrapper = self.wrap_generator(func)
-        else:
-            wrapper = self.wrap_function(func)
-        return wrapper
+            return self.wrap_classmethod(func)
+        if is_staticmethod(func):
+            return self.wrap_staticmethod(func)
+        if is_boundmethod(func):
+            return self.wrap_boundmethod(func)
+        if is_partialmethod(func):
+            return self.wrap_partialmethod(func)
+        if is_partial(func):
+            return self.wrap_partial(func)
+        if is_property(func):
+            return self.wrap_property(func)
+        if is_cached_property(func):
+            return self.wrap_cached_property(func)
+        if is_async_generator(func):
+            return self.wrap_async_generator(func)
+        if is_coroutine(func):
+            return self.wrap_coroutine(func)
+        if is_generator(func):
+            return self.wrap_generator(func)
+        if isinstance(func, type):
+            return self.wrap_class(func)
+        if callable(func):
+            return self.wrap_function(func)
+        raise TypeError(f'func = {func!r}: does not look like a callable or '
+                        'callable wrapper')
+
+    @classmethod
+    def get_underlying_functions(cls, func):
+        """
+        Get the underlying function objects of a callable or an adjacent
+        object.
+
+        Returns:
+            funcs (list[Callable])
+        """
+        return cls._get_underlying_functions(func)
+
+    @classmethod
+    def _get_underlying_functions(cls, func, seen=None, stop_at_classes=False):
+        if seen is None:
+            seen = set()
+        get_underlying = functools.partial(
+            cls._get_underlying_functions,
+            seen=seen, stop_at_classes=stop_at_classes)
+        if any(check(func)
+               for check in (is_boundmethod, is_classmethod, is_staticmethod)):
+            return get_underlying(func.__func__)
+        if any(check(func)
+               for check in (is_partial, is_partialmethod, is_cached_property)):
+            return get_underlying(func.func)
+        if is_property(func):
+            result = []
+            for impl in func.fget, func.fset, func.fdel:
+                if impl is not None:
+                    result.extend(get_underlying(impl))
+            return result
+        if isinstance(func, type):
+            if stop_at_classes:
+                return [func]
+            result = []
+            get_filter = cls._class_scoping_policy.get_filter
+            func_check = get_filter(func, 'func')
+            cls_check = get_filter(func, 'class')
+            for member in vars(func).values():
+                try:
+                    member_funcs = get_underlying(member, stop_at_classes=True)
+                except TypeError:
+                    continue
+                for impl in member_funcs:
+                    is_type = isinstance(impl, type)
+                    check = cls_check if is_type else func_check
+                    if not check(impl):
+                        continue
+                    if is_type:
+                        result.extend(get_underlying(impl))
+                    else:
+                        result.append(impl)
+            return result
+        if not callable(func):
+            raise TypeError(f'func = {func!r}: '
+                            f'cannot get functions from {type(func)} objects')
+        if id(func) in seen:
+            return []
+        seen.add(id(func))
+        if is_function(func):
+            return [func]
+        if is_c_level_callable(func):
+            return []
+        func = type(func).__call__
+        if is_c_level_callable(func):  # Can happen with builtin types
+            return []
+        return [func]
 
     def _wrap_callable_wrapper(self, wrapper, impl_attrs, *,
                                args=None, kwargs=None, name_attr=None):
@@ -281,6 +373,52 @@ class ByCountProfilerMixin:
 
         return self._mark_wrapper(wrapper)
 
+    def wrap_class(self, func):
+        """
+        Wrap a class by wrapping all locally-defined callables and
+        callable wrappers.
+        """
+        get_filter = self._class_scoping_policy.get_filter
+        func_check = get_filter(func, 'func')
+        cls_check = get_filter(func, 'class')
+        get_underlying = functools.partial(
+            self._get_underlying_functions, stop_at_classes=True)
+        members_to_wrap = {}
+        for name, member in vars(func).items():
+            try:
+                impls = get_underlying(member)
+            except TypeError:  # Not a callable (wrapper)
+                continue
+            if any((cls_check(impl)
+                    if isinstance(impl, type) else
+                    func_check(impl))
+                   for impl in impls):
+                members_to_wrap[name] = member
+        self._wrap_namespace_members(func, members_to_wrap,
+                                     warning_stack_level=2)
+        return func
+
+    def _wrap_namespace_members(
+            self, namespace, members, *, warning_stack_level=2):
+        wrap_failures = {}
+        for name, member in members.items():
+            wrapper = self.wrap_callable(member)
+            if wrapper is member:
+                continue
+            try:
+                setattr(namespace, name, wrapper)
+            except (TypeError, AttributeError):
+                # Corner case in case if a class/module don't allow
+                # setting attributes (could e.g. happen with some
+                # builtin/extension classes, but their method should be
+                # in C anyway, so `.add_callable()` should've returned 0
+                # and we shouldn't be here)
+                wrap_failures[name] = member
+        if wrap_failures:
+            msg = (f'cannot wrap {len(wrap_failures)} attribute(s) of '
+                   f'{namespace!r} (`{{attr: value}}`): {wrap_failures!r}')
+            warn(msg, stacklevel=warning_stack_level)
+
     def _already_a_wrapper(self, func):
         return getattr(func, self._profiler_wrapped_marker, None) == id(self)
 
@@ -322,3 +460,4 @@ class ByCountProfilerMixin:
         self.disable_by_count()
 
     _profiler_wrapped_marker = '__line_profiler_id__'
+    _class_scoping_policy = ScopingPolicy.CHILDREN

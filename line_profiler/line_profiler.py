@@ -12,7 +12,6 @@ import pickle
 import sys
 import tempfile
 import types
-import warnings
 from argparse import ArgumentError, ArgumentParser
 
 try:
@@ -22,36 +21,12 @@ except ImportError as ex:
         'The line_profiler._line_profiler c-extension is not importable. '
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
-from .profiler_mixin import (ByCountProfilerMixin,
-                             is_property, is_cached_property,
-                             is_boundmethod, is_classmethod, is_staticmethod,
-                             is_partial, is_partialmethod)
+from .profiler_mixin import ByCountProfilerMixin, is_c_level_callable
 from .scoping_policy import ScopingPolicy
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
-
-# These objects are callables, but are defined in C so we can't handle
-# them anyway
-C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
-                          types.BuiltinMethodType,
-                          types.ClassMethodDescriptorType,
-                          types.MethodDescriptorType,
-                          types.MethodWrapperType,
-                          types.WrapperDescriptorType)
-
-is_function = inspect.isfunction
-
-
-def is_c_level_callable(func):
-    """
-    Returns:
-        func_is_c_level (bool):
-            Whether a callable is defined at the C level (and is thus
-            non-profilable).
-    """
-    return isinstance(func, C_LEVEL_CALLABLE_TYPES)
 
 
 def load_ipython_extension(ip):
@@ -59,36 +34,6 @@ def load_ipython_extension(ip):
     """
     from .ipython_extension import LineProfilerMagics
     ip.register_magics(LineProfilerMagics)
-
-
-def _get_underlying_functions(func):
-    """
-    Get the underlying function objects of a callable or an adjacent
-    object.
-
-    Returns:
-        funcs (list[Callable])
-    """
-    if any(check(func)
-           for check in (is_boundmethod, is_classmethod, is_staticmethod)):
-        return _get_underlying_functions(func.__func__)
-    if any(check(func)
-           for check in (is_partial, is_partialmethod, is_cached_property)):
-        return _get_underlying_functions(func.func)
-    if is_property(func):
-        result = []
-        for impl in func.fget, func.fset, func.fdel:
-            if impl is not None:
-                result.extend(_get_underlying_functions(impl))
-        return result
-    if not callable(func):
-        raise TypeError(f'func = {func!r}: '
-                        f'cannot get functions from {type(func)} objects')
-    if is_function(func):
-        return [func]
-    if is_c_level_callable(func):
-        return []
-    return [type(func).__call__]
 
 
 class _WrapperInfo:
@@ -131,7 +76,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         """
         # The same object is returned when:
         # - `func` is a `types.FunctionType` which is already
-        #   decorated by the profiler, or
+        #   decorated by the profiler,
+        # - `func` is a class, or
         # - `func` is any of the C-level callables that can't be
         #   profiled
         # otherwise, wrapper objects are always returned.
@@ -169,7 +115,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             guard = self._already_a_wrapper
 
         nadded = 0
-        for impl in _get_underlying_functions(func):
+        for impl in self.get_underlying_functions(func):
             info, wrapped_by_this_prof = self._get_wrapper_info(impl)
             if wrapped_by_this_prof if guard is None else guard(impl):
                 continue
@@ -219,7 +165,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             class_scoping_policy=class_scoping_policy,
             module_scoping_policy=module_scoping_policy,
             wrap=wrap)
-        wrap_failures = {}
+        members_to_wrap = {}
         func_check = func_scoping_policy.get_filter(namespace, 'func')
         cls_check = class_scoping_policy.get_filter(namespace, 'class')
         mod_check = module_scoping_policy.get_filter(namespace, 'module')
@@ -242,23 +188,11 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             except TypeError:  # Not a callable (wrapper)
                 continue
             if wrap:
-                wrapper = self.wrap_callable(value)
-                if wrapper is not value:
-                    try:
-                        setattr(namespace, attr, wrapper)
-                    except (TypeError, AttributeError):
-                        # Corner case in case if a class/module don't
-                        # allow setting attributes (could e.g. happen
-                        # with some builtin/extension classes, but their
-                        # method should be in C anyway, so
-                        # `.add_callable()` should've returned 0 and we
-                        # shouldn't be here)
-                        wrap_failures[attr] = value
+                members_to_wrap[attr] = value
             count += 1
-        if wrap_failures:
-            msg = (f'cannot wrap {len(wrap_failures)} attribute(s) of '
-                   f'{namespace!r} (`{{attr: value}}`): {wrap_failures!r}')
-            warnings.warn(msg, stacklevel=2)
+        if wrap and members_to_wrap:
+            self._wrap_namespace_members(namespace, members_to_wrap,
+                                         warning_stack_level=3)
         return count
 
     def add_class(self, cls, *, scoping_policy=None, wrap=False):

@@ -1,32 +1,17 @@
 import io
 from functools import cached_property, partial, partialmethod
-from types import (FunctionType, MethodType, ModuleType,
-                   BuiltinFunctionType, BuiltinMethodType,
-                   ClassMethodDescriptorType, MethodDescriptorType,
-                   MethodWrapperType, WrapperDescriptorType)
-from typing import overload, Any, Callable, List, Literal, Tuple, TypeVar
-try:
-    from typing import (  # type: ignore[attr-defined]  # noqa: F401
-        TypeIs)
-except ImportError:  # Python < 3.13
-    from typing_extensions import TypeIs  # noqa: F401
+from types import FunctionType, MethodType, ModuleType
+from typing import overload, Callable, List, Literal, Tuple, TypeVar
 from _typeshed import Incomplete
 from ._line_profiler import LineProfiler as CLineProfiler
-from .profiler_mixin import ByCountProfilerMixin
+from .profiler_mixin import ByCountProfilerMixin, CLevelCallable
 from .scoping_policy import ScopingPolicy, ScopingPolicyDict
 
 
-CLevelCallable = TypeVar('CLevelCallable',
-                         BuiltinFunctionType, BuiltinMethodType,
-                         ClassMethodDescriptorType, MethodDescriptorType,
-                         MethodWrapperType, WrapperDescriptorType)
 CallableLike = TypeVar('CallableLike',
                        FunctionType, partial, property, cached_property,
-                       MethodType, staticmethod, classmethod, partialmethod)
-
-
-def is_c_level_callable(func: Any) -> TypeIs[CLevelCallable]:
-    ...
+                       MethodType, staticmethod, classmethod, partialmethod,
+                       type)
 
 
 def load_ipython_extension(ip) -> None:
