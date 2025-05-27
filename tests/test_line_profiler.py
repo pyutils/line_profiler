@@ -470,7 +470,7 @@ def test_property_decorator():
 
 def test_cached_property_decorator():
     """
-    Test for `LineProfiler.wrap_cached_property()`
+    Test for `LineProfiler.wrap_cached_property()`.
 
     Notes
     -----
@@ -504,6 +504,84 @@ def test_cached_property_decorator():
     # Check that the getter has been run once
     assert int(line.split()[1]) == 1
     assert profile.enable_count == 0
+
+
+def test_class_decorator():
+    """
+    Test for `LineProfiler.wrap_class()`.
+    """
+    profile = LineProfiler()
+
+    def unrelated(x):
+        return str(x)
+
+    @profile
+    class Object:
+        def __init__(self, x):
+            self.x = self.convert(x)
+
+        @property
+        def id(self):
+            return id(self)
+
+        @classmethod
+        def class_method(cls, n):
+            return cls.__name__ * n
+
+        # This is unrelated to `Object` and shouldn't be profiled
+        convert = staticmethod(unrelated)
+
+    # Are we keeping tabs on the correct entities?
+    assert len(profile.functions) == 3
+    assert set(profile.functions) == {
+        Object.__init__.__wrapped__,
+        Object.id.fget.__wrapped__,
+        vars(Object)['class_method'].__func__.__wrapped__}
+    # Make some calls
+    assert not profile.enable_count
+    obj = Object(1)
+    assert obj.x == '1'
+    assert id(obj) == obj.id
+    assert obj.class_method(3) == 'ObjectObjectObject'
+    assert not profile.enable_count
+    # Check the profiling results
+    all_entries = sorted(sum(profile.get_stats().timings.values(), []))
+    assert len(all_entries) == 3
+    assert all(nhits == 1 for (_, nhits, _) in all_entries)
+
+
+def test_add_class_wrapper():
+    """
+    Test adding a callable-wrapper object wrapping a class.
+    """
+    profile = LineProfiler()
+
+    class Object:
+        @classmethod
+        class method:
+            def __init__(self, cls, x):
+                self.cls = cls
+                self.x = x
+
+            def __repr__(self):
+                fmt = '{.__name__}.{.__name__}({!r})'.format
+                return fmt(self.cls, type(self), self.x)
+
+    # Bookkeeping
+    profile.add_class(Object)
+    method_cls = vars(Object)['method'].__func__
+    assert profile.functions == [method_cls.__init__, method_cls.__repr__]
+    # Actual profiling
+    with profile:
+        obj = Object.method(1)
+        assert obj.cls == Object
+        assert obj.x == 1
+        assert repr(obj) == 'Object.method(1)'
+    # Check data
+    all_nhits = {
+        func_name.rpartition('.')[-1]: sum(nhits for (_, nhits, _) in entries)
+        for (*_, func_name), entries in profile.get_stats().timings.items()}
+    assert all_nhits['__init__'] == all_nhits['__repr__'] == 2
 
 
 @pytest.mark.parametrize('decorate', [True, False])
