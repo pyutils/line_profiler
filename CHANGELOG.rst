@@ -15,7 +15,7 @@ Changes
 * ENH: In Python >=3.11, profiled objects are reported using their qualified name.
 * ENH: Highlight final summary using rich if enabled
 * ENH: Made it possible to use multiple profiler instances simultaneously
-* ENH: ``kernprof --prof-mod`` target entities are now imported and profiled regardless of whether they are directly imported in the run script/module/code (old behavior restored by passing ``--no-preimports``; recurse into packages with ``--recursive-prof-mod``); made on-import profiling more aggressive so that it doesn't miss entities like class methods and properties
+* ENH: ``kernprof --prof-mod`` target entities are now imported and profiled regardless of whether they are directly imported in the run script/module/code (old behavior recoed by passing ``--no-preimports``); made on-import profiling more aggressive so that it doesn't miss entities like class methods and properties
 
 4.2.0
 ~~~~~

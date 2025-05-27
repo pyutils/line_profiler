@@ -18,6 +18,7 @@ Submodules
    line_profiler.__main__
    line_profiler._line_profiler
    line_profiler.explicit_profiler
+   line_profiler.scoping_policy
    line_profiler.ipython_extension
    line_profiler.line_profiler
 
