@@ -131,12 +131,15 @@ import sys
 import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
+import contextlib
 import tempfile
 import time
 import traceback
 import warnings
 from argparse import ArgumentError, ArgumentParser
+from io import StringIO
 from runpy import run_module
+from shlex import quote
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -150,6 +153,9 @@ except ImportError:
     from profile import Profile  # type: ignore[assignment,no-redef]
 
 from line_profiler.profiler_mixin import ByCountProfilerMixin
+
+
+DIAGNOSITICS_VERBOSITY = 2
 
 
 def execfile(filename, globals=None, locals=None):
@@ -466,8 +472,19 @@ def main(args=None):
                             "--line-by-line, 'scriptname.prof' without)")
         parser.add_argument('-s', '--setup',
                             help='Code to execute before the code to profile')
-        parser.add_argument('-v', '--view', action='store_true',
-                            help='View the results of the profile in addition to saving it')
+        parser.add_argument('-v', '--verbose', '--view',
+                            action='count', default=0,
+                            help='Increase verbosity level. '
+                            'At level 1, view the profiling results '
+                            'in addition to saving them; '
+                            'at level 2, show other diagnostic info.')
+        parser.add_argument('-q', '--quiet',
+                            action='count', default=0,
+                            help='Decrease verbosity level. '
+                            'At level -1, disable helpful messages '
+                            '(e.g. "Wrote profile results to <...>"); '
+                            'at level -2, silence the stdout; '
+                            'at level -3, silence the stderr.')
         parser.add_argument('-r', '--rich', action='store_true',
                             help='Use rich formatting if viewing output')
         parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
@@ -514,6 +531,10 @@ def main(args=None):
     # Hand off to the dummy parser if necessary to generate the help
     # text
     options = real_parser.parse_args(args)
+    options.verbose -= options.quiet
+    options.message = functools.partial(_message, options.verbose)
+    options.diagnostics = functools.partial(
+        _message, options.verbose, DIAGNOSITICS_VERBOSITY)
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
         exit()
@@ -533,12 +554,17 @@ def main(args=None):
     elif options.script == '-' and not module:
         tempfile_source_and_content = 'stdin', sys.stdin.read()
 
-    if tempfile_source_and_content:
-        with tempfile.TemporaryDirectory() as tmpdir:
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        if options.verbose < -1:  # Suppress stdout
+            devnull = enter(open(os.devnull, mode='w'))
+            enter(contextlib.redirect_stdout(devnull))
+        if options.verbose < -2:  # Suppress stderr
+            enter(contextlib.redirect_stderr(devnull))
+        if tempfile_source_and_content:
+            tmpdir = enter(tempfile.TemporaryDirectory())
             _write_tempfile(*tempfile_source_and_content, options, tmpdir)
-            return _main(options, module)
-    else:
-        return _main(options, module)
+        _main(options, module)
 
 
 def _write_tempfile(source, content, options, tmpdir):
@@ -554,6 +580,7 @@ def _write_tempfile(source, content, options, tmpdir):
     # Do what 3.14 does (#103998)... and also just to be user-friendly
     content = textwrap.dedent(content)
     fname = os.path.join(tmpdir, file_prefix + '.py')
+    options.diagnostics(f'Wrote temporary script file to {fname!r}')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
     options.script = fname
@@ -571,7 +598,7 @@ def _write_tempfile(source, content, options, tmpdir):
                                               suffix='.' + extension)
 
 
-def _write_preimports(prof, prof_mod, exclude):
+def _write_preimports(prof, options, exclude):
     """
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
@@ -585,7 +612,7 @@ def _write_preimports(prof, prof_mod, exclude):
     filtered_targets = []
     recurse_targets = []
     invalid_targets = []
-    for target in prof_mod:
+    for target in options.prof_mod:
         if is_dotted_path(target):
             modname = target
         else:
@@ -633,10 +660,40 @@ def _write_preimports(prof, prof_mod, exclude):
         if name not in sys.modules)
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_mod_path = os.path.join(tmpdir, temp_mod_name + '.py')
-        with open(temp_mod_path, mode='w') as fobj:
-            write_eager_import_module(filtered_targets,
-                                      recurse=recurse_targets,
-                                      stream=fobj)
+        write_module = functools.partial(
+            write_eager_import_module, filtered_targets,
+            recurse=recurse_targets)
+        temp_file = open(temp_mod_path, mode='w')
+        if options.verbose >= DIAGNOSITICS_VERBOSITY:
+            with StringIO() as sio:
+                write_module(stream=sio)
+                code = sio.getvalue()
+            with temp_file as fobj:
+                print(code, file=fobj)
+            options.diagnostics('Wrote temporary module for pre-imports '
+                                f'to {temp_mod_path!r}:\n')
+            nlines = code.count('\n') + 1
+            line_number_width = max(len(str(nlines)), 4)
+            code_with_lineno = ''.join(
+                f'{n:>{line_number_width}} {line}'
+                for n, line in zip(range(1, nlines + 1),
+                                   code.splitlines(keepends=True)))
+            if options.rich:
+                try:
+                    from rich.console import Console
+                    from rich.syntax import Syntax
+                except ImportError:
+                    options.diagnostics(code_with_lineno)
+                else:
+                    options.diagnostics(Syntax(code, 'python',
+                                               line_numbers=True),
+                                        print=Console().print)
+            else:
+                options.diagnostics(code_with_lineno)
+            options.diagnostics()
+        else:
+            with temp_file as fobj:
+                write_module(stream=fobj)
         ns = {}  # Use a fresh namespace
         try:
             execfile(temp_mod_path, ns, ns)
@@ -648,6 +705,15 @@ def _write_preimports(prof, prof_mod, exclude):
             print('\nContext:', ''.join(tb_lines[i_last_temp_frame:]),
                   end='', sep='\n', file=sys.stderr)
             raise
+
+
+def _message(verbosity, threshold=0, /, *args, print=print, **kwargs):
+    if isinstance(threshold, str):
+        args = [threshold, *args]
+        threshold = 0
+    if verbosity < threshold:
+        return
+    print(*args, **kwargs)
 
 
 def _main(options, module=False):
@@ -730,7 +796,7 @@ def _main(options, module=False):
         # even have a `if __name__ == '__main__': ...` guard. So don't
         # eager-import it.
         exclude = set() if module else {script_file}
-        _write_preimports(prof, options.prof_mod, exclude)
+        _write_preimports(prof, options, exclude)
 
     if options.output_interval:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
@@ -763,8 +829,8 @@ def _main(options, module=False):
         if options.output_interval:
             rt.stop()
         prof.dump_stats(options.outfile)
-        print('Wrote profile results to %s' % options.outfile)
-        if options.view:
+        options.message(f'Wrote profile results to {options.outfile!r}')
+        if options.verbose > 0:
             if isinstance(prof, ContextualProfile):
                 prof.print_stats()
             else:
@@ -773,12 +839,14 @@ def _main(options, module=False):
                                  rich=options.rich,
                                  stream=original_stdout)
         else:
-            print('Inspect results with:')
             py_exe = _python_command()
             if isinstance(prof, ContextualProfile):
-                print(f'{py_exe} -m pstats "{options.outfile}"')
+                show_mod = 'pstats'
             else:
-                print(f'{py_exe} -m line_profiler -rmt "{options.outfile}"')
+                show_mod = 'line_profiler -rmt'
+            options.message('Inspect results with:\n'
+                            f'{quote(py_exe)} -m {show_mod} '
+                            f'{quote(options.outfile)}')
         # Fully disable the profiler
         for _ in range(prof.enable_count):
             prof.disable_by_count()
