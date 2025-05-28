@@ -292,8 +292,9 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         ...         written = strip(sio.getvalue())
         ...
         >>> assert written == strip('''
-        ... add = profile.add_imported_function_or_module
+        ... add = profile.add_imported_function_or_module  # noqa: F821
         ... failures = []
+        ...
         ...
         ... try:
         ...     import importlib.abc as module
@@ -312,7 +313,7 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         ... try:
         ...     import importlib.util as module
         ... except ImportError:
-        ...     pass
+        ...     failures.append('importlib.util')
         ... else:
         ...     add(module)
         ...
@@ -382,6 +383,7 @@ def write_eager_import_module(dotted_paths, stream=None, *,
     else:
         recurse = dotted_paths if recurse else set()
     dotted_paths |= recurse
+    paths_added_by_recursion = set()
 
     imports = {}
     unknown_locs = []
@@ -399,9 +401,12 @@ def write_eager_import_module(dotted_paths, stream=None, *,
             recurse_root = None
         imports.setdefault(module, set()).add(target)
         # FIXME: how do we handle namespace packages?
-        if recurse_root is not None:
-            for info in walk_packages([recurse_root], prefix=module + '.'):
-                imports.setdefault(info.name, set()).add(None)
+        if recurse_root is None:
+            continue
+        for info in walk_packages([recurse_root], prefix=module + '.'):
+            imports.setdefault(info.name, set()).add(None)
+            paths_added_by_recursion.add(info.name)
+    paths_added_by_recursion -= dotted_paths
 
     # Warn against failed imports
     if unknown_locs:
@@ -413,23 +418,40 @@ def write_eager_import_module(dotted_paths, stream=None, *,
 
     # Do the imports and add them with `adder`
     write = functools.partial(print, file=stream)
-    write(f'{adder_name} = {adder}\n{failures_name} = []')
-    for module, targets in imports.items():
+    write(f'{adder_name} = {adder}  # noqa: F821\n{failures_name} = []')
+    for i, (module, targets) in enumerate(imports.items()):
         assert targets
+        # Write one more empty line so that the imports are separated
+        # from the preambles by 2 lines
+        if not i:
+            write()
+        # Allow arbitrary errors for modules that are only added
+        # indirectly (via descent/recursion)
+        if module in paths_added_by_recursion:
+            allowed_error = 'Exception'
+        else:
+            allowed_error = 'ImportError'
+        # Is the module itself a direct target?
+        try:
+            targets.remove(None)
+        except KeyError:  # Not found
+            profile_whole_module = False
+        else:
+            profile_whole_module = True
+        if profile_whole_module:
+            on_error = f'{failures_name}.append({module!r})'
+        else:
+            on_error = 'pass'
         write('\n'
               + strip(f"""
             try:
             {indent}import {module} as {module_name}
-            except ImportError:
-            {indent}pass
+            except {allowed_error}:
+            {indent}{on_error}
             else:
                 """))
         chunks = []
-        try:
-            targets.remove(None)
-        except KeyError:  # Not found
-            pass
-        else:  # Add the whole module
+        if profile_whole_module:
             chunks.append(f'{adder_name}({module_name})')
         for target in sorted(targets):
             path = f'{module}.{target}'
