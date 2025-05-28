@@ -137,9 +137,12 @@ import time
 import traceback
 import warnings
 from argparse import ArgumentError, ArgumentParser
+from datetime import datetime
 from io import StringIO
 from runpy import run_module
 from shlex import quote
+from textwrap import indent, dedent
+from types import MethodType
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -424,6 +427,51 @@ def main(args=None):
             raise ArgumentError
         return val
 
+    def print_message(threshold=0, /, *args, print=print, **kwargs):
+        if isinstance(threshold, str):
+            args = [threshold, *args]
+            threshold = 0
+        if options.verbose < threshold:
+            return
+        print(*args, **kwargs)
+
+    def print_diagnostics(*args, **kwargs):
+        if options.rich:
+            from rich.console import Console
+            from rich.markup import escape
+
+            printer = Console().print
+        else:
+            escape = str
+            printer = print
+
+        if args:
+            now = datetime.now().isoformat(sep=' ', timespec='seconds')
+            args = ['{} {}'.format(escape(f'[kernprof {now}]'), args[0]),
+                    *args[1:]]
+        kwargs['print'] = printer
+        print_message(DIAGNOSITICS_VERBOSITY, *args, **kwargs)
+
+    def print_code_block_diagnostics(
+            header, code, *, line_numbers=True, **kwargs):
+        if not header.endswith('\n'):
+            header += '\n'
+        if options.rich:
+            from rich.syntax import Syntax
+
+            code_repr = Syntax(code, 'python', line_numbers=line_numbers)
+        elif line_numbers:
+            nlines = code.count('\n') + 1
+            line_number_width = max(len(str(nlines)), 4)
+            code_repr = ''.join(
+                f'{n:>{line_number_width}} {line}'
+                for n, line in zip(range(1, nlines + 1),
+                                   code.splitlines(keepends=True)))
+        else:
+            code_repr = code
+        kwargs['sep'] = '\n'
+        print_diagnostics(header, code_repr, **kwargs)
+
     create_parser = functools.partial(
         ArgumentParser,
         description='Run and profile a python script.')
@@ -531,10 +579,6 @@ def main(args=None):
     # Hand off to the dummy parser if necessary to generate the help
     # text
     options = real_parser.parse_args(args)
-    options.verbose -= options.quiet
-    options.message = functools.partial(_message, options.verbose)
-    options.diagnostics = functools.partial(
-        _message, options.verbose, DIAGNOSITICS_VERBOSITY)
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
         exit()
@@ -553,6 +597,20 @@ def main(args=None):
         tempfile_source_and_content = 'command', literal_code
     elif options.script == '-' and not module:
         tempfile_source_and_content = 'stdin', sys.stdin.read()
+
+    # Handle output
+    options.verbose -= options.quiet
+    options.message = (print_message
+                       if options.verbose < DIAGNOSITICS_VERBOSITY else
+                       print_diagnostics)
+    options.diagnostics = print_diagnostics
+    options.code_diagnostics = print_code_block_diagnostics
+    if options.rich:
+        try:
+            import rich  # noqa: F401
+        except ImportError:
+            options.rich = False
+            options.diagnostics('`rich` not installed, unsetting --rich')
 
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
@@ -573,12 +631,10 @@ def _write_tempfile(source, content, options, tmpdir):
     :command:`kernprof -`;
     not to be invoked on its own.
     """
-    import textwrap
-
     # Set up the script to be run
     file_prefix = f'kernprof-{source}'
     # Do what 3.14 does (#103998)... and also just to be user-friendly
-    content = textwrap.dedent(content)
+    content = dedent(content)
     fname = os.path.join(tmpdir, file_prefix + '.py')
     options.diagnostics(f'Wrote temporary script file to {fname!r}')
     with open(fname, mode='w') as fobj:
@@ -596,6 +652,8 @@ def _write_tempfile(source, content, options, tmpdir):
         _, options.outfile = tempfile.mkstemp(dir=os.curdir,
                                               prefix=file_prefix + '-',
                                               suffix='.' + extension)
+        options.diagnostics(
+            f'Using default output destination {options.outfile!r}')
 
 
 def _write_preimports(prof, options, exclude):
@@ -670,27 +728,10 @@ def _write_preimports(prof, options, exclude):
                 code = sio.getvalue()
             with temp_file as fobj:
                 print(code, file=fobj)
-            options.diagnostics('Wrote temporary module for pre-imports '
-                                f'to {temp_mod_path!r}:\n')
-            nlines = code.count('\n') + 1
-            line_number_width = max(len(str(nlines)), 4)
-            code_with_lineno = ''.join(
-                f'{n:>{line_number_width}} {line}'
-                for n, line in zip(range(1, nlines + 1),
-                                   code.splitlines(keepends=True)))
-            if options.rich:
-                try:
-                    from rich.console import Console
-                    from rich.syntax import Syntax
-                except ImportError:
-                    options.diagnostics(code_with_lineno)
-                else:
-                    options.diagnostics(Syntax(code, 'python',
-                                               line_numbers=True),
-                                        print=Console().print)
-            else:
-                options.diagnostics(code_with_lineno)
-            options.diagnostics()
+            options.code_diagnostics(
+                'Wrote temporary module for pre-imports '
+                f'to {temp_mod_path!r}:',
+                code)
         else:
             with temp_file as fobj:
                 write_module(stream=fobj)
@@ -707,24 +748,36 @@ def _write_preimports(prof, options, exclude):
             raise
 
 
-def _message(verbosity, threshold=0, /, *args, print=print, **kwargs):
-    if isinstance(threshold, str):
-        args = [threshold, *args]
-        threshold = 0
-    if verbosity < threshold:
-        return
-    print(*args, **kwargs)
-
-
 def _main(options, module=False):
     """
     Called by :py:func:`main()` for the actual execution and profiling
     of code;
     not to be invoked on its own.
     """
+    def call_with_diagnostics(func, *args, **kwargs):
+        import reprlib
+
+        if options.verbose < DIAGNOSITICS_VERBOSITY:
+            return func(*args, **kwargs)
+        if isinstance(func, MethodType):
+            obj = func.__self__
+            func_repr = ('{0.__module__}.{0.__qualname__}(...).{1.__name__}'
+                         .format(type(obj), func.__func__))
+        else:
+            func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+        get_repr = reprlib.repr
+        args_reprs = ',\n'.join(
+            [get_repr(arg) for arg in args]
+            + [f'{arg}={get_repr(value)}' for arg, value in kwargs.items()])
+        call = '{}(\n{})\n'.format(func_repr, indent(args_reprs, '    '))
+        options.code_diagnostics('Calling:', call)
+        return func(*args, **kwargs)
+
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
-        options.outfile = '%s.%s' % (os.path.basename(options.script), extension)
+        options.outfile = f'{os.path.basename(options.script)}.{extension}'
+        options.diagnostics(
+            f'Using default output destination {options.outfile!r}')
 
     sys.argv = [options.script] + options.args
     if module:
@@ -743,6 +796,8 @@ def _main(options, module=False):
         # kernprof.py's.
         sys.path.insert(0, os.path.dirname(setup_file))
         ns = locals()
+        options.diagnostics(
+            f'Executing file {setup_file!r} as pre-profiling setup')
         execfile(setup_file, ns, ns)
 
     if options.line_by_line:
@@ -811,18 +866,24 @@ def _main(options, module=False):
             ns = locals()
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-                autoprofile.run(script_file, ns,
-                                prof_mod=options.prof_mod,
-                                profile_imports=options.prof_imports,
-                                as_module=module is not None)
+
+                call_with_diagnostics(
+                    autoprofile.run, script_file, ns,
+                    prof_mod=options.prof_mod,
+                    profile_imports=options.prof_imports,
+                    as_module=module is not None)
             elif module and options.builtin:
-                rmod_(options.script, ns)
+                call_with_diagnostics(rmod_, options.script, ns)
             elif options.builtin:
-                execfile(script_file, ns, ns)
+                call_with_diagnostics(execfile, script_file, ns, ns)
             elif module:
-                prof.runctx(f'rmod_({options.script!r}, globals())', ns, ns)
+                call_with_diagnostics(
+                    prof.runctx, f'rmod_({options.script!r}, globals())',
+                    ns, ns)
             else:
-                prof.runctx('execfile_(%r, globals())' % (script_file,), ns, ns)
+                call_with_diagnostics(
+                    prof.runctx, f'execfile_({script_file!r}, globals())',
+                    ns, ns)
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
