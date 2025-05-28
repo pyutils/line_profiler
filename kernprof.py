@@ -140,9 +140,10 @@ from argparse import ArgumentError, ArgumentParser
 from datetime import datetime
 from io import StringIO
 from runpy import run_module
+from pprint import pformat
 from shlex import quote
 from textwrap import indent, dedent
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -454,15 +455,13 @@ def main(args=None):
 
     def print_code_block_diagnostics(
             header, code, *, line_numbers=True, **kwargs):
-        if not header.endswith('\n'):
-            header += '\n'
         if options.rich:
             from rich.syntax import Syntax
 
             code_repr = Syntax(code, 'python', line_numbers=line_numbers)
         elif line_numbers:
             nlines = code.count('\n') + 1
-            line_number_width = max(len(str(nlines)), 4)
+            line_number_width = len(str(nlines)) + 2
             code_repr = ''.join(
                 f'{n:>{line_number_width}} {line}'
                 for n, line in zip(range(1, nlines + 1),
@@ -470,7 +469,14 @@ def main(args=None):
         else:
             code_repr = code
         kwargs['sep'] = '\n'
-        print_diagnostics(header, code_repr, **kwargs)
+
+        # Insert additional space
+        if not header.endswith('\n'):
+            header += '\n'
+        args = [header, code_repr]
+        if not code.endswith('\n'):
+            args.append('')
+        print_diagnostics(*args, **kwargs)
 
     create_parser = functools.partial(
         ArgumentParser,
@@ -578,7 +584,7 @@ def main(args=None):
 
     # Hand off to the dummy parser if necessary to generate the help
     # text
-    options = real_parser.parse_args(args)
+    options = SimpleNamespace(**vars(real_parser.parse_args(args)))
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
         exit()
@@ -612,6 +618,15 @@ def main(args=None):
             options.rich = False
             options.diagnostics('`rich` not installed, unsetting --rich')
 
+    options.code_diagnostics('Parser output:', pformat(options))
+    if module is not None:
+        options.diagnostics('Profiling module:', module)
+    elif tempfile_source_and_content:
+        options.diagnostics('Profiling script read from',
+                            tempfile_source_and_content[0])
+    else:
+        options.diagnostics('Profiling script:', options.script)
+
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
         if options.verbose < -1:  # Suppress stdout
@@ -636,9 +651,10 @@ def _write_tempfile(source, content, options, tmpdir):
     # Do what 3.14 does (#103998)... and also just to be user-friendly
     content = dedent(content)
     fname = os.path.join(tmpdir, file_prefix + '.py')
-    options.diagnostics(f'Wrote temporary script file to {fname!r}')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
+    options.code_diagnostics(f'Wrote temporary script file to {fname!r}:',
+                             content)
     options.script = fname
     # Add the tempfile to `--prof-mod`
     if options.prof_mod:
@@ -755,8 +771,6 @@ def _main(options, module=False):
     not to be invoked on its own.
     """
     def call_with_diagnostics(func, *args, **kwargs):
-        import reprlib
-
         if options.verbose < DIAGNOSITICS_VERBOSITY:
             return func(*args, **kwargs)
         if isinstance(func, MethodType):
@@ -765,11 +779,19 @@ def _main(options, module=False):
                          .format(type(obj), func.__func__))
         else:
             func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
-        get_repr = reprlib.repr
-        args_reprs = ',\n'.join(
-            [get_repr(arg) for arg in args]
-            + [f'{arg}={get_repr(value)}' for arg, value in kwargs.items()])
-        call = '{}(\n{})\n'.format(func_repr, indent(args_reprs, '    '))
+        args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
+        kwargs_repr = dedent(
+            ' ' * len('namespace(')
+            + pformat(SimpleNamespace(**kwargs))[len('namespace('):-len(')')])
+        if args_repr and kwargs_repr:
+            all_args_repr = f'{args_repr},\n{kwargs_repr}'
+        else:
+            all_args_repr = args_repr or kwargs_repr
+        if all_args_repr:
+            call = '{}(\n{})'.format(
+                func_repr, indent(all_args_repr, '    '))
+        else:
+            call = func_repr + '()'
         options.code_diagnostics('Calling:', call)
         return func(*args, **kwargs)
 
@@ -790,12 +812,10 @@ def _main(options, module=False):
         # Run some setup code outside of the profiler. This is good for large
         # imports.
         setup_file = find_script(options.setup)
-        __file__ = setup_file
-        __name__ = '__main__'
         # Make sure the script's directory is on sys.path instead of just
         # kernprof.py's.
         sys.path.insert(0, os.path.dirname(setup_file))
-        ns = locals()
+        ns = {'__file__': setup_file, '__name__': '__main__'}
         options.diagnostics(
             f'Executing file {setup_file!r} as pre-profiling setup')
         execfile(setup_file, ns, ns)
@@ -832,8 +852,6 @@ def _main(options, module=False):
         # Make sure the script's directory is on sys.path instead of
         # just kernprof.py's.
         sys.path.insert(0, os.path.dirname(script_file))
-    __file__ = script_file
-    __name__ = '__main__'
 
     # If using eager pre-imports, write a dummy module which contains
     # all those imports and marks them for profiling, then run it
@@ -863,7 +881,9 @@ def _main(options, module=False):
             execfile_ = execfile
             rmod_ = functools.partial(run_module,
                                       run_name='__main__', alter_sys=True)
-            ns = locals()
+            ns = {'__file__': script_file, '__name__': '__main__',
+                  'execfile_': execfile_, 'rmod_': rmod_,
+                  'prof': prof}
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
 
