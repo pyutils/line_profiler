@@ -73,7 +73,8 @@ which displays:
 
 .. code::
 
-    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p PROF_MOD] [--prof-imports]
+    usage: kernprof [-h] [-V] [-l] [-b] [-o OUTFILE] [-s SETUP] [-v] [-q] [-r] [-u UNIT] [-z] [-i [OUTPUT_INTERVAL]] [-p {path/to/script | object.dotted.path}[,...]]
+                    [--no-preimports] [--prof-imports]
                     {path/to/script | -m path.to.module | -c "literal code"} ...
 
     Run and profile a python script.
@@ -91,7 +92,10 @@ which displays:
       -o, --outfile OUTFILE
                             Save stats to <outfile> (default: 'scriptname.lprof' with --line-by-line, 'scriptname.prof' without)
       -s, --setup SETUP     Code to execute before the code to profile
-      -v, --view            View the results of the profile in addition to saving it
+      -v, --verbose, --view
+                            Increase verbosity level. At level 1, view the profiling results in addition to saving them; at level 2, show other diagnostic info.
+      -q, --quiet           Decrease verbosity level. At level -1, disable helpful messages (e.g. "Wrote profile results to <...>"); at level -2, silence the stdout; at level -3,
+                            silence the stderr.
       -r, --rich            Use rich formatting if viewing output
       -u, --unit UNIT       Output unit (in seconds) in which the timing info is displayed (default: 1e-6)
       -z, --skip-zero       Hide functions which have not been called

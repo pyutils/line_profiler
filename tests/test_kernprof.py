@@ -177,6 +177,90 @@ def test_kernprof_sys_restoration(capsys, error, args):
         assert sys.modules.get('__main__') is old_main
 
 
+@pytest.mark.parametrize(
+    ('flags', 'expected_stdout', 'expected_stderr'),
+    [('',  # Neutral verbosity level
+      {'^Output to stdout': True,
+       r"^Wrote .* '.*script\.py\.lprof'": True,
+       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': False,
+       r'^Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': True,
+       '^ *[0-9]+ *import zipfile': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': False,
+       r'^\[kernprof .*\]': False,
+       r'^Function: main': False},
+      {'^Output to stderr': True}),
+     ('--view',  # Verbosity level 1 = `--view`
+      {'^Output to stdout': True,
+       r"^Wrote .* '.*script\.py\.lprof'": True,
+       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': False,
+       r'^Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': False,
+       '^ *[0-9]+ *import zipfile': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': False,
+       r'^\[kernprof .*\]': False,
+       r'^Function: main': True},
+      {'^Output to stderr': True}),
+     ('-vv',  # Verbosity level 2, show diagnostics
+      {'^Output to stdout': True,
+       r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
+       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': True,
+       '^ *[0-9]+ *import zipfile': True,
+       r'Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': True,
+       r'^Function: main': True},
+      {'^Output to stderr': True}),
+     # Verbosity level -1, suppress `kernprof` output
+     ('--quiet',
+      {'^Output to stdout': True, 'Wrote': False},
+      {'^Output to stderr': True}),
+     # Verbosity level -2, suppress script stdout
+     # (also test verbosity arithmatics)
+     ('--quiet --quiet --verbose -q', None, {'^Output to stderr': True}),
+     # Verbosity level -3, suppress script stderr
+     ('-qq --quiet', None, None)])
+def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
+    """
+    Test the various verbosity levels of `kernprof`.
+    """
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = enter(tempfile.TemporaryDirectory())
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'script.py').write_text(ub.codeblock(
+            '''
+            import sys
+
+
+            def main():
+                print('Output to stdout', file=sys.stdout)
+                print('Output to stderr', file=sys.stderr)
+
+
+            if __name__ == '__main__':
+                main()
+            '''))
+        enter(ub.ChDir(tmpdir))
+        proc = ub.cmd(['kernprof', '-l',
+                       # Add an eager pre-import target
+                       '-pscript.py', '-pzipfile', '-z',
+                       *shlex.split(flags), 'script.py'])
+    proc.check_returncode()
+    print(proc.stdout)
+    for expected_outputs, stream in [(expected_stdout, proc.stdout),
+                                     (expected_stderr, proc.stderr)]:
+        if expected_outputs is None:
+            assert not stream
+            continue
+        for pattern, expect_match in expected_outputs.items():
+            assert bool(re.search(pattern, stream,
+                                  flags=re.MULTILINE)) == expect_match
+
+
 class TestKernprof(unittest.TestCase):
 
     def test_enable_disable(self):
