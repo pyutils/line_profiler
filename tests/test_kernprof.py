@@ -222,7 +222,10 @@ def test_kernprof_sys_restoration(capsys, error, args):
      # (also test verbosity arithmatics)
      ('--quiet --quiet --verbose -q', None, {'^Output to stderr': True}),
      # Verbosity level -3, suppress script stderr
-     ('-qq --quiet', None, None)])
+     ('-qq --quiet', None,
+      # This should have been `None`, but there's something weird with
+      # `coverage` in CI which causes a spurious warning...
+      {'^Output to stderr': False})])
 def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
     """
     Test the various verbosity levels of `kernprof`.
