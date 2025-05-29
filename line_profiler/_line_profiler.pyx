@@ -471,10 +471,19 @@ cdef class LineProfiler:
 
     @property
     def c_last_time(self):
+        """
+        Raises:
+            KeyError
+                If no profiling data is available on the current thread.
+        """
         try:
             return (<dict>self._c_last_time)[threading.get_ident()]
-        except KeyError:  # We haven't actually profiled anything yet
-            return {}
+        except KeyError as e:
+            # We haven't actually profiled anything yet
+            raise (KeyError('No profiling data on the current thread '
+                            '(`threading.get_ident()` = '
+                            f'{threading.get_ident()})')
+                   .with_traceback(e.__traceback__)) from None
 
     @property
     def code_map(self):

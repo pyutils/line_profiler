@@ -86,20 +86,29 @@ def test_last_time():
     are consistent.
     """
     prof = LineProfiler()
+    with pytest.raises(KeyError, match='[Nn]o profiling data'):
+        prof.c_last_time
+
+    def get_last_time(prof, *, c=False):
+        try:
+            return getattr(prof, 'c_last_time' if c else 'last_time')
+        except KeyError:
+            return {}
 
     @prof
     def func():
-        return prof.c_last_time.copy(), prof.last_time.copy()
+        return (get_last_time(prof, c=True).copy(),
+                get_last_time(prof).copy())
 
     # These are always empty outside a profiling context
     # (hence the need of the above function to capture the transient
     # values)
-    assert not prof.c_last_time
-    assert not prof.last_time
+    assert not get_last_time(prof, c=True)
+    assert not get_last_time(prof)
     # Inside `func()`, both should get an entry therefor
     clt, lt = func()
-    assert not prof.c_last_time
-    assert not prof.last_time
+    assert not get_last_time(prof, c=True)
+    assert not get_last_time(prof)
     assert set(clt) == {hash(func.__wrapped__.__code__.co_code)}
     assert set(lt) == {func.__wrapped__.__code__}
 
