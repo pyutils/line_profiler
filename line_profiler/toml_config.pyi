@@ -1,8 +1,4 @@
-import pathlib
-try:
-    import tomllib
-except ImportError:  # Python < 3.11
-    import tomli as tomllib  # type: ignore[no-redef]
+from pathlib import Path, PurePath
 from typing import Any, Dict, Mapping, Sequence, Set, Tuple, TypeVar, Union
 
 
@@ -11,15 +7,15 @@ env_var = 'LINE_PROFILER_RC'
 
 K = TypeVar('K')
 V = TypeVar('V')
-Config = Tuple[Dict[str, Dict[str, Any]], pathlib.Path]
+Config = Tuple[Dict[str, Dict[str, Any]], Path]
 NestedTable = Mapping[K, Union['NestedTable[K, V]', V]]
 
 
 def find_and_read_config_file(
         *,
-        config: Union[str, pathlib.PurePath, None] = None,
+        config: Union[str, PurePath, None] = None,
         env_var: Union[str, None] = env_var,
-        targets: Sequence[Union[str, pathlib.PurePath]] = targets) -> Config:
+        targets: Sequence[Union[str, PurePath]] = targets) -> Config:
     ...
 
 
@@ -33,7 +29,7 @@ def get_headers(table: NestedTable[K, Any], *,
     ...
 
 
-def get_config(config: Union[str, pathlib.PurePath, bool, None] = None, *,
+def get_config(config: Union[str, PurePath, bool, None] = None, *,
                read_env: bool = True) -> Config:
     ...
 

@@ -15,7 +15,7 @@ def write_text(path: pathlib.Path, text: str, /, *args, **kwargs) -> int:
 
 @pytest.fixture(autouse=True)
 def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
-                tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+                 tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
     the environment variable `${LINE_PROFILER_RC}`, nor should the
