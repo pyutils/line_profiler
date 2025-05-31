@@ -2,6 +2,7 @@ import functools
 import inspect
 import types
 from warnings import warn
+from ._line_profiler import label
 from .scoping_policy import ScopingPolicy
 
 
@@ -10,22 +11,23 @@ is_function = inspect.isfunction
 is_generator = inspect.isgeneratorfunction
 is_async_generator = inspect.isasyncgenfunction
 
-# These objects are callables, but are defined in C so we can't handle
-# them anyway
+# These objects are callables, but are defined in C(-ython) so we can't
+# handle them anyway
 C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.BuiltinMethodType,
                           types.ClassMethodDescriptorType,
                           types.MethodDescriptorType,
                           types.MethodWrapperType,
-                          types.WrapperDescriptorType)
+                          types.WrapperDescriptorType,
+                          type(label))
 
 
 def is_c_level_callable(func):
     """
     Returns:
         func_is_c_level (bool):
-            Whether a callable is defined at the C level (and is thus
-            non-profilable).
+            Whether a callable is defined at the C(-ython) level (and is
+            thus non-profilable).
     """
     return isinstance(func, C_LEVEL_CALLABLE_TYPES)
 
