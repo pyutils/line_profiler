@@ -78,7 +78,7 @@ if TYPE_CHECKING:
             ...
 
         @__dict__.setter
-        def __dict__(self, dict: str | None) -> None:
+        def __dict__(self, dict: Dict[str, Any]) -> None:
             ...
 
         @property
@@ -90,7 +90,7 @@ if TYPE_CHECKING:
             ...
 
         @__annotations__.setter
-        def __annotations__(self, annotations: str | None) -> None:
+        def __annotations__(self, annotations: Dict[str, Any]) -> None:
             ...
 
         @property
