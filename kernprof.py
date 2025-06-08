@@ -128,6 +128,7 @@ NOTE:
     To restore the old behavior, pass the :option:`!--no-preimports`
     flag.
 """
+import atexit
 import builtins
 import functools
 import os
@@ -136,9 +137,9 @@ import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import contextlib
+import shutil
 import tempfile
 import time
-import traceback
 import warnings
 from argparse import ArgumentError, ArgumentParser
 from datetime import datetime
@@ -280,7 +281,6 @@ def _python_command():
     """
     Return a command that corresponds to :py:data:`sys.executable`.
     """
-    import shutil
     for abbr in 'python', 'python3':
         if os.path.samefile(shutil.which(abbr), sys.executable):
             return abbr
@@ -680,6 +680,11 @@ def _write_preimports(prof, options, exclude):
     """
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
+
+    Notes
+    -----
+    For the preservation of traceback messages, deletion of the
+    tempfiles created may be deferred to when the interpretor exits.
     """
     from line_profiler.autoprofile.eager_preimports import (
         is_dotted_path, propose_names, write_eager_import_module)
@@ -694,14 +699,15 @@ def _write_preimports(prof, options, exclude):
         if is_dotted_path(target):
             modname = target
         else:
-            # Paths already normalized by `_normalize_profiling_targets()`
+            # Paths already normalized by
+            # `_normalize_profiling_targets()`
             if not os.path.exists(target):
                 invalid_targets.append(target)
                 continue
             if any(os.path.samefile(target, excluded) for excluded in exclude):
                 # Ignore the script to be run in eager importing
-                # (`line_profiler.autoprofile.autoprofile.run()` will handle
-                # it)
+                # (`line_profiler.autoprofile.autoprofile.run()` will
+                # handle it)
                 continue
             modname = modpath_to_modname(target, hide_init=False)
         if modname is None:  # Not import-able
@@ -723,20 +729,20 @@ def _write_preimports(prof, options, exclude):
         warnings.warn(msg)
     if not (filtered_targets or recurse_targets):
         return
-    # - We could've done everything in-memory with `io.StringIO` and
-    #   `exec()`, but that results in indecipherable tracebacks should
-    #   anything goes wrong;
-    #   so we write to a tempfile and `execfile()` it
-    # - While this works theoretically for preserving traceback, the
-    #   catch is that the tempfile will already have been deleted by the
-    #   time the traceback is formatted;
-    #   so we have to format the traceback and manually print the
-    #   context before re-raising the error
+    # We could've done everything in-memory with `io.StringIO` and
+    # `exec()`, but that results in indecipherable tracebacks should
+    # anything goes wrong;
+    # so we write to a tempfile and `execfile()` it
     upgrade_profiler(prof)
     temp_mod_name = next(
         name for name in propose_names(['_kernprof_eager_preimports'])
         if name not in sys.modules)
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Don't use `tempfile.TemporaryDirectory` here, or the pre-import
+    # module will have been deleted by the time the traceback is
+    # formatted
+    tmpdir = tempfile.mkdtemp()
+    remove = functools.partial(shutil.rmtree, tmpdir, ignore_errors=True)
+    try:
         temp_mod_path = os.path.join(tmpdir, temp_mod_name + '.py')
         write_module = functools.partial(
             write_eager_import_module, filtered_targets,
@@ -755,17 +761,18 @@ def _write_preimports(prof, options, exclude):
         else:
             with temp_file as fobj:
                 write_module(stream=fobj)
+    except Exception:  # Tempfile creation failed
+        remove()
+        raise
+    try:
         ns = {}  # Use a fresh namespace
-        try:
-            execfile(temp_mod_path, ns, ns)
-        except Exception as e:
-            tb_lines = traceback.format_tb(e.__traceback__)
-            i_last_temp_frame = max(
-                i for i, line in enumerate(tb_lines)
-                if temp_mod_path in line)
-            print('\nContext:', ''.join(tb_lines[i_last_temp_frame:]),
-                  end='', sep='\n', file=sys.stderr)
-            raise
+        execfile(temp_mod_path, ns, ns)
+    except BaseException:
+        # Defer deletion to after the traceback has been formatted
+        atexit.register(remove)
+        raise
+    else:  # Delete the tempfiles ASAP
+        remove()
 
 
 def _main(options, module=False):

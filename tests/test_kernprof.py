@@ -264,6 +264,44 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
                                   flags=re.MULTILINE)) == expect_match
 
 
+def test_kernprof_eager_preimport_bad_module():
+    """
+    Test for the proper error messages when an error occurs in an
+    auto-generated pre-import module.
+    """
+    bad_module = '''raise Exception('Boo')'''
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = enter(tempfile.TemporaryDirectory())
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'my_bad_module.py').write_text(bad_module)
+        enter(ub.ChDir(tmpdir))
+        python_path = os.environ.get('PYTHONPATH', '')
+        if python_path:
+            python_path = f'{python_path}:{tmpdir}'
+        else:
+            python_path = tmpdir
+        proc = ub.cmd(['kernprof', '-l',
+                       # Add an eager pre-import target
+                       '-pmy_bad_module', '-c', 'print(1)'],
+                      env={**os.environ, 'PYTHONPATH': python_path})
+    # Check that the traceback is preserved
+    print(proc.stdout)
+    print(proc.stderr, file=sys.stderr)
+    assert proc.returncode
+    assert 'import my_bad_module' in proc.stderr
+    assert bad_module in proc.stderr
+    # Check that the generated tempfiles are wiped
+    reverse_iter_lines = iter(reversed(proc.stderr.splitlines()))
+    next(line for line in reverse_iter_lines if 'import my_bad_module' in line)
+    tb_header = next(reverse_iter_lines).strip()
+    match = re.match('File ([\'"])(.+)\\1, line [0-9]+, in .*', tb_header)
+    assert match
+    tmp_mod = match.group(2)
+    assert not os.path.exists(tmp_mod)
+    assert not os.path.exists(os.path.dirname(tmp_mod))
+
+
 class TestKernprof(unittest.TestCase):
 
     def test_enable_disable(self):
