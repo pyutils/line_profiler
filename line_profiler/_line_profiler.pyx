@@ -530,35 +530,29 @@ cdef class LineProfiler:
         """
         cdef dict cmap = self._c_code_map
 
-        stats = {}
+        all_entries = {}
         for code in self.code_hash_map:
             entries = []
             for entry in self.code_hash_map[code]:
-                entries += list(cmap[entry].values())
+                entries.extend(cmap[entry].values())
             key = label(code)
 
-            # Merge duplicate line numbers, which occur for branch entrypoints like `if`
-            nhits_by_lineno = {}
-            total_time_by_lineno = {}
+            # Merge duplicate line numbers, which occur for branch
+            # entrypoints like `if`
+            entries_by_lineno = all_entries.setdefault(key, {})
 
             for line_dict in entries:
                  _, lineno, total_time, nhits = line_dict.values()
-                 nhits_by_lineno[lineno] = nhits_by_lineno.setdefault(lineno, 0) + nhits
-                 total_time_by_lineno[lineno] = total_time_by_lineno.setdefault(lineno, 0) + total_time
+                 orig_nhits, orig_total_time = entries_by_lineno.get(
+                     lineno, (0, 0))
+                 entries_by_lineno[lineno] = (orig_nhits + nhits,
+                                              orig_total_time + total_time)
 
-            entries = [(lineno, nhits, total_time_by_lineno[lineno]) for lineno, nhits in nhits_by_lineno.items()]
-            entries.sort()
-
-            # NOTE: v4.x may produce more than one entry per line. For example:
-            #   1:  for x in range(10):
-            #   2:      pass
-            #  will produce a 1-hit entry on line 1, and 10-hit entries on lines 1 and 2
-            #  This doesn't affect `print_stats`, because it uses the last entry for a given line (line number is
-            #  used a dict key so earlier entries are overwritten), but to keep compatability with other tools,
-            #  let's only keep the last entry for each line
-            # Remove all but the last entry for each line
-            entries = list({e[0]: e for e in entries}.values())
-            stats[key] = entries
+        # Aggregate the timing data
+        stats = {
+            key: sorted((line, nhits, time)
+                        for line, (nhits, time) in entries_by_lineno.items())
+            for key, entries_by_lineno in all_entries.items()}
         return LineStats(stats, self.timer_unit)
 
 
