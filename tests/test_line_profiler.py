@@ -781,3 +781,37 @@ def test_multiple_profilers_usage():
     assert t2['sum_n'][2][1] == n
     assert t1['sum_n_sq'][2][1] == n
     assert t2['sum_n_cb'][2][1] == n
+
+
+def test_duplicate_code_objects():
+    """
+    Test that results are correctly aggregated between duplicate code
+    objects.
+    """
+    code = textwrap.dedent("""
+    @profile
+    def func(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+    """).strip('\n')
+    profile = LineProfiler()
+    # Create and call the function once
+    namespace_1 = {'profile': profile}
+    exec(code, namespace_1)
+    assert 'func' in namespace_1
+    assert len(profile.functions) == 1
+    assert namespace_1['func'].__wrapped__ in profile.functions
+    assert namespace_1['func'](10) == 10 * 11 // 2
+    # Do it again
+    namespace_2 = {'profile': profile}
+    exec(code, namespace_2)
+    assert 'func' in namespace_2
+    assert len(profile.functions) == 2
+    assert namespace_2['func'].__wrapped__ in profile.functions
+    assert namespace_2['func'](20) == 20 * 21 // 2
+    # Check that data from both calls are aggregated
+    # (Entries are represented as tuples `(lineno, nhits, time)`)
+    entries, = profile.get_stats().timings.values()
+    assert entries[-2][1] == 10 + 20
