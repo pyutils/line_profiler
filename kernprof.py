@@ -828,6 +828,31 @@ def _main(options, module=False):
         options.code_diagnostics('Calling:', call)
         return func(*args, **kwargs)
 
+    def dump_filtered_stats(prof, filename):
+        import pickle
+
+        tempfile_checks = {functools.partial(os.path.samefile,
+                                             os.path.join(dirname, fname))
+                           for dirname, _, fnames in os.walk(options.tmpdir)
+                           for fname in fnames}
+        if not tempfile_checks:
+            return prof.dump_stats(filename)
+        # Filter the filenames to remove data from tempfiles, which will
+        # have been deleted by the time the results are viewed in a
+        # separate process
+        stats = prof.get_stats()
+        timings = stats.timings
+        for key in set(timings):
+            fname, *_ = key
+            try:
+                del_key = any(check(fname) for check in tempfile_checks)
+            except OSError:
+                del_key = True
+            if del_key:
+                del timings[key]
+        with open(filename, mode='wb') as fobj:
+            pickle.dump(stats, fobj, protocol=pickle.HIGHEST_PROTOCOL)
+
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = f'{os.path.basename(options.script)}.{extension}'
@@ -942,7 +967,7 @@ def _main(options, module=False):
     finally:
         if options.output_interval:
             rt.stop()
-        prof.dump_stats(options.outfile)
+        dump_filtered_stats(prof, options.outfile)
         options.message(f'Wrote profile results to {options.outfile!r}')
         if options.verbose > 0:
             if isinstance(prof, ContextualProfile):

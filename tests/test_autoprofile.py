@@ -586,14 +586,14 @@ def test_autoprofile_from_stdin(
             proc.check_returncode()
 
         outfile, = temp_dpath.glob(expected_outfile)
+        lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
+        lp_proc = ub.cmd(lp_cmd)
+        lp_proc.check_returncode()
         if view:
             raw_output = proc.stdout
         else:
-            lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
-            proc = ub.cmd(lp_cmd)
-            raw_output = proc.stdout
+            raw_output = lp_proc.stdout
             print(raw_output)
-            proc.check_returncode()
 
     assert ('Function: add_one' in raw_output) == prof_mod
     assert 'Function: add_two' not in raw_output
@@ -601,6 +601,9 @@ def test_autoprofile_from_stdin(
     # If we're calling a separate process to view the results, the
     # script file will already have been deleted
     assert ('Function: main' in raw_output) == view
+    # Check that `main()` is scrubbed from the written file and doesn't
+    # result in spurious error messages
+    assert 'Could not find file' not in lp_proc.stdout
 
 
 @pytest.mark.parametrize(
