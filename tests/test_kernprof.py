@@ -2,6 +2,7 @@ import contextlib
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -266,8 +267,8 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
 
 def test_kernprof_eager_preimport_bad_module():
     """
-    Test for the proper error messages when an error occurs in an
-    auto-generated pre-import module.
+    Test for the preservation of the full traceback when an error occurs
+    in an auto-generated pre-import module.
     """
     bad_module = '''raise Exception('Boo')'''
     with contextlib.ExitStack() as stack:
@@ -300,6 +301,40 @@ def test_kernprof_eager_preimport_bad_module():
     tmp_mod = match.group(2)
     assert not os.path.exists(tmp_mod)
     assert not os.path.exists(os.path.dirname(tmp_mod))
+
+
+@pytest.mark.parametrize('stdin', [True, False])
+def test_kernprof_bad_temp_script(stdin):
+    """
+    Test for the preservation of the full traceback when an error occurs
+    in a temporary script supplied via `kernprof -c` or `kernprof -`.
+    """
+    bad_script = '''1 / 0'''
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        if stdin:
+            proc = subprocess.run(
+                ['kernprof', '-'],
+                input=bad_script, capture_output=True, text=True)
+        else:
+            proc = subprocess.run(['kernprof', '-c', bad_script],
+                                  capture_output=True, text=True)
+    # Check that the traceback is preserved
+    print(proc.stdout)
+    print(proc.stderr, file=sys.stderr)
+    assert proc.returncode
+    assert '1 / 0' in proc.stderr
+    assert 'ZeroDivisionError' in proc.stderr
+    # Check that the generated tempfiles are wiped
+    reverse_iter_lines = iter(reversed(proc.stderr.splitlines()))
+    next(line for line in reverse_iter_lines if '1 / 0' in line)
+    tb_header = next(reverse_iter_lines).strip()
+    match = re.match('File ([\'"])(.+)\\1, line [0-9]+, in .*', tb_header)
+    assert match
+    tmp_script = match.group(2)
+    assert not os.path.exists(tmp_script)
+    assert not os.path.exists(os.path.dirname(tmp_script))
 
 
 class TestKernprof(unittest.TestCase):
