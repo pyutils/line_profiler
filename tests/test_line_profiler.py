@@ -41,6 +41,14 @@ def strip(s):
     return textwrap.dedent(s).strip('\n')
 
 
+def get_prof_stats(prof, name='prof', **kwargs):
+    with io.StringIO() as sio:
+        prof.print_stats(sio, **kwargs)
+        output = sio.getvalue()
+        print(f'@{name}:', textwrap.indent(output, '  '), sep='\n\n')
+    return output
+
+
 class check_timings:
     """
     Verify that the profiler starts without timing data and ends with
@@ -252,10 +260,7 @@ def test_classmethod_decorator():
     assert profile.enable_count == 0
     assert len(profile.functions) == 1
     assert Object.foo() == Object().foo() == 'ObjectObject'
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
@@ -286,10 +291,7 @@ def test_staticmethod_decorator():
     assert profile.enable_count == 0
     assert len(profile.functions) == 1
     assert Object.foo(3) == Object().foo(3) == 6
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
@@ -327,10 +329,7 @@ def test_boundmethod_decorator():
             == profiled_foo_2(2)
             == obj.foo(2)
             == id(obj) * 2)
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* x'))
@@ -363,10 +362,7 @@ def test_partialmethod_decorator():
     assert profile.enable_count == 0
     assert profile.functions == [Object.foo]
     assert obj.foo(1) == obj.bar() == id(obj)
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()` (via `.bar()`)
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* x'))
@@ -403,10 +399,7 @@ def test_partial_decorator() -> None:
             == bar(3)
             == foo(2, 3)
             == 5)
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `foo()`
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('x + y'))
@@ -452,10 +445,7 @@ def test_property_decorator():
     obj.foo = 10  # Use setter
     assert obj.x == 5
     assert obj.foo == 10  # Use getter
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
-    print(output)
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo`
     assert output.endswith('foo')
     getter_line, = (line for line in output.splitlines()
@@ -495,9 +485,7 @@ def test_cached_property_decorator():
     obj = Object(3)
     assert obj.foo == 6  # Use getter
     assert obj.foo == 6  # Getter not called because it's cached
-    with io.StringIO() as sio:
-        profile.print_stats(stream=sio, summarize=True)
-        output = strip(sio.getvalue())
+    output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo`
     assert output.endswith('foo')
     line, = (line for line in output.splitlines() if line.endswith('* 2'))
@@ -713,10 +701,7 @@ def test_profile_generated_code():
     profiled_fn = profiler(fn)
     profiled_fn()
 
-    import io
-    s = io.StringIO()
-    profiler.print_stats(stream=s)
-    output = s.getvalue()
+    output = get_prof_stats(profiler, 'profiler')
 
     # Check that the output contains the generated code's source lines
     for line in code_lines:
@@ -900,13 +885,13 @@ def test_multiple_profilers_identical_bytecode(
 
     if force_same_line_numbers:
         funcs = {}
-        pattern = textwrap.dedent("""
+        pattern = strip("""
         def func{0}():
             result = []
             for _ in range({0}):
                 result.append({0})
             return result
-            """).strip('\n')
+            """)
         for i in [1, 2, 3, 4]:
             tempfile = tmp_path / f'func{i}.py'
             source = pattern.format(i)
@@ -964,11 +949,41 @@ def test_multiple_profilers_identical_bytecode(
                 for func in profiled_funcs}) == len(profiled_funcs)
     # Check the profiling results
     for name, prof in sorted(all_profs.items()):
-        with io.StringIO() as sio:
-            prof.print_stats(sio, summarize=True)
-            output = sio.getvalue()
-            print(f'@{name}:', textwrap.indent(output, '  '), sep='\n\n')
+        output = get_prof_stats(prof, name=name, summarize=True)
         for func_id, decs in all_dec_names.items():
             profiled = name in decs
             check_seen(name, output, func_id, profiled)
             check_has_profiling_data(name, output, func_id, profiled)
+
+
+def test_aggregate_profiling_data_between_code_versions():
+    """
+    Test that profiling data from previous versions of the code object
+    are preserved when another profiler causes the code object of a
+    function to be overwritten.
+    """
+    def func(n):
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+
+    prof1 = LineProfiler()
+    prof2 = LineProfiler()
+
+    # Gather data with `@prof1`
+    wrapper1 = prof1(func)
+    assert wrapper1(10) == 10 * 11 // 2
+    code = func.__code__
+    # Gather data with `@prof2`; the code object is overwritten here
+    wrapper2 = prof2(wrapper1)
+    assert func.__code__ != code
+    assert wrapper2(15) == 15 * 16 // 2
+    # Despite the overwrite of the code object, the old data should
+    # still remain, and be aggregated with the new data when calling
+    # `prof1.get_stats()`
+    for prof, name, count in (prof1, 'prof1', 25), (prof2, 'prof2', 15):
+        result = get_prof_stats(prof, name)
+        loop_body = next(line for line in result.splitlines()
+                         if line.endswith('x += n'))
+        assert loop_body.split()[1] == str(count)
