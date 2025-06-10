@@ -378,27 +378,36 @@ cdef class LineProfiler:
         co_code: bytes = code.co_code
         code_hashes = []
         if any(co_code):  # Normal Python functions
+            base_co_code: bytes = co_code
+            # Figure out how much padding we need and strip the bytecode
+            # TODO: is there a way to do this faster? `.rstrip()` doesn't
+            # work (reliably) since `NOP_BYTES` should be 2-byte wide
+            npad_code: int = 0
+            nop_len: int = -len(NOP_BYTES)
+            while base_co_code.endswith(NOP_BYTES):
+                base_co_code = base_co_code[:nop_len]
+                npad_code += 1
             try:
-                npad = self._all_paddings[co_code]
-                self._all_paddings[co_code] = npad + 1
+                npad = self._all_paddings[base_co_code]
             except KeyError:
                 npad = 0
-                self._all_paddings[co_code] = 1
+            self._all_paddings[base_co_code] = max(npad, npad_code) + 1
             try:
                 neighbors = self._all_instances_by_funcs[func_id]
                 neighbors.add(self)
             except KeyError:
-                neighbors = self._all_instances_by_funcs[func_id] = WeakSet({self})
+                neighbors = self._all_instances_by_funcs[func_id] = WeakSet(
+                    {self})
             # Maintain `.dupes_map` (legacy)
             try:
-                self.dupes_map[co_code].append(code)
+                self.dupes_map[base_co_code].append(code)
             except KeyError:
-                self.dupes_map[co_code] = [code]
-            if npad:
+                self.dupes_map[base_co_code] = [code]
+            if npad > npad_code:
                 # Code hash already exists, so there must be a duplicate
                 # function (on some instance);
-                # add no-op
-                co_code += NOP_BYTES * npad
+                # (re-)pad with no-op
+                co_code = base_co_code + NOP_BYTES * npad
                 code = _code_replace(func, co_code=co_code)
                 try:
                     func.__code__ = code

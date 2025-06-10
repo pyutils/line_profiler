@@ -845,14 +845,12 @@ def test_duplicate_code_objects():
         '-func3:p3:p4:p1'
         '-func4:p2:p1:p4',
         # Misc. edge cases
-        # - Note: while the following results in `func1()` and `func2()`
-        #   sharing the same bytecodes, the profiler `p3` is nonetheless
-        #   able to distinguish between the two (when the functions have
-        #   distinct line numbers), because they are defined on
-        #   different lines and thus hashed to different line hashes
-        'func1:p1:p2'  # `func1()` padded once
-        '-func2:p3'  # `func2()` padded twice
-        '-func1:p4:p3',  # `func1()` padded once (again)
+        # - Naive padding of the following case would cause `func1()`
+        #   and `func2()` to end up with the same bytecode, so guard
+        #   against it
+        'func1:p1:p2'  # `func1()` padded once?
+        '-func2:p3'  # `func2()` padded twice?
+        '-func1:p4:p3',  # `func1()` padded once (again)?
     ])
 def test_multiple_profilers_identical_bytecode(
         tmp_path, ops, force_same_line_numbers):
@@ -862,10 +860,12 @@ def test_multiple_profilers_identical_bytecode(
 
     Notes
     -----
-    `ops` should consist of chunks joined by hyphens, where each chunk
-    has the format `<func_id>:<prof_name>[:<prof_name>[...]]`,
-    indicating that the profilers are to be used in order to decorate
-    the specified function.
+    - `ops` should consist of chunks joined by hyphens, where each chunk
+      has the format `<func_id>:<prof_name>[:<prof_name>[...]]`,
+      indicating that the profilers are to be used in order to decorate
+      the specified function.
+    - `force_same_line_numbers` is used to coerce all functions to
+      compile down to code objects with the same line numbers.
     """
     def check_seen(name, output, func_id, expected):
         lines = [line for line in output.splitlines()
@@ -941,11 +941,11 @@ def test_multiple_profilers_identical_bytecode(
                  'func3': func3, 'func4': func4}
 
     # Apply the decorators in order
-    all_dec_names = {}
+    all_dec_names = {f'func{i}': set() for i in [1, 2, 3, 4]}
     all_profs = {}
     for op in ops.split('-'):
         func_id, *profs = op.split(':')
-        all_dec_names.setdefault(func_id, set()).update(profs)
+        all_dec_names[func_id].update(profs)
         for name in profs:
             try:
                 prof = all_profs[name]
@@ -957,6 +957,11 @@ def test_multiple_profilers_identical_bytecode(
     assert funcs['func2']() == [2, 2]
     assert funcs['func3']() == [3, 3, 3]
     assert funcs['func4']() == [4, 4, 4, 4]
+    # Check that the bytecodes of the profiled functions are distinct
+    profiled_funcs = {funcs[name].__line_profiler_id__.func
+                      for name, decs in all_dec_names.items() if decs}
+    assert len({func.__code__.co_code
+                for func in profiled_funcs}) == len(profiled_funcs)
     # Check the profiling results
     for name, prof in sorted(all_profs.items()):
         with io.StringIO() as sio:
