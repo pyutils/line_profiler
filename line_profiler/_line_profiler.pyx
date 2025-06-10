@@ -413,6 +413,8 @@ cdef class LineProfiler:
                     func.__code__ = code
                 except AttributeError as e:
                     func.__func__.__code__ = code
+            else:  # No re-padding -> no need to update the neighbors
+                neighbors = {self}
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over
@@ -446,7 +448,8 @@ cdef class LineProfiler:
             code = code.replace(co_filename=cython_source)
             neighbors = {self}
         # Update `._c_code_map` and `.code_hash_map` with the new line
-        # hashes on `self` and other instances profiling the same func
+        # hashes on `self` (and other instances profiling the same
+        # function if we padded the bytecode)
         for instance in neighbors:
             prof = <LineProfiler>instance
             try:
