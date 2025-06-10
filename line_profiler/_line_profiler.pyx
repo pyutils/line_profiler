@@ -26,6 +26,7 @@ import threading
 import opcode
 import os
 import types
+from weakref import WeakSet
 
 NOP_VALUE: int = opcode.opmap['NOP']
 
@@ -318,8 +319,12 @@ cdef class LineProfiler:
     cdef public double timer_unit
     cdef public object threaddata
 
-    # This is shared between instances and threads
+    # These are shared between instances and threads
+    # type: dict[int, set[LineProfiler]], int = thread id
     _all_active_instances = {}
+    # type: dict[bytes, tuple[int, weakref.WeakSet[LineProfiler]]]
+    # Wher bytes = bytecode, int = padding length
+    _all_instances_by_bcodes = {}
 
     def __init__(self, *functions):
         self.functions = []
@@ -353,22 +358,57 @@ cdef class LineProfiler:
                 warnings.warn("Could not extract a code object for the object %r" % (func,))
                 return
 
+        # Note: if we are to alter the code object, other profilers
+        # which previously added this function would still expect the
+        # old bytecode, and thus will not see anything when the function
+        # is executed;
+        # hence:
+        # - When doing bytecode padding, take into account all instances
+        #   which refers to the same base bytecode to ensure
+        #   disambiguation
+        # - Update all existing instances referring to the old code
+        #   object
+        # Since no code padding is/can be done with Cython mock
+        # "code objects", it is *probably* okay to only do the special
+        # handling on the non-Cython branch.
+        # XXX: tests for the above assertion if necessary
+        original_code_obj = code
+        original_bcode = code.co_code
+        instances_to_update = {self}
         code_hashes = []
-        if any(code.co_code):  # Normal Python functions
-            if code.co_code in self.dupes_map:
-                self.dupes_map[code.co_code] += [code]
-                # code hash already exists, so there must be a duplicate
-                # function. add no-op
-                co_padding : bytes = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
-                co_code = code.co_code + co_padding
-                CodeType = type(code)
+        if any(original_bcode):  # Normal Python functions
+            try:
+                npad, neighbors = self._all_instances_by_bcodes[original_bcode]
+                neighbors.add(self)
+            except KeyError:
+                npad = 0
+                neighbors = WeakSet({self})
+                self._all_instances_by_bcodes[original_bcode] = (0, neighbors)
+            if npad:
+                # Code hash already exists, so there must be a duplicate
+                # function (on some instance);
+                # add no-op
+                co_code = original_bcode + NOP_BYTES * npad
                 code = _code_replace(func, co_code=co_code)
                 try:
                     func.__code__ = code
                 except AttributeError as e:
                     func.__func__.__code__ = code
-            else:
-                self.dupes_map[code.co_code] = [code]
+            try:
+                self.dupes_map[original_bcode].append(code)
+            except KeyError:
+                self.dupes_map[original_bcode] = [code]
+            # If we padded the bytecode, identify other instances
+            # profiling the same CODE OBJECT, replacing the original
+            # code object with the new one and marking those instances
+            # for further updates
+            if npad:
+                for instance in neighbors:
+                    code_objs = instance.dupes_map[original_bcode]
+                    for i, code_obj in enumerate(code_objs):
+                        if code_obj is original_code_obj:
+                            instances_to_update.add(instance)
+                            code_objs[i] = code
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over
@@ -400,13 +440,19 @@ cdef class LineProfiler:
             # We can't replace the code object on Cython functions, but
             # we can *store* a copy with the correct metadata
             code = code.replace(co_filename=cython_source)
-        for code_hash in code_hashes:
-            if not self._c_code_map.count(code_hash):
-                try:
-                    self.code_hash_map[code].append(code_hash)
-                except KeyError:
-                    self.code_hash_map[code] = [code_hash]
-                self._c_code_map[code_hash]
+        # Update `._c_code_map` and `.code_hash_map` with the new line
+        # hashes on `self` and other instances profiling the same func
+        for instance in instances_to_update:
+            prof = <LineProfiler>instance
+            try:
+                line_hashes = prof.code_hash_map[code]
+            except KeyError:
+                line_hashes = prof.code_hash_map[code] = []
+            for code_hash in code_hashes:
+                line_hash = <int64>code_hash
+                if not prof._c_code_map.count(line_hash):
+                    line_hashes.append(line_hash)
+                    prof._c_code_map[line_hash]
 
         self.functions.append(func)
 
