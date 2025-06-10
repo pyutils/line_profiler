@@ -815,3 +815,155 @@ def test_duplicate_code_objects():
     # (Entries are represented as tuples `(lineno, nhits, time)`)
     entries, = profile.get_stats().timings.values()
     assert entries[-2][1] == 10 + 20
+
+
+@pytest.mark.parametrize('force_same_line_numbers', [True, False])
+@pytest.mark.parametrize(
+    'ops',
+    [
+        # Replication of the problematic case in issue #350
+        'func1:prof_all'
+        '-func2:prof_some:prof_all'
+        '-func3:prof_all'
+        '-func4:prof_some:prof_all',
+        # Invert the order of decoration
+        'func1:prof_all'
+        '-func2:prof_all:prof_some'
+        '-func3:prof_all'
+        '-func4:prof_all:prof_some',
+        # More profiler stacks
+        'func1:p1:p2'
+        '-func2:p2:p3'
+        '-func3:p3:p4'
+        '-func4:p4:p1',
+        'func1:p1:p2:p3'
+        '-func2:p2:p3:p4'
+        '-func3:p3:p4:p1'
+        '-func4:p4:p1:p2',
+        'func1:p1:p2:p3'
+        '-func2:p4:p3:p2'
+        '-func3:p3:p4:p1'
+        '-func4:p2:p1:p4',
+        # Misc. edge cases
+        # - Note: while the following results in `func1()` and `func2()`
+        #   sharing the same bytecodes, the profiler `p3` is nonetheless
+        #   able to distinguish between the two (when the functions have
+        #   distinct line numbers), because they are defined on
+        #   different lines and thus hashed to different line hashes
+        'func1:p1:p2'  # `func1()` padded once
+        '-func2:p3'  # `func2()` padded twice
+        '-func1:p4:p3',  # `func1()` padded once (again)
+    ])
+def test_multiple_profilers_identical_bytecode(
+        tmp_path, ops, force_same_line_numbers):
+    """
+    Test that functions compiling down to the same bytecode are
+    correctly handled between multiple profilers.
+
+    Notes
+    -----
+    `ops` should consist of chunks joined by hyphens, where each chunk
+    has the format `<func_id>:<prof_name>[:<prof_name>[...]]`,
+    indicating that the profilers are to be used in order to decorate
+    the specified function.
+    """
+    def check_seen(name, output, func_id, expected):
+        lines = [line for line in output.splitlines()
+                 if line.startswith('Function: ')]
+        if any(func_id in line for line in lines) == expected:
+            return
+        if expected:
+            raise AssertionError(
+                f'profiler `@{name}` didn\'t see `{func_id}()`')
+        raise AssertionError(
+            f'profiler `@{name}` saw `{func_id}()`')
+
+    def check_has_profiling_data(name, output, func_id, expected):
+        assert func_id.startswith('func')
+        nloops = func_id[len('func'):]
+        try:
+            line = next(line for line in output.splitlines()
+                        if line.endswith(f'result.append({nloops})'))
+        except StopIteration:
+            if expected:
+                raise AssertionError(
+                    f'profiler `@{name}` didn\'t see `{func_id}()`')
+            else:
+                return
+        if (line.split()[1] == nloops) == expected:
+            return
+        if expected:
+            raise AssertionError(
+                f'profiler `@{name}` didn\'t get data from `{func_id}()`')
+        raise AssertionError(
+            f'profiler `@{name}` got data from `{func_id}()`')
+
+    if force_same_line_numbers:
+        funcs = {}
+        pattern = textwrap.dedent("""
+        def func{0}():
+            result = []
+            for _ in range({0}):
+                result.append({0})
+            return result
+            """).strip('\n')
+        for i in [1, 2, 3, 4]:
+            tempfile = tmp_path / f'func{i}.py'
+            source = pattern.format(i)
+            tempfile.write_text(source)
+            exec(compile(source, str(tempfile), 'exec'), funcs)
+    else:
+        def func1():
+            result = []
+            for _ in range(1):
+                result.append(1)
+            return result
+
+        def func2():
+            result = []
+            for _ in range(2):
+                result.append(2)
+            return result
+
+        def func3():
+            result = []
+            for _ in range(3):
+                result.append(3)
+            return result
+
+        def func4():
+            result = []
+            for _ in range(4):
+                result.append(4)
+            return result
+
+        funcs = {'func1': func1, 'func2': func2,
+                 'func3': func3, 'func4': func4}
+
+    # Apply the decorators in order
+    all_dec_names = {}
+    all_profs = {}
+    for op in ops.split('-'):
+        func_id, *profs = op.split(':')
+        all_dec_names.setdefault(func_id, set()).update(profs)
+        for name in profs:
+            try:
+                prof = all_profs[name]
+            except KeyError:
+                prof = all_profs[name] = LineProfiler()
+            funcs[func_id] = prof(funcs[func_id])
+    # Call each function once
+    assert funcs['func1']() == [1]
+    assert funcs['func2']() == [2, 2]
+    assert funcs['func3']() == [3, 3, 3]
+    assert funcs['func4']() == [4, 4, 4, 4]
+    # Check the profiling results
+    for name, prof in sorted(all_profs.items()):
+        with io.StringIO() as sio:
+            prof.print_stats(sio, summarize=True)
+            output = sio.getvalue()
+            print(f'@{name}:', textwrap.indent(output, '  '), sep='\n\n')
+        for func_id, decs in all_dec_names.items():
+            profiled = name in decs
+            check_seen(name, output, func_id, profiled)
+            check_has_profiling_data(name, output, func_id, profiled)
