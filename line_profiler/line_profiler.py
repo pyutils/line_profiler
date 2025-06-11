@@ -12,6 +12,7 @@ import pickle
 import sys
 import tempfile
 import types
+import tokenize
 from argparse import ArgumentError, ArgumentParser
 from datetime import datetime
 
@@ -36,6 +37,46 @@ def load_ipython_extension(ip):
     """
     from .ipython_extension import LineProfilerMagics
     ip.register_magics(LineProfilerMagics)
+
+
+def get_code_block(filename, lineno):
+    """
+    Get the lines in the code block in a file starting from required
+    line number; understands Cython code.
+
+    Args:
+        filename (Union[os.PathLike, str])
+            Path to the source file.
+        lineno (int)
+            1-indexed line number of the first line in the block.
+
+    Returns:
+        lines (list[str])
+            Newline-terminated string lines.
+    """
+    BlockFinder = inspect.BlockFinder
+    namespace = inspect.getblock.__globals__
+    namespace['BlockFinder'] = _CythonBlockFinder
+    try:
+        return inspect.getblock(linecache.getlines(filename)[lineno - 1:])
+    finally:
+        namespace['BlockFinder'] = BlockFinder
+
+
+class _CythonBlockFinder(inspect.BlockFinder):
+    """
+    Compatibility layer turning Cython-specific code blocks (`cdef`,
+    `cpdef`, and legacy `property` declaration) into something that is
+    understood by `inspect.BlockFinder`.
+    """
+    def tokeneater(self, type, token, *args, **kwargs):
+        if (
+                not self.started
+                and type == tokenize.NAME
+                and token in ('cdef', 'cpdef', 'property')):
+            # Fudge the token to get the desired 'scoping' behavior
+            token = 'def'
+        return super().tokeneater(type, token, *args, **kwargs)
 
 
 class _WrapperInfo:
@@ -462,8 +503,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         if os.path.exists(filename):
             # Clear the cache to ensure that we get up-to-date results.
             linecache.clearcache()
-        all_lines = linecache.getlines(filename)
-        sublines = inspect.getblock(all_lines[start_lineno - 1:])
+        sublines = get_code_block(filename, start_lineno)
     else:
         stream.write('\n')
         stream.write(f'Could not find file {filename}\n')

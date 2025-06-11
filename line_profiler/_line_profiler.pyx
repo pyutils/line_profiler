@@ -336,11 +336,10 @@ cdef class LineProfiler:
                     PyCode_Addr2Line(<PyCodeObject*>code, offset))
                 code_hashes.append(code_hash)
         else:  # Cython functions
-            from linecache import getlines
-            from inspect import getblock
+            from line_profiler.line_profiler import get_code_block
 
             lineno = code.co_firstlineno
-            nlines = len(getblock(getlines(code.co_filename)[lineno - 1:]))
+            nlines = len(get_code_block(code.co_filename, lineno))
             block_hash = hash(code)
             for lineno in range(lineno, lineno + nlines):
                 code_hash = compute_line_hash(block_hash, lineno)
