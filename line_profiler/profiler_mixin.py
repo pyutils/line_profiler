@@ -1,6 +1,7 @@
 import functools
 import inspect
 import types
+from sys import version_info
 from warnings import warn
 from .scoping_policy import ScopingPolicy
 
@@ -19,15 +20,18 @@ C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.MethodWrapperType,
                           types.WrapperDescriptorType)
 
+# Can't line-profile Cython in 3.12
+_CANNOT_LINE_TRACE_CYTHON = (3, 12) <= version_info < (3, 13, 0, 'beta', 1)
+
 
 def is_c_level_callable(func):
     """
     Returns:
         func_is_c_level (bool):
-            Whether a callable is defined at the C(-ython) level (and is
-            thus non-profilable).
+            Whether a callable is defined at the C-level (and is thus
+            non-profilable).
     """
-    return isinstance(func, C_LEVEL_CALLABLE_TYPES) or is_cython_callable(func)
+    return isinstance(func, C_LEVEL_CALLABLE_TYPES)
 
 
 def is_cython_callable(func):
@@ -171,6 +175,8 @@ class ByCountProfilerMixin:
         seen.add(id(func))
         if is_function(func):
             return [func]
+        if is_cython_callable(func):
+            return [] if _CANNOT_LINE_TRACE_CYTHON else [func]
         if is_c_level_callable(func):
             return []
         func = type(func).__call__

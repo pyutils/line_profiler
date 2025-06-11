@@ -43,7 +43,7 @@ ctypedef long long int int64
 # FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
     """
-    inline PyObject* get_frame_code(PyFrameObject* frame) {
+    inline PyObject* get_frame_bydecode(PyFrameObject* frame) {
         #if PY_VERSION_HEX < 0x030B0000
             Py_INCREF(frame->f_code->co_code);
             return frame->f_code->co_code;
@@ -54,8 +54,31 @@ cdef extern from "frameobject.h":
             return ret;
         #endif
     }
+
+    #if PY_VERSION_HEX < 0x030900b1  // 3.9.0b1
+        /*
+         * Notes:
+         *     While 3.9.0a1 already has `PyFrame_GetCode()`, it doesn't
+         *     INCREF the code object until 0b1 (PR #19773), so override
+         *     that for consistency.
+         */
+        inline PyCodeObject *get_frame_code(
+            PyFrameObject *frame
+        ) {
+            PyCodeObject *code;
+            assert(frame != NULL);
+            code = frame->f_code;
+            assert(code != NULL);
+            Py_INCREF(code);
+            return code;
+        }
+    #else
+        #define get_frame_code(x) PyFrame_GetCode(x)
+    #endif
     """
-    cdef object get_frame_code(PyFrameObject* frame)
+    ctypedef struct PyCodeObject
+    cdef object get_frame_bydecode(PyFrameObject* frame)
+    cdef PyCodeObject* get_frame_code(PyFrameObject* frame)
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
 cdef extern from "Python.h":
@@ -71,7 +94,6 @@ cdef extern from "Python.h":
     #endif
     """
     ctypedef struct PyFrameObject
-    ctypedef struct PyCodeObject
     ctypedef long long PY_LONG_LONG
     cdef bint PyCFunction_Check(object obj)
     cdef int PyCode_Addr2Line(PyCodeObject *co, int byte_offset)
@@ -288,23 +310,42 @@ cdef class LineProfiler:
                 warnings.warn("Could not extract a code object for the object %r" % (func,))
                 return
 
-        if code.co_code in self.dupes_map:
-            self.dupes_map[code.co_code] += [code]
-            # code hash already exists, so there must be a duplicate function. add no-op
-            co_padding : bytes = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
-            co_code = code.co_code + co_padding
-            CodeType = type(code)
-            code = _code_replace(func, co_code=co_code)
-            try:
-                func.__code__ = code
-            except AttributeError as e:
-                func.__func__.__code__ = code
-        else:
-            self.dupes_map[code.co_code] = [code]
-        # TODO: Since each line can be many bytecodes, this is kinda inefficient
-        # See if this can be sped up by not needing to iterate over every byte
-        for offset, byte in enumerate(code.co_code):
-            code_hash = compute_line_hash(hash((code.co_code)), PyCode_Addr2Line(<PyCodeObject*>code, offset))
+        code_hashes = []
+        if code.co_code:
+            if code.co_code in self.dupes_map:
+                self.dupes_map[code.co_code] += [code]
+                # code hash already exists, so there must be a duplicate
+                # function. add no-op
+                co_padding : bytes = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
+                co_code = code.co_code + co_padding
+                CodeType = type(code)
+                code = _code_replace(func, co_code=co_code)
+                try:
+                    func.__code__ = code
+                except AttributeError as e:
+                    func.__func__.__code__ = code
+            else:
+                self.dupes_map[code.co_code] = [code]
+            # TODO: Since each line can be many bytecodes, this is kinda
+            # inefficient
+            # See if this can be sped up by not needing to iterate over
+            # every byte
+            for offset, _ in enumerate(code.co_code):
+                code_hash = compute_line_hash(
+                    hash((code.co_code)),
+                    PyCode_Addr2Line(<PyCodeObject*>code, offset))
+                code_hashes.append(code_hash)
+        else:  # Cython functions
+            from linecache import getlines
+            from inspect import getblock
+
+            lineno = code.co_firstlineno
+            nlines = len(getblock(getlines(code.co_filename)[lineno - 1:]))
+            block_hash = hash(code)
+            for lineno in range(lineno, lineno + nlines):
+                code_hash = compute_line_hash(block_hash, lineno)
+                code_hashes.append(code_hash)
+        for code_hash in code_hashes:
             if not self._c_code_map.count(code_hash):
                 try:
                     self.code_hash_map[code].append(code_hash)
@@ -485,8 +526,10 @@ cdef extern int python_trace_callback(object instances,
     cdef uint64 linenum
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
-        # Normally we'd need to DECREF the return from get_frame_code, but Cython does that for us
-        block_hash = hash(get_frame_code(py_frame))
+        # Normally we'd need to DECREF the return from get_frame_bydecode, but Cython does that for us
+        block_hash = hash(get_frame_bydecode(py_frame))
+        if not block_hash:  # Cython function
+            block_hash = hash(<object>get_frame_code(py_frame))
 
         linenum = PyFrame_GetLineNumber(py_frame)
         code_hash = compute_line_hash(block_hash, linenum)
