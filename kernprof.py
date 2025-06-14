@@ -128,6 +128,7 @@ NOTE:
     To restore the old behavior, pass the :option:`!--no-preimports`
     flag.
 """
+import atexit
 import builtins
 import functools
 import os
@@ -136,9 +137,9 @@ import threading
 import asyncio  # NOQA
 import concurrent.futures  # NOQA
 import contextlib
+import shutil
 import tempfile
 import time
-import traceback
 import warnings
 from argparse import ArgumentError, ArgumentParser
 from datetime import datetime
@@ -280,7 +281,6 @@ def _python_command():
     """
     Return a command that corresponds to :py:data:`sys.executable`.
     """
-    import shutil
     for abbr in 'python', 'python3':
         if os.path.samefile(shutil.which(abbr), sys.executable):
             return abbr
@@ -425,6 +425,11 @@ def pre_parse_single_arg_directive(args, flag, sep='--'):
 def main(args=None):
     """
     Runs the command line interface
+
+    Note:
+        To help with traceback formatting, the deletion of temporary
+        files created during execution may be deferred to when the
+        interpreter exits.
     """
     def positive_float(value):
         val = float(value)
@@ -638,13 +643,50 @@ def main(args=None):
             enter(contextlib.redirect_stdout(devnull))
         if options.verbose < -2:  # Suppress stderr
             enter(contextlib.redirect_stderr(devnull))
+        # Instead of relying on `tempfile.TemporaryDirectory`, manually
+        # manage a tempdir to ensure that files exist at
+        # traceback-formatting time if needs be
+        options.tmpdir = tmpdir = tempfile.mkdtemp()
+        cleanup = functools.partial(
+            shutil.rmtree, tmpdir, ignore_errors=True,
+        )
         if tempfile_source_and_content:
-            tmpdir = enter(tempfile.TemporaryDirectory())
-            _write_tempfile(*tempfile_source_and_content, options, tmpdir)
-        _main(options, module)
+            try:
+                _write_tempfile(*tempfile_source_and_content, options)
+            except Exception:
+                # Tempfile creation failed, delete the tempdir ASAP
+                cleanup()
+                raise
+        try:
+            _main(options, module)
+        except BaseException:
+            # Defer deletion to after the traceback has been formatted
+            # if needs be
+            if os.listdir(tmpdir):
+                atexit.register(cleanup)
+            else:  # Empty tempdir, just delete it
+                cleanup()
+            raise
+        else:  # Execution succeeded, delete the tempdir ASAP
+            cleanup()
 
 
-def _write_tempfile(source, content, options, tmpdir):
+def _touch_tempfile(*args, **kwargs):
+    """
+    Wrapper around :py:func:`tempfile.mkstemp()` which drops and closes
+    the integer handle (which we don't need and may cause issues on some
+    platforms).
+    """
+    handle, path = tempfile.mkstemp(*args, **kwargs)
+    try:
+        os.close(handle)
+    except Exception:
+        os.remove(path)
+        raise
+    return path
+
+
+def _write_tempfile(source, content, options):
     """
     Called by :py:func:`main()` to handle :command:`kernprof -c` and
     :command:`kernprof -`;
@@ -654,7 +696,7 @@ def _write_tempfile(source, content, options, tmpdir):
     file_prefix = f'kernprof-{source}'
     # Do what 3.14 does (#103998)... and also just to be user-friendly
     content = dedent(content)
-    fname = os.path.join(tmpdir, file_prefix + '.py')
+    fname = os.path.join(options.tmpdir, file_prefix + '.py')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
     options.code_diagnostics(f'Wrote temporary script file to {fname!r}:',
@@ -669,9 +711,9 @@ def _write_tempfile(source, content, options, tmpdir):
     # filename clash)
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
-        _, options.outfile = tempfile.mkstemp(dir=os.curdir,
-                                              prefix=file_prefix + '-',
-                                              suffix='.' + extension)
+        options.outfile = _touch_tempfile(dir=os.curdir,
+                                          prefix=file_prefix + '-',
+                                          suffix='.' + extension)
         options.diagnostics(
             f'Using default output destination {options.outfile!r}')
 
@@ -682,7 +724,7 @@ def _write_preimports(prof, options, exclude):
     not to be invoked on its own.
     """
     from line_profiler.autoprofile.eager_preimports import (
-        is_dotted_path, propose_names, write_eager_import_module)
+        is_dotted_path, write_eager_import_module)
     from line_profiler.autoprofile.util_static import modpath_to_modname
     from line_profiler.autoprofile.autoprofile import (
         _extend_line_profiler_for_profiling_imports as upgrade_profiler)
@@ -694,14 +736,15 @@ def _write_preimports(prof, options, exclude):
         if is_dotted_path(target):
             modname = target
         else:
-            # Paths already normalized by `_normalize_profiling_targets()`
+            # Paths already normalized by
+            # `_normalize_profiling_targets()`
             if not os.path.exists(target):
                 invalid_targets.append(target)
                 continue
             if any(os.path.samefile(target, excluded) for excluded in exclude):
                 # Ignore the script to be run in eager importing
-                # (`line_profiler.autoprofile.autoprofile.run()` will handle
-                # it)
+                # (`line_profiler.autoprofile.autoprofile.run()` will
+                # handle it)
                 continue
             modname = modpath_to_modname(target, hide_init=False)
         if modname is None:  # Not import-able
@@ -723,49 +766,35 @@ def _write_preimports(prof, options, exclude):
         warnings.warn(msg)
     if not (filtered_targets or recurse_targets):
         return
-    # - We could've done everything in-memory with `io.StringIO` and
-    #   `exec()`, but that results in indecipherable tracebacks should
-    #   anything goes wrong;
-    #   so we write to a tempfile and `execfile()` it
-    # - While this works theoretically for preserving traceback, the
-    #   catch is that the tempfile will already have been deleted by the
-    #   time the traceback is formatted;
-    #   so we have to format the traceback and manually print the
-    #   context before re-raising the error
+    # We could've done everything in-memory with `io.StringIO` and
+    # `exec()`, but that results in indecipherable tracebacks should
+    # anything goes wrong;
+    # so we write to a tempfile and `execfile()` it
     upgrade_profiler(prof)
-    temp_mod_name = next(
-        name for name in propose_names(['_kernprof_eager_preimports'])
-        if name not in sys.modules)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_mod_path = os.path.join(tmpdir, temp_mod_name + '.py')
-        write_module = functools.partial(
-            write_eager_import_module, filtered_targets,
-            recurse=recurse_targets)
-        temp_file = open(temp_mod_path, mode='w')
-        if options.verbose >= DIAGNOSITICS_VERBOSITY:
-            with StringIO() as sio:
-                write_module(stream=sio)
-                code = sio.getvalue()
-            with temp_file as fobj:
-                print(code, file=fobj)
-            options.code_diagnostics(
-                'Wrote temporary module for pre-imports '
-                f'to {temp_mod_path!r}:',
-                code)
-        else:
-            with temp_file as fobj:
-                write_module(stream=fobj)
-        ns = {}  # Use a fresh namespace
-        try:
-            execfile(temp_mod_path, ns, ns)
-        except Exception as e:
-            tb_lines = traceback.format_tb(e.__traceback__)
-            i_last_temp_frame = max(
-                i for i, line in enumerate(tb_lines)
-                if temp_mod_path in line)
-            print('\nContext:', ''.join(tb_lines[i_last_temp_frame:]),
-                  end='', sep='\n', file=sys.stderr)
-            raise
+    temp_mod_path = _touch_tempfile(dir=options.tmpdir,
+                                    prefix='kernprof-eager-preimports-',
+                                    suffix='.py')
+    write_module = functools.partial(
+        write_eager_import_module, filtered_targets,
+        recurse=recurse_targets)
+    temp_file = open(temp_mod_path, mode='w')
+    if options.verbose >= DIAGNOSITICS_VERBOSITY:
+        with StringIO() as sio:
+            write_module(stream=sio)
+            code = sio.getvalue()
+        with temp_file as fobj:
+            print(code, file=fobj)
+        options.code_diagnostics(
+            'Wrote temporary module for pre-imports '
+            f'to {temp_mod_path!r}:',
+            code)
+    else:
+        with temp_file as fobj:
+            write_module(stream=fobj)
+    ns = {}  # Use a fresh namespace
+    execfile(temp_mod_path, ns, ns)
+    # Delete the tempfile ASAP if its execution succeeded
+    os.remove(temp_mod_path)
 
 
 def _main(options, module=False):
@@ -798,6 +827,31 @@ def _main(options, module=False):
             call = func_repr + '()'
         options.code_diagnostics('Calling:', call)
         return func(*args, **kwargs)
+
+    def dump_filtered_stats(prof, filename):
+        import pickle
+
+        tempfile_checks = {functools.partial(os.path.samefile,
+                                             os.path.join(dirname, fname))
+                           for dirname, _, fnames in os.walk(options.tmpdir)
+                           for fname in fnames}
+        if not tempfile_checks:
+            return prof.dump_stats(filename)
+        # Filter the filenames to remove data from tempfiles, which will
+        # have been deleted by the time the results are viewed in a
+        # separate process
+        stats = prof.get_stats()
+        timings = stats.timings
+        for key in set(timings):
+            fname, *_ = key
+            try:
+                del_key = any(check(fname) for check in tempfile_checks)
+            except OSError:
+                del_key = True
+            if del_key:
+                del timings[key]
+        with open(filename, mode='wb') as fobj:
+            pickle.dump(stats, fobj, protocol=pickle.HIGHEST_PROTOCOL)
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
@@ -913,7 +967,7 @@ def _main(options, module=False):
     finally:
         if options.output_interval:
             rt.stop()
-        prof.dump_stats(options.outfile)
+        dump_filtered_stats(prof, options.outfile)
         options.message(f'Wrote profile results to {options.outfile!r}')
         if options.verbose > 0:
             if isinstance(prof, ContextualProfile):
