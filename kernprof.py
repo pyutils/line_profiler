@@ -144,7 +144,9 @@ import warnings
 from argparse import ArgumentError, ArgumentParser
 from datetime import datetime
 from io import StringIO
+from operator import methodcaller
 from runpy import run_module
+from pathlib import Path
 from pprint import pformat
 from shlex import quote
 from textwrap import indent, dedent
@@ -162,6 +164,8 @@ except ImportError:
     from profile import Profile  # type: ignore[assignment,no-redef]
 
 from line_profiler.profiler_mixin import ByCountProfilerMixin
+from line_profiler._logger import Logger
+from line_profiler import _diagnostics as diagnostics
 
 
 DIAGNOSITICS_VERBOSITY = 2
@@ -316,39 +320,24 @@ def _normalize_profiling_targets(targets):
     return list(results)
 
 
-class _restore_list:
+class _restore:
     """
-    Restore a list like :py:data:`sys.path` after running code which
-    potentially modifies it.
-
-    Example
-    -------
-    >>> l = [1, 2, 3]
-    >>>
-    >>>
-    >>> with _restore_list(l):
-    ...     print(l)
-    ...     l.append(4)
-    ...     print(l)
-    ...     l[:] = 5, 6
-    ...     print(l)
-    ...
-    [1, 2, 3]
-    [1, 2, 3, 4]
-    [5, 6]
-    >>> l
-    [1, 2, 3]
+    Restore a collection like :py:data:`sys.path` after running code
+    which potentially modifies it.
     """
-    def __init__(self, lst):
-        self.lst = lst
+    def __init__(self, obj, getter, setter):
+        self.obj = obj
+        self.setter = setter
+        self.getter = getter
         self.old = None
 
     def __enter__(self):
         assert self.old is None
-        self.old = self.lst.copy()
+        self.old = self.getter(self.obj)
 
     def __exit__(self, *_, **__):
-        self.old, self.lst[:] = None, self.old
+        self.setter(self.obj, self.old)
+        self.old = None
 
     def __call__(self, func):
         @functools.wraps(func)
@@ -357,6 +346,87 @@ class _restore_list:
                 return func(*args, **kwargs)
 
         return wrapper
+
+    @classmethod
+    def sequence(cls, seq):
+        """
+        Example
+        -------
+        >>> l = [1, 2, 3]
+        >>>
+        >>> with _restore.sequence(l):
+        ...     print(l)
+        ...     l.append(4)
+        ...     print(l)
+        ...     l[:] = 5, 6
+        ...     print(l)
+        ...
+        [1, 2, 3]
+        [1, 2, 3, 4]
+        [5, 6]
+        >>> l
+        [1, 2, 3]
+        """
+        def set_list(orig, copy):
+            orig[:] = copy
+
+        return cls(seq, methodcaller('copy'), set_list)
+
+    @classmethod
+    def mapping(cls, mpg):
+        """
+        Example
+        -------
+        >>> d = {1: 2}
+        >>>
+        >>> with _restore.mapping(d):
+        ...     print(d)
+        ...     d[2] = 3
+        ...     print(d)
+        ...     d.clear()
+        ...     d.update({1: 4, 3: 5})
+        ...     print(d)
+        ...
+        {1: 2}
+        {1: 2, 2: 3}
+        {1: 4, 3: 5}
+        >>> d
+        {1: 2}
+        """
+        def set_mapping(orig, copy):
+            orig.clear()
+            orig.update(copy)
+
+        return cls(mpg, methodcaller('copy'), set_mapping)
+
+    @classmethod
+    def instance_dict(cls, obj):
+        """
+        Example
+        -------
+        >>> class Obj:
+        ...     def __init__(self, x, y):
+        ...         self.x, self.y = x, y
+        ...
+        ...     def __repr__(self):
+        ...         return 'Obj({0.x!r}, {0.y!r})'.format(self)
+        ...
+        >>>
+        >>> obj = Obj(1, 2)
+        >>>
+        >>> with _restore.instance_dict(obj):
+        ...     print(obj)
+        ...     obj.x, obj.y, obj.z = 4, 5, 6
+        ...     print(obj, obj.z)
+        ...
+        Obj(1, 2)
+        Obj(4, 5) 6
+        >>> obj
+        Obj(1, 2)
+        >>> hasattr(obj, 'z')
+        False
+        """
+        return cls.mapping(vars(obj))
 
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):
@@ -420,8 +490,9 @@ def pre_parse_single_arg_directive(args, flag, sep='--'):
     return args[:i_flag], args[i_flag + 1], args[i_flag + 2:]
 
 
-@_restore_list(sys.argv)
-@_restore_list(sys.path)
+@_restore.sequence(sys.argv)
+@_restore.sequence(sys.path)
+@_restore.instance_dict(diagnostics)
 def main(args=None):
     """
     Runs the command line interface
@@ -437,34 +508,27 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    def print_message(threshold=0, /, *args, print=print, **kwargs):
-        if isinstance(threshold, str):
-            args = [threshold, *args]
-            threshold = 0
-        if options.verbose < threshold:
-            return
-        print(*args, **kwargs)
-
     def print_diagnostics(*args, **kwargs):
-        if options.rich:
-            from rich.console import Console
-            from rich.markup import escape
+        with StringIO() as sio:
+            if options.rich and simple_logging:
+                from rich.console import Console
+                from rich.markup import escape
 
-            printer = Console().print
-        else:
-            escape = str
-            printer = print
+                printer = Console(file=sio, force_terminal=True).print
+            else:
+                escape = str
+                printer = functools.partial(print, file=sio)
 
-        if args:
-            now = datetime.now().isoformat(sep=' ', timespec='seconds')
-            args = ['{} {}'.format(escape(f'[kernprof {now}]'), args[0]),
-                    *args[1:]]
-        kwargs['print'] = printer
-        print_message(DIAGNOSITICS_VERBOSITY, *args, **kwargs)
+            if args and simple_logging:
+                now = datetime.now().isoformat(sep=' ', timespec='seconds')
+                args = ['{} {}'.format(escape(f'[kernprof {now}]'), args[0]),
+                        *args[1:]]
+            printer(*args, **kwargs)
+            logger.debug(sio.getvalue())
 
     def print_code_block_diagnostics(
             header, code, *, line_numbers=True, **kwargs):
-        if options.rich:
+        if options.rich and simple_logging:
             from rich.syntax import Syntax
 
             code_repr = Syntax(code, 'python', line_numbers=line_numbers)
@@ -486,6 +550,9 @@ def main(args=None):
         if not code.endswith('\n'):
             args.append('')
         print_diagnostics(*args, **kwargs)
+
+    def no_op(*_, **__) -> None:
+        pass
 
     create_parser = functools.partial(
         ArgumentParser,
@@ -594,6 +661,9 @@ def main(args=None):
     # Hand off to the dummy parser if necessary to generate the help
     # text
     options = SimpleNamespace(**vars(real_parser.parse_args(args)))
+    # TODO: make a flag later where appropriate
+    options.dryrun = diagnostics.NO_EXEC
+    options.rm = no_op if diagnostics.KEEP_TEMPDIRS else _remove
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
         exit()
@@ -615,9 +685,23 @@ def main(args=None):
 
     # Handle output
     options.verbose -= options.quiet
-    options.message = (print_message
-                       if options.verbose < DIAGNOSITICS_VERBOSITY else
-                       print_diagnostics)
+    options.debug = (diagnostics.DEBUG
+                     or options.verbose >= DIAGNOSITICS_VERBOSITY)
+    logger_kwargs = {'name': 'kernprof'}
+    if options.debug:
+        logger_kwargs['verbose'] = 2
+    elif options.verbose > -1:
+        logger_kwargs['verbose'] = 1
+    else:
+        logger_kwargs['verbose'] = 0
+    # Also consume log items written from other `line_profiler`
+    # components
+    logger = diagnostics.log = Logger(**logger_kwargs)
+    simple_logging = logger.backend == 'print'
+    if options.debug:
+        options.message = print_diagnostics
+    else:
+        options.message = logger.info
     options.diagnostics = print_diagnostics
     options.code_diagnostics = print_code_block_diagnostics
     if options.rich:
@@ -648,7 +732,7 @@ def main(args=None):
         # traceback-formatting time if needs be
         options.tmpdir = tmpdir = tempfile.mkdtemp()
         cleanup = functools.partial(
-            shutil.rmtree, tmpdir, ignore_errors=True,
+            options.rm, tmpdir, recursive=True, missing_ok=True,
         )
         if tempfile_source_and_content:
             try:
@@ -778,7 +862,7 @@ def _write_preimports(prof, options, exclude):
         write_eager_import_module, filtered_targets,
         recurse=recurse_targets)
     temp_file = open(temp_mod_path, mode='w')
-    if options.verbose >= DIAGNOSITICS_VERBOSITY:
+    if options.debug:
         with StringIO() as sio:
             write_module(stream=sio)
             code = sio.getvalue()
@@ -791,10 +875,22 @@ def _write_preimports(prof, options, exclude):
     else:
         with temp_file as fobj:
             write_module(stream=fobj)
-    ns = {}  # Use a fresh namespace
-    execfile(temp_mod_path, ns, ns)
+    if not options.dryrun:
+        ns = {}  # Use a fresh namespace
+        execfile(temp_mod_path, ns, ns)
     # Delete the tempfile ASAP if its execution succeeded
-    os.remove(temp_mod_path)
+    options.rm(temp_mod_path)
+
+
+def _remove(path, *, recursive=False, missing_ok=False):
+    path = Path(path)
+    if path.is_dir():
+        if recursive:
+            shutil.rmtree(path, ignore_errors=missing_ok)
+        else:
+            path.rmdir()
+    else:
+        path.unlink(missing_ok=missing_ok)
 
 
 def _main(options, module=False):
@@ -804,28 +900,31 @@ def _main(options, module=False):
     not to be invoked on its own.
     """
     def call_with_diagnostics(func, *args, **kwargs):
-        if options.verbose < DIAGNOSITICS_VERBOSITY:
-            return func(*args, **kwargs)
-        if isinstance(func, MethodType):
-            obj = func.__self__
-            func_repr = ('{0.__module__}.{0.__qualname__}(...).{1.__name__}'
-                         .format(type(obj), func.__func__))
-        else:
-            func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
-        args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
-        kwargs_repr = dedent(
-            ' ' * len('namespace(')
-            + pformat(SimpleNamespace(**kwargs))[len('namespace('):-len(')')])
-        if args_repr and kwargs_repr:
-            all_args_repr = f'{args_repr},\n{kwargs_repr}'
-        else:
-            all_args_repr = args_repr or kwargs_repr
-        if all_args_repr:
-            call = '{}(\n{})'.format(
-                func_repr, indent(all_args_repr, '    '))
-        else:
-            call = func_repr + '()'
-        options.code_diagnostics('Calling:', call)
+        if options.debug:
+            if isinstance(func, MethodType):
+                obj = func.__self__
+                func_repr = (
+                    '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
+                    .format(type(obj), func.__func__))
+            else:
+                func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+            args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
+            lprefix = len('namespace(')
+            kwargs_repr = dedent(
+                ' ' * lprefix
+                + pformat(SimpleNamespace(**kwargs))[lprefix:-len(')')])
+            if args_repr and kwargs_repr:
+                all_args_repr = f'{args_repr},\n{kwargs_repr}'
+            else:
+                all_args_repr = args_repr or kwargs_repr
+            if all_args_repr:
+                call = '{}(\n{})'.format(
+                    func_repr, indent(all_args_repr, '    '))
+            else:
+                call = func_repr + '()'
+            options.code_diagnostics('Calling:', call)
+        if options.dryrun:
+            return
         return func(*args, **kwargs)
 
     def dump_filtered_stats(prof, filename):
@@ -876,7 +975,8 @@ def _main(options, module=False):
         ns = {'__file__': setup_file, '__name__': '__main__'}
         options.diagnostics(
             f'Executing file {setup_file!r} as pre-profiling setup')
-        execfile(setup_file, ns, ns)
+        if not options.dryrun:
+            execfile(setup_file, ns, ns)
 
     if options.line_by_line:
         import line_profiler
@@ -929,18 +1029,18 @@ def _main(options, module=False):
         exclude = set() if module else {script_file}
         _write_preimports(prof, options, exclude)
 
-    if options.output_interval:
+    use_timer = options.output_interval and not options.dryrun
+    if use_timer:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     original_stdout = sys.stdout
-    if options.output_interval:
+    if use_timer:
         rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
     try:
         try:
-            execfile_ = execfile
-            rmod_ = functools.partial(run_module,
-                                      run_name='__main__', alter_sys=True)
+            rmod = functools.partial(run_module,
+                                     run_name='__main__', alter_sys=True)
             ns = {'__file__': script_file, '__name__': '__main__',
-                  'execfile_': execfile_, 'rmod_': rmod_,
+                  'execfile': execfile, 'rmod': rmod,
                   'prof': prof}
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
@@ -951,25 +1051,30 @@ def _main(options, module=False):
                     profile_imports=options.prof_imports,
                     as_module=module is not None)
             elif module and options.builtin:
-                call_with_diagnostics(rmod_, options.script, ns)
+                call_with_diagnostics(rmod, options.script, ns)
             elif options.builtin:
                 call_with_diagnostics(execfile, script_file, ns, ns)
             elif module:
                 call_with_diagnostics(
-                    prof.runctx, f'rmod_({options.script!r}, globals())',
+                    prof.runctx, f'rmod({options.script!r}, globals())',
                     ns, ns)
             else:
                 call_with_diagnostics(
-                    prof.runctx, f'execfile_({script_file!r}, globals())',
+                    prof.runctx, f'execfile({script_file!r}, globals())',
                     ns, ns)
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
-        if options.output_interval:
+        if use_timer:
             rt.stop()
-        dump_filtered_stats(prof, options.outfile)
-        options.message(f'Wrote profile results to {options.outfile!r}')
-        if options.verbose > 0:
+        if not options.dryrun:
+            dump_filtered_stats(prof, options.outfile)
+        options.message(
+            ('Profile results would have been written to '
+             if options.dryrun else
+             'Wrote profile results ')
+            + f'to {options.outfile!r}')
+        if options.verbose > 0 and not options.dryrun:
             if isinstance(prof, ContextualProfile):
                 prof.print_stats()
             else:
