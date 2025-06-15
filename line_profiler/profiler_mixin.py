@@ -2,7 +2,6 @@ import functools
 import inspect
 import types
 from warnings import warn
-from ._line_profiler import label
 from .scoping_policy import ScopingPolicy
 
 
@@ -18,8 +17,7 @@ C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.ClassMethodDescriptorType,
                           types.MethodDescriptorType,
                           types.MethodWrapperType,
-                          types.WrapperDescriptorType,
-                          type(label))
+                          types.WrapperDescriptorType)
 
 
 def is_c_level_callable(func):
@@ -29,7 +27,18 @@ def is_c_level_callable(func):
             Whether a callable is defined at the C(-ython) level (and is
             thus non-profilable).
     """
-    return isinstance(func, C_LEVEL_CALLABLE_TYPES)
+    return isinstance(func, C_LEVEL_CALLABLE_TYPES) or is_cython_callable(func)
+
+
+def is_cython_callable(func):
+    if not callable(func):
+        return False
+    # Note: don't directly check against a Cython function type, since
+    # said type depends on the Cython version used for building the
+    # Cython code;
+    # just check for what is common between Cython versions
+    return (type(func).__name__
+            in ('cython_function_or_method', 'fused_cython_function'))
 
 
 def is_classmethod(f):

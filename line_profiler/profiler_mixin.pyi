@@ -128,6 +128,10 @@ def is_c_level_callable(func: Any) -> TypeIs[CLevelCallable]:
     ...
 
 
+def is_cython_callable(func: Any) -> TypeIs[CythonCallable]:
+    ...
+
+
 def is_classmethod(f: Any) -> TypeIs[classmethod]:
     ...
 
