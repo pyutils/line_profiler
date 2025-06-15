@@ -36,8 +36,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         ...
 
     def add_callable(
-            self, func, guard: (Callable[[FunctionType], bool]
-                                | None) = None) -> Literal[0, 1]:
+            self, func,
+            guard: Callable[[FunctionType], bool] | None = None,
+            name: str | None = None) -> Literal[0, 1]:
         ...
 
     def dump_stats(self, filename) -> None:

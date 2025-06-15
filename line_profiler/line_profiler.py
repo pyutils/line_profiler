@@ -13,6 +13,7 @@ import sys
 import tempfile
 import types
 from argparse import ArgumentError, ArgumentParser
+from datetime import datetime
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
@@ -21,6 +22,7 @@ except ImportError as ex:
         'The line_profiler._line_profiler c-extension is not importable. '
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
+from . import _diagnostics as diagnostics
 from .profiler_mixin import ByCountProfilerMixin, is_c_level_callable
 from .scoping_policy import ScopingPolicy
 
@@ -89,7 +91,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             return func
         return super().wrap_callable(func)
 
-    def add_callable(self, func, guard=None):
+    def add_callable(self, func, guard=None, name=None):
         """
         Register a function, method, :py:class:`property`,
         :py:func:`~functools.partial` object, etc. with the underlying
@@ -103,6 +105,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                 and returns true(-y) if it *should not* be passed to
                 :py:meth:`.add_function()`.  Defaults to checking
                 whether the function is already a profiling wrapper.
+            name (Optional[str])
+                Optional name for ``func``, to be used in log messages.
 
         Returns:
             1 if any function is added to the profiler, 0 otherwise.
@@ -115,6 +119,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             guard = self._already_a_wrapper
 
         nadded = 0
+        func_repr = self._repr_for_log(func, name)
         for impl in self.get_underlying_functions(func):
             info, wrapped_by_this_prof = self._get_wrapper_info(impl)
             if wrapped_by_this_prof if guard is None else guard(impl):
@@ -125,8 +130,38 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                 impl = info.func
             self.add_function(impl)
             nadded += 1
+            if impl is func:
+                self._debug(f'added {func_repr}')
+            else:
+                self._debug(f'added {func_repr} -> {self._repr_for_log(impl)}')
 
         return 1 if nadded else 0
+
+    @staticmethod
+    def _repr_for_log(obj, name=None):
+        try:
+            real_name = '{0.__module__}.{0.__qualname__}'.format(obj)
+        except AttributeError:
+            try:
+                real_name = obj.__name__
+            except AttributeError:
+                real_name = '???'
+        return '{} `{}{}` {}@ {:#x}'.format(
+            type(obj).__name__,
+            real_name,
+            '()' if callable(obj) and not isinstance(obj, type) else '',
+            f'(=`{name}`) ' if name and name != real_name else '',
+            id(obj))
+
+    def _debug(self, msg):
+        self_repr = f'{type(self).__name__} @ {id(self):#x}'
+        logger = diagnostics.log
+        if logger.backend == 'print':
+            now = datetime.now().isoformat(sep=' ', timespec='seconds')
+            msg = f'[{self_repr} {now}] {msg}'
+        else:
+            msg = f'{self_repr}: {msg}'
+        logger.debug(msg)
 
     def dump_stats(self, filename):
         """ Dump a representation of the data to a file as a pickled
@@ -151,7 +186,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             func_scoping_policy=ScopingPolicy.NONE,
             class_scoping_policy=ScopingPolicy.NONE,
             module_scoping_policy=ScopingPolicy.NONE,
-            wrap=False):
+            wrap=False,
+            name=None):
         def func_guard(func):
             return self._already_a_wrapper(func) or not func_check(func)
 
@@ -170,29 +206,44 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         cls_check = class_scoping_policy.get_filter(namespace, 'class')
         mod_check = module_scoping_policy.get_filter(namespace, 'module')
 
+        # Logging stuff
+        if not name:
+            try:  # Class
+                name = '{0.__module__}.{0.__qualname__}'.format(namespace)
+            except AttributeError:  # Module
+                name = namespace.__name__
+
         for attr, value in vars(namespace).items():
             if id(value) in seen:
                 continue
             seen.add(id(value))
             if isinstance(value, type):
-                if cls_check(value) and add_namespace(value):
-                    count += 1
-                continue
-            elif isinstance(value, types.ModuleType):
-                if mod_check(value) and add_namespace(value):
-                    count += 1
-                continue
-            try:
-                if not self.add_callable(value, guard=func_guard):
+                if not (cls_check(value)
+                        and add_namespace(value, name=f'{name}.{attr}')):
                     continue
-            except TypeError:  # Not a callable (wrapper)
-                continue
-            if wrap:
-                members_to_wrap[attr] = value
+            elif isinstance(value, types.ModuleType):
+                if not (mod_check(value)
+                        and add_namespace(value, name=f'{name}.{attr}')):
+                    continue
+            else:
+                try:
+                    if not self.add_callable(
+                            value, guard=func_guard, name=f'{name}.{attr}'):
+                        continue
+                except TypeError:  # Not a callable (wrapper)
+                    continue
+                if wrap:
+                    members_to_wrap[attr] = value
             count += 1
         if wrap and members_to_wrap:
             self._wrap_namespace_members(namespace, members_to_wrap,
                                          warning_stack_level=3)
+        if count:
+            self._debug(
+                'added {} member{} in {}'.format(
+                    count,
+                    '' if count == 1 else 's',
+                    self._repr_for_log(namespace, name)))
         return count
 
     def add_class(self, cls, *, scoping_policy=None, wrap=False):
