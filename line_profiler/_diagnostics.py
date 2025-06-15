@@ -22,5 +22,6 @@ def _boolean_environ(key):
 DEBUG = _boolean_environ('LINE_PROFILER_DEBUG')
 NO_EXEC = _boolean_environ('LINE_PROFILER_NO_EXEC')
 KEEP_TEMPDIRS = _boolean_environ('LINE_PROFILER_KEEP_TEMPDIRS')
+STATIC_ANALYSIS = _boolean_environ('LINE_PROFILER_STATIC_ANALYSIS')
 
 log = _logger.Logger('line_profiler')

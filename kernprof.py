@@ -661,8 +661,9 @@ def main(args=None):
     # Hand off to the dummy parser if necessary to generate the help
     # text
     options = SimpleNamespace(**vars(real_parser.parse_args(args)))
-    # TODO: make a flag later where appropriate
+    # TODO: make flags later where appropriate
     options.dryrun = diagnostics.NO_EXEC
+    options.static = diagnostics.STATIC_ANALYSIS
     options.rm = no_op if diagnostics.KEEP_TEMPDIRS else _remove
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
@@ -860,7 +861,7 @@ def _write_preimports(prof, options, exclude):
                                     suffix='.py')
     write_module = functools.partial(
         write_eager_import_module, filtered_targets,
-        recurse=recurse_targets)
+        recurse=recurse_targets, static=options.static)
     temp_file = open(temp_mod_path, mode='w')
     if options.debug:
         with StringIO() as sio:
