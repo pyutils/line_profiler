@@ -1,6 +1,8 @@
 import ast
 from typing import (
-    Any, Collection, Generator, List, Set, TextIO, Tuple, Union)
+    Any, Union,
+    Collection, Dict, Generator, List, NamedTuple, Set, Tuple,
+    TextIO)
 
 
 def is_dotted_path(obj: Any) -> bool:
@@ -11,7 +13,8 @@ def get_expression(obj: Any) -> Union[ast.Expression, None]:
     ...
 
 
-def split_dotted_path(dotted_path: str) -> Tuple[str, Union[str, None]]:
+def split_dotted_path(
+        dotted_path: str, static: bool = True) -> Tuple[str, Union[str, None]]:
     ...
 
 
@@ -42,9 +45,23 @@ def propose_names(prefixes: Collection[str]) -> Generator[str, None, None]:
     ...
 
 
+def resolve_profiling_targets(
+        dotted_paths: Collection[str],
+        static: bool = True,
+        recurse: Union[Collection[str], bool] = False) -> 'ResolvedResult':
+    ...
+
+
 def write_eager_import_module(
         dotted_paths: Collection[str], stream: Union[TextIO, None] = None, *,
+        static: bool = True,
         recurse: Union[Collection[str], bool] = False,
         adder: str = 'profile.add_imported_function_or_module',
         indent: str = '    ') -> None:
     ...
+
+
+class ResolvedResult(NamedTuple):
+    targets: Dict[str, Set[Union[str, None]]]
+    indirect: Set[str]
+    unresolved: List[str]
