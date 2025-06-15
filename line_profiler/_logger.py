@@ -5,6 +5,7 @@
 import logging
 from abc import ABC, abstractmethod
 import sys
+from typing import ClassVar
 from logging import INFO, DEBUG, ERROR, WARNING, CRITICAL  # NOQA
 
 
@@ -12,9 +13,18 @@ class _LogBackend(ABC):
     """
     Abstract base class for our logger implementations.
     """
+    backend: ClassVar[str]
 
     def __init__(self, name):
         self.name = name
+
+    @abstractmethod
+    def configure(self, *args, **kwarg):
+        """
+        Note:
+            Implementations should take the arguments it needs and
+            return the instance.
+        """
 
     @abstractmethod
     def debug(self, msg, *args, **kwargs):
@@ -48,6 +58,7 @@ class _PrintLogBackend(_LogBackend):
         Hello world
         >>> pl.debug('Should not appear')
     """
+    backend = 'print'
 
     def __init__(self, name="<print-logger>", level=logging.INFO):
         super().__init__(name)
@@ -76,12 +87,10 @@ class _PrintLogBackend(_LogBackend):
     def critical(self, msg, *args, **kwargs):
         self._log(logging.CRITICAL, msg, *args, **kwargs)
 
-    def configure(self, **kwargs):
-        """
-        For compatability with _StdlibLogBackend, all arguments are ignored.
-        The print backend does not need to be configured.
-        """
-        ...
+    def configure(self, level=None, **_):
+        if level is not None:
+            self.level = level
+        return self
 
 
 class _StdlibLogBackend(_LogBackend):
@@ -112,6 +121,7 @@ class _StdlibLogBackend(_LogBackend):
         >>> print(text)
         >>> assert text.strip().endswith('Hello world')
     """
+    backend = 'stdlib'
 
     def __init__(self, name):
         super().__init__(name)
@@ -122,6 +132,7 @@ class _StdlibLogBackend(_LogBackend):
         level=None,
         stream='auto',
         file=None,
+        **_,
     ):
         """
         Configure the underlying stdlib logger.
@@ -259,25 +270,24 @@ class Logger:
     def configure(self, backend='auto', verbose=1, file=None, stream=None):
         name = self.name
         kwargs = dict(file=file, stream=stream)
-        level = {
+        kwargs['level'] = {
             0: logging.CRITICAL,
             1: logging.INFO,
             2: logging.DEBUG}.get(verbose, logging.DEBUG)
-        kwargs['level'] = level
         if backend == "auto":
             # Choose _StdlibLogBackend if a logger with handlers exists.
             if logging.getLogger(name).handlers:
                 backend = 'stdlib'
             else:
                 backend = 'print'
-
-        if backend == "print":
-            backend_choice = _PrintLogBackend(name, level)
-        elif backend == "stdlib":
-            backend_choice = _StdlibLogBackend(name).configure(level, file=file, stream=stream)
-        else:
-            raise ValueError("Unsupported backend. Use 'auto', 'print', or 'stdlib'.")
-        self._backend = backend_choice
+        try:
+            Backend = {'print': _PrintLogBackend,
+                       'stdlib': _StdlibLogBackend}[backend]
+        except KeyError:
+            raise ValueError(
+                "Unsupported backend. "
+                "Use 'auto', 'print', or 'stdlib'.") from None
+        self._backend = Backend(name).configure(**kwargs)
         return self
 
     def __getattr__(self, attr):
