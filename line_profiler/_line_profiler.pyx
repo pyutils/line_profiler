@@ -43,7 +43,7 @@ ctypedef long long int int64
 # FIXME: there might be something special we have to do here for Python 3.11
 cdef extern from "frameobject.h":
     """
-    inline PyObject* get_frame_bydecode(PyFrameObject* frame) {
+    inline PyObject* get_frame_bytecode(PyFrameObject* frame) {
         #if PY_VERSION_HEX < 0x030B0000
             Py_INCREF(frame->f_code->co_code);
             return frame->f_code->co_code;
@@ -77,7 +77,7 @@ cdef extern from "frameobject.h":
     #endif
     """
     ctypedef struct PyCodeObject
-    cdef object get_frame_bydecode(PyFrameObject* frame)
+    cdef object get_frame_bytecode(PyFrameObject* frame)
     cdef PyCodeObject* get_frame_code(PyFrameObject* frame)
     ctypedef int (*Py_tracefunc)(object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
@@ -311,7 +311,7 @@ cdef class LineProfiler:
                 return
 
         code_hashes = []
-        if code.co_code:
+        if code.co_code:  # Normal Python functions
             if code.co_code in self.dupes_map:
                 self.dupes_map[code.co_code] += [code]
                 # code hash already exists, so there must be a duplicate
@@ -335,7 +335,10 @@ cdef class LineProfiler:
                     hash((code.co_code)),
                     PyCode_Addr2Line(<PyCodeObject*>code, offset))
                 code_hashes.append(code_hash)
-        else:  # Cython functions
+        else:  # Cython functions have empty bytecodes
+            if 0x030c0000 <= PY_VERSION_HEX < 0x030d00b1:
+                return  # Can't line-profile Cython in 3.12
+
             from line_profiler.line_profiler import get_code_block
 
             lineno = code.co_firstlineno
@@ -525,9 +528,10 @@ cdef extern int python_trace_callback(object instances,
     cdef uint64 linenum
 
     if what == PyTrace_LINE or what == PyTrace_RETURN:
-        # Normally we'd need to DECREF the return from get_frame_bydecode, but Cython does that for us
-        block_hash = hash(get_frame_bydecode(py_frame))
-        if not block_hash:  # Cython function
+        # Normally we'd need to DECREF the return from
+        # get_frame_bytecode, but Cython does that for us
+        block_hash = hash(get_frame_bytecode(py_frame))
+        if not block_hash:  # Cython functions have empty bytecodes
             block_hash = hash(<object>get_frame_code(py_frame))
 
         linenum = PyFrame_GetLineNumber(py_frame)
