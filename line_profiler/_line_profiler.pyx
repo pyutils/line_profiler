@@ -24,6 +24,7 @@ from libc.stdint cimport int64_t
 from libcpp.unordered_map cimport unordered_map
 import threading
 import opcode
+import os
 import types
 
 NOP_VALUE: int = opcode.opmap['NOP']
@@ -198,6 +199,34 @@ def label(code):
             return (code.co_filename, code.co_firstlineno, code.co_name)
 
 
+def find_cython_source_file(cython_func):
+    """
+    Resolve the absolute path to a Cython function's source file.
+
+    Returns:
+        result (str | None)
+            Cython source file if found, else :py:const:`None`.
+    """
+    try:
+        compiled_module = cython_func.__globals__['__file__']
+    except KeyError:  # Shouldn't happen...
+        return None
+    rel_source_file = cython_func.__code__.co_filename
+    if os.path.isabs(rel_source_file):
+        if os.path.isfile(rel_source_file):
+            return rel_source_file
+        return None
+    prefix = os.path.dirname(compiled_module)
+    while True:
+        source_file = os.path.join(prefix, rel_source_file)
+        if os.path.isfile(source_file):
+            return source_file
+        next_prefix = os.path.dirname(prefix)
+        if next_prefix == prefix:  # At the file-system root
+            return None
+        prefix = next_prefix
+
+
 cpdef _code_replace(func, co_code):
     """
     Implements CodeType.replace for Python < 3.8
@@ -342,11 +371,21 @@ cdef class LineProfiler:
             from line_profiler.line_profiler import get_code_block
 
             lineno = code.co_firstlineno
-            nlines = len(get_code_block(code.co_filename, lineno))
+            if hasattr(func, '__code__'):
+                cython_func = func
+            else:
+                cython_func = func.__func__
+            cython_source = find_cython_source_file(cython_func)
+            if not cython_source:  # Can't find the source
+                return
+            nlines = len(get_code_block(cython_source, lineno))
             block_hash = hash(code)
             for lineno in range(lineno, lineno + nlines):
                 code_hash = compute_line_hash(block_hash, lineno)
                 code_hashes.append(code_hash)
+            # We can't replace the code object on Cython functions, but
+            # we can *store* a copy with the correct metadata
+            code = code.replace(co_filename=cython_source)
         for code_hash in code_hashes:
             if not self._c_code_map.count(code_hash):
                 try:

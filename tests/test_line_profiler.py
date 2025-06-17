@@ -587,12 +587,10 @@ def test_add_class_wrapper():
 @pytest.mark.parametrize('decorate', [True, False])
 def test_profiler_c_callable_no_op(decorate):
     """
-    Test that the following are no-ops on C(-ython)-level callables:
+    Test that the following are no-ops on C-level callables:
     - Decoration (`.__call__()`): the callable is returned as-is.
     - `.add_callable()`: it returns 0.
     """
-    CythonCallable = type(LineProfiler.enable)
-    assert not isinstance(LineProfiler.enable, types.FunctionType)
     profile = LineProfiler()
 
     for (func, Type) in [
@@ -601,8 +599,7 @@ def test_profiler_c_callable_no_op(decorate):
             (vars(int)['from_bytes'], types.ClassMethodDescriptorType),
             (str.split, types.MethodDescriptorType),
             ((1).__str__, types.MethodWrapperType),
-            (int.__repr__, types.WrapperDescriptorType),
-            (LineProfiler.enable, CythonCallable)]:
+            (int.__repr__, types.WrapperDescriptorType)]:
         assert isinstance(func, Type)
         if decorate:  # Decoration is no-op
             assert profile(func) is func
