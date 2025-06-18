@@ -24,6 +24,7 @@ Changes
   * On-import profiling is now more aggressive so that it doesn't miss entities
     like class methods and properties
   * ``LineProfiler`` can now be used as a class decorator
+* FIX: Fixed line tracing for Cython code; superseded use of the legacy tracing system with ``sys.monitoring``
 
 4.2.0
 ~~~~~
