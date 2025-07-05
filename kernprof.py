@@ -142,7 +142,6 @@ import tempfile
 import time
 import warnings
 from argparse import ArgumentError, ArgumentParser
-from datetime import datetime
 from io import StringIO
 from operator import methodcaller
 from runpy import run_module
@@ -508,30 +507,12 @@ def main(args=None):
             raise ArgumentError
         return val
 
-    def print_diagnostics(*args, **kwargs):
-        with StringIO() as sio:
-            if options.rich and simple_logging:
-                from rich.console import Console
-                from rich.markup import escape
-
-                printer = Console(file=sio, force_terminal=True).print
-            else:
-                escape = str
-                printer = functools.partial(print, file=sio)
-
-            if args and simple_logging:
-                now = datetime.now().isoformat(sep=' ', timespec='seconds')
-                args = ['{} {}'.format(escape(f'[kernprof {now}]'), args[0]),
-                        *args[1:]]
-            printer(*args, **kwargs)
-            logger.debug(sio.getvalue())
-
     def no_op(*_, **__) -> None:
         pass
 
-    create_parser = functools.partial(
-        ArgumentParser,
-        description='Run and profile a python script.')
+    parser_kwargs = {
+        'description': 'Run and profile a python script.',
+    }
 
     if args is None:
         args = sys.argv[1:]
@@ -552,7 +533,7 @@ def main(args=None):
         module, literal_code = None, thing
 
     if module is literal_code is None:  # Normal execution
-        real_parser, = parsers = [create_parser()]
+        real_parser, = parsers = [ArgumentParser(**parser_kwargs)]
         help_parser = None
     else:
         # We've already consumed the `-m <module>`, so we need a dummy
@@ -560,9 +541,9 @@ def main(args=None):
         # but the real parser should not consume the `options.script`
         # positional arg, and it it got the `--help` option, it should
         # hand off the the dummy parser
-        real_parser = create_parser(add_help=False)
+        real_parser = ArgumentParser(add_help=False, **parser_kwargs)
         real_parser.add_argument('-h', '--help', action='store_true')
-        help_parser = create_parser()
+        help_parser = ArgumentParser(**parser_kwargs)
         parsers = [real_parser, help_parser]
     for parser in parsers:
         parser.add_argument('-V', '--version', action='version', version=__version__)
@@ -639,7 +620,6 @@ def main(args=None):
     # TODO: make flags later where appropriate
     options.dryrun = diagnostics.NO_EXEC
     options.static = diagnostics.STATIC_ANALYSIS
-    options.rm = no_op if diagnostics.KEEP_TEMPDIRS else _remove
     if help_parser and getattr(options, 'help', False):
         help_parser.print_help()
         exit()
@@ -664,35 +644,34 @@ def main(args=None):
     options.debug = (diagnostics.DEBUG
                      or options.verbose >= DIAGNOSITICS_VERBOSITY)
     logger_kwargs = {'name': 'kernprof'}
+    logger_kwargs['backend'] = 'auto'
     if options.debug:
+        # Debugging forces the stdlib logger
         logger_kwargs['verbose'] = 2
+        logger_kwargs['backend'] = 'stdlib'
     elif options.verbose > -1:
         logger_kwargs['verbose'] = 1
     else:
         logger_kwargs['verbose'] = 0
-    # Also consume log items written from other `line_profiler`
-    # components
-    logger = diagnostics.log = Logger(**logger_kwargs)
-    simple_logging = logger.backend == 'print'
-    if options.debug:
-        options.message = print_diagnostics
-    else:
-        options.message = logger.info
-    options.diagnostics = print_diagnostics
+    logger_kwargs['stream'] = {
+        'format': '[%(name)s %(asctime)s %(levelname)s] %(message)s',
+    }
+    # Reinitialize the diagnostic logs, we are very likely the main script.
+    diagnostics.log = Logger(**logger_kwargs)
     if options.rich:
         try:
             import rich  # noqa: F401
         except ImportError:
             options.rich = False
-            options.diagnostics('`rich` not installed, unsetting --rich')
+            diagnostics.log.debug('`rich` not installed, unsetting --rich')
 
     if module is not None:
-        options.diagnostics('Profiling module:', module)
+        diagnostics.log.debug(f'Profiling module: {module}')
     elif tempfile_source_and_content:
-        options.diagnostics('Profiling script read from',
-                            tempfile_source_and_content[0])
+        diagnostics.log.debug(
+            f'Profiling script read from: {tempfile_source_and_content[0]}')
     else:
-        options.diagnostics('Profiling script:', options.script)
+        diagnostics.log.debug(f'Profiling script: {options.script}')
 
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
@@ -705,9 +684,12 @@ def main(args=None):
         # manage a tempdir to ensure that files exist at
         # traceback-formatting time if needs be
         options.tmpdir = tmpdir = tempfile.mkdtemp()
-        cleanup = functools.partial(
-            options.rm, tmpdir, recursive=True, missing_ok=True,
-        )
+        if diagnostics.KEEP_TEMPDIRS:
+            cleanup = no_op
+        else:
+            cleanup = functools.partial(
+                _remove, tmpdir, recursive=True, missing_ok=True,
+            )
         if tempfile_source_and_content:
             try:
                 _write_tempfile(*tempfile_source_and_content, options)
@@ -757,7 +739,7 @@ def _write_tempfile(source, content, options):
     fname = os.path.join(options.tmpdir, file_prefix + '.py')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
-    options.diagnostics(f'Wrote temporary script file to {fname!r}:')
+    diagnostics.log.debug(f'Wrote temporary script file to {fname!r}:')
     options.script = fname
     # Add the tempfile to `--prof-mod`
     if options.prof_mod:
@@ -771,7 +753,7 @@ def _write_tempfile(source, content, options):
         options.outfile = _touch_tempfile(dir=os.curdir,
                                           prefix=file_prefix + '-',
                                           suffix='.' + extension)
-        options.diagnostics(
+        diagnostics.log.debug(
             f'Using default output destination {options.outfile!r}')
 
 
@@ -821,6 +803,7 @@ def _write_preimports(prof, options, exclude):
                        '' if len(invalid_targets) == 1 else 's',
                        invalid_targets))
         warnings.warn(msg)
+        diagnostics.log.warn(msg)
     if not (filtered_targets or recurse_targets):
         return
     # We could've done everything in-memory with `io.StringIO` and
@@ -841,7 +824,7 @@ def _write_preimports(prof, options, exclude):
             code = sio.getvalue()
         with temp_file as fobj:
             print(code, file=fobj)
-        options.diagnostics(
+        diagnostics.log.debug(
             'Wrote temporary module for pre-imports '
             f'to {temp_mod_path!r}:')
     else:
@@ -851,7 +834,10 @@ def _write_preimports(prof, options, exclude):
         ns = {}  # Use a fresh namespace
         execfile(temp_mod_path, ns, ns)
     # Delete the tempfile ASAP if its execution succeeded
-    options.rm(temp_mod_path)
+    if diagnostics.KEEP_TEMPDIRS:
+        diagnostics.log.debug('Keep temporary preimport path: {temp_mod_path}')
+    else:
+        _remove(temp_mod_path)
 
 
 def _remove(path, *, recursive=False, missing_ok=False):
@@ -894,7 +880,7 @@ def _main(options, module=False):
                     func_repr, indent(all_args_repr, '    '))
             else:
                 call = func_repr + '()'
-            options.diagnostics('Calling:', call)
+            diagnostics.log.debug(f'Calling: {call}')
         if options.dryrun:
             return
         return func(*args, **kwargs)
@@ -927,7 +913,7 @@ def _main(options, module=False):
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = f'{os.path.basename(options.script)}.{extension}'
-        options.diagnostics(
+        diagnostics.log.debug(
             f'Using default output destination {options.outfile!r}')
 
     sys.argv = [options.script] + options.args
@@ -945,7 +931,7 @@ def _main(options, module=False):
         # kernprof.py's.
         sys.path.insert(0, os.path.dirname(setup_file))
         ns = {'__file__': setup_file, '__name__': '__main__'}
-        options.diagnostics(
+        diagnostics.log.debug(
             f'Executing file {setup_file!r} as pre-profiling setup')
         if not options.dryrun:
             execfile(setup_file, ns, ns)
@@ -1041,7 +1027,7 @@ def _main(options, module=False):
             rt.stop()
         if not options.dryrun:
             dump_filtered_stats(prof, options.outfile)
-        options.message(
+        diagnostics.log.info(
             ('Profile results would have been written to '
              if options.dryrun else
              'Wrote profile results ')
@@ -1060,9 +1046,9 @@ def _main(options, module=False):
                 show_mod = 'pstats'
             else:
                 show_mod = 'line_profiler -rmt'
-            options.message('Inspect results with:\n'
-                            f'{quote(py_exe)} -m {show_mod} '
-                            f'{quote(options.outfile)}')
+            diagnostics.log.info('Inspect results with:\n'
+                                 f'{quote(py_exe)} -m {show_mod} '
+                                 f'{quote(options.outfile)}')
         # Fully disable the profiler
         for _ in range(prof.enable_count):
             prof.disable_by_count()

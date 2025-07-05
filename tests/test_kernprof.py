@@ -195,10 +195,8 @@ def test_kernprof_sys_restoration(capsys, error, args):
      ('--view',  # Verbosity level 1 = `--view`
       {'^Output to stdout': True,
        r"^Wrote .* '.*script\.py\.lprof'": True,
-       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': False,
        r'^Inspect results with:''\n'
        r'python -m line_profiler .*script\.py\.lprof': False,
-       '^ *[0-9]+ *import zipfile': False,
        r'line_profiler\.autoprofile\.autoprofile'
        r'\.run\(\n(?:.+,\n)*.*\)': False,
        r'^\[kernprof .*\]': False,
@@ -207,8 +205,6 @@ def test_kernprof_sys_restoration(capsys, error, args):
      ('-vv',  # Verbosity level 2, show diagnostics
       {'^Output to stdout': True,
        r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
-       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': True,
-       '^ *[0-9]+ *import zipfile': True,
        r'Inspect results with:''\n'
        r'python -m line_profiler .*script\.py\.lprof': False,
        r'line_profiler\.autoprofile\.autoprofile'
@@ -251,7 +247,7 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
         enter(ub.ChDir(tmpdir))
         proc = ub.cmd(['kernprof', '-l',
                        # Add an eager pre-import target
-                       '-pscript.py', '-pzipfile', '-z',
+                       '-p', 'script.py', '-p', 'zipfile', '-z',
                        *shlex.split(flags), 'script.py'])
     proc.check_returncode()
     print(proc.stdout)
@@ -261,8 +257,15 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
             assert not stream
             continue
         for pattern, expect_match in expected_outputs.items():
-            assert bool(re.search(pattern, stream,
-                                  flags=re.MULTILINE)) == expect_match
+            found = re.search(pattern, stream, flags=re.MULTILINE)
+            if not bool(found) == expect_match:
+                msg = ub.paragraph(
+                    f'''
+                    Searching for pattern: {pattern!r} in output.
+                    Did we expect a match? {expect_match!r}.
+                    Did we get a match? {bool(found)!r}.
+                    ''')
+                raise AssertionError(msg)
 
 
 def test_kernprof_eager_preimport_bad_module():
