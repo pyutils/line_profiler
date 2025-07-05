@@ -757,17 +757,12 @@ def _write_tempfile(source, content, options):
             f'Using default output destination {options.outfile!r}')
 
 
-def _write_preimports(prof, options, exclude):
+def _gather_preimport_targets(options, exclude):
     """
-    Called by :py:func:`main()` to handle eager pre-imports;
-    not to be invoked on its own.
+    Used in _write_preimports
     """
-    from line_profiler.autoprofile.eager_preimports import (
-        is_dotted_path, write_eager_import_module)
     from line_profiler.autoprofile.util_static import modpath_to_modname
-    from line_profiler.autoprofile.autoprofile import (
-        _extend_line_profiler_for_profiling_imports as upgrade_profiler)
-
+    from line_profiler.autoprofile.eager_preimports import is_dotted_path
     filtered_targets = []
     recurse_targets = []
     invalid_targets = []
@@ -791,10 +786,9 @@ def _write_preimports(prof, options, exclude):
             continue
         if modname.endswith('.__init__'):
             modname = modname.rpartition('.')[0]
-            targets = filtered_targets
+            filtered_targets.append(modname)
         else:
-            targets = recurse_targets
-        targets.append(modname)
+            recurse_targets.append(modname)
     if invalid_targets:
         invalid_targets = sorted(set(invalid_targets))
         msg = ('{} profile-on-import target{} cannot be converted to '
@@ -804,11 +798,24 @@ def _write_preimports(prof, options, exclude):
                        invalid_targets))
         warnings.warn(msg)
         diagnostics.log.warn(msg)
+
+    return filtered_targets, recurse_targets
+
+
+def _write_preimports(prof, options, exclude):
+    """
+    Called by :py:func:`main()` to handle eager pre-imports;
+    not to be invoked on its own.
+    """
+    from line_profiler.autoprofile.eager_preimports import write_eager_import_module
+    from line_profiler.autoprofile.autoprofile import (
+        _extend_line_profiler_for_profiling_imports as upgrade_profiler)
+
+    filtered_targets, recurse_targets = _gather_preimport_targets(options, exclude)
     if not (filtered_targets or recurse_targets):
         return
-    # We could've done everything in-memory with `io.StringIO` and
-    # `exec()`, but that results in indecipherable tracebacks should
-    # anything goes wrong;
+    # We could've done everything in-memory with `io.StringIO` and `exec()`,
+    # but that results in indecipherable tracebacks should anything goes wrong;
     # so we write to a tempfile and `execfile()` it
     upgrade_profiler(prof)
     temp_mod_path = _touch_tempfile(dir=options.tmpdir,
@@ -836,9 +843,7 @@ def _write_preimports(prof, options, exclude):
         ns = {}  # Use a fresh namespace
         execfile(temp_mod_path, ns, ns)
     # Delete the tempfile ASAP if its execution succeeded
-    if diagnostics.KEEP_TEMPDIRS:
-        diagnostics.log.debug('Keep temporary preimport path: {temp_mod_path}')
-    else:
+    if not diagnostics.KEEP_TEMPDIRS:
         _remove(temp_mod_path)
 
 
