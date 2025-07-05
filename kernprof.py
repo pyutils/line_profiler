@@ -853,6 +853,38 @@ def _remove(path, *, recursive=False, missing_ok=False):
         path.unlink(missing_ok=missing_ok)
 
 
+def _dump_filtered_stats(tmpdir, prof, filename):
+    import os
+    import pickle
+
+    # Build list of known temp file paths
+    tempfile_paths = [
+        os.path.join(dirpath, fname)
+        for dirpath, _, fnames in os.walk(tmpdir)
+        for fname in fnames
+    ]
+
+    if not tempfile_paths:
+        prof.dump_stats(filename)
+        return
+
+    # Filter the filenames to remove data from tempfiles, which will
+    # have been deleted by the time the results are viewed in a
+    # separate process
+    stats = prof.get_stats()
+    timings = stats.timings
+    for key in set(timings):
+        fname = key[0]
+        try:
+            if any(os.path.samefile(fname, tmp) for tmp in tempfile_paths):
+                del timings[key]
+        except OSError:
+            del timings[key]
+
+    with open(filename, 'wb') as f:
+        pickle.dump(stats, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
 def _main(options, module=False):
     """
     Called by :py:func:`main()` for the actual execution and profiling
@@ -886,31 +918,6 @@ def _main(options, module=False):
         if options.dryrun:
             return
         return func(*args, **kwargs)
-
-    def dump_filtered_stats(prof, filename):
-        import pickle
-
-        tempfile_checks = {functools.partial(os.path.samefile,
-                                             os.path.join(dirname, fname))
-                           for dirname, _, fnames in os.walk(options.tmpdir)
-                           for fname in fnames}
-        if not tempfile_checks:
-            return prof.dump_stats(filename)
-        # Filter the filenames to remove data from tempfiles, which will
-        # have been deleted by the time the results are viewed in a
-        # separate process
-        stats = prof.get_stats()
-        timings = stats.timings
-        for key in set(timings):
-            fname, *_ = key
-            try:
-                del_key = any(check(fname) for check in tempfile_checks)
-            except OSError:
-                del_key = True
-            if del_key:
-                del timings[key]
-        with open(filename, mode='wb') as fobj:
-            pickle.dump(stats, fobj, protocol=pickle.HIGHEST_PROTOCOL)
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
@@ -1028,7 +1035,7 @@ def _main(options, module=False):
         if use_timer:
             rt.stop()
         if not options.dryrun:
-            dump_filtered_stats(prof, options.outfile)
+            _dump_filtered_stats(options.tmpdir, prof, options.outfile)
         diagnostics.log.info(
             ('Profile results would have been written to '
              if options.dryrun else
