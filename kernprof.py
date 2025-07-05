@@ -486,30 +486,87 @@ def pre_parse_single_arg_directive(args, flag, sep='--'):
         return args, None, []
     if i_flag == len(args) - 1:  # Last element
         raise ValueError(f'argument expected for the {flag} option')
-    return args[:i_flag], args[i_flag + 1], args[i_flag + 2:]
+    args, thing, post_args = args[:i_flag], args[i_flag + 1], args[i_flag + 2:]
+    return args, thing, post_args
 
 
-@_restore.sequence(sys.argv)
-@_restore.sequence(sys.path)
-@_restore.instance_dict(diagnostics)
-def main(args=None):
+def positive_float(value):
+    val = float(value)
+    if val <= 0:
+        raise ArgumentError
+    return val
+
+
+def no_op(*_, **__) -> None:
+    pass
+
+
+def _add_core_parser_arguments(parser):
     """
-    Runs the command line interface
-
-    Note:
-        To help with traceback formatting, the deletion of temporary
-        files created during execution may be deferred to when the
-        interpreter exits.
+    Add the core kernprof args to a ArgumentParser
     """
-    def positive_float(value):
-        val = float(value)
-        if val <= 0:
-            raise ArgumentError
-        return val
+    parser.add_argument('-V', '--version', action='version', version=__version__)
+    parser.add_argument('-l', '--line-by-line', action='store_true',
+                        help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
+    parser.add_argument('-b', '--builtin', action='store_true',
+                        help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
+                        "'@profile' to decorate functions, or 'with profile:' to profile a "
+                        'section of code.')
+    parser.add_argument('-o', '--outfile',
+                        help="Save stats to <outfile> (default: 'scriptname.lprof' with "
+                        "--line-by-line, 'scriptname.prof' without)")
+    parser.add_argument('-s', '--setup',
+                        help='Code to execute before the code to profile')
+    parser.add_argument('-v', '--verbose', '--view',
+                        action='count', default=0,
+                        help='Increase verbosity level. '
+                        'At level 1, view the profiling results '
+                        'in addition to saving them; '
+                        'at level 2, show other diagnostic info.')
+    parser.add_argument('-q', '--quiet',
+                        action='count', default=0,
+                        help='Decrease verbosity level. '
+                        'At level -1, disable helpful messages '
+                        '(e.g. "Wrote profile results to <...>"); '
+                        'at level -2, silence the stdout; '
+                        'at level -3, silence the stderr.')
+    parser.add_argument('-r', '--rich', action='store_true',
+                        help='Use rich formatting if viewing output')
+    parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
+                        help='Output unit (in seconds) in which the timing info is '
+                        'displayed (default: 1e-6)')
+    parser.add_argument('-z', '--skip-zero', action='store_true',
+                        help="Hide functions which have not been called")
+    parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
+                        help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
+                        "Minimum value is 1 (second). Defaults to disabled.")
+    parser.add_argument('-p', '--prof-mod',
+                        action='append',
+                        metavar=("{path/to/script | object.dotted.path}"
+                                 "[,...]"),
+                        help="List of modules, functions and/or classes "
+                        "to profile specified by their name or path. "
+                        "These profiling targets can be supplied both as "
+                        "comma-separated items, or separately with "
+                        "multiple copies of this flag. "
+                        "Packages are automatically recursed into unless "
+                        "they are specified with `<pkg>.__init__`. "
+                        "Adding the current script/module profiles the "
+                        "entirety of it. "
+                        "Only works with line_profiler -l, --line-by-line.")
+    parser.add_argument('--no-preimports',
+                        action='store_true',
+                        help="Instead of eagerly importing all profiling "
+                        "targets specified via -p and profiling them, "
+                        "only profile those that are directly imported in "
+                        "the profiled code. "
+                        "Only works with line_profiler -l, --line-by-line.")
+    parser.add_argument('--prof-imports', action='store_true',
+                        help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
+                        "Only works with line_profiler -l, --line-by-line")
 
-    def no_op(*_, **__) -> None:
-        pass
 
+def _build_parsers(args=None):
     parser_kwargs = {
         'description': 'Run and profile a python script.',
     }
@@ -546,65 +603,7 @@ def main(args=None):
         help_parser = ArgumentParser(**parser_kwargs)
         parsers = [real_parser, help_parser]
     for parser in parsers:
-        parser.add_argument('-V', '--version', action='version', version=__version__)
-        parser.add_argument('-l', '--line-by-line', action='store_true',
-                            help='Use the line-by-line profiler instead of cProfile. Implies --builtin.')
-        parser.add_argument('-b', '--builtin', action='store_true',
-                            help="Put 'profile' in the builtins. Use 'profile.enable()'/'.disable()', "
-                            "'@profile' to decorate functions, or 'with profile:' to profile a "
-                            'section of code.')
-        parser.add_argument('-o', '--outfile',
-                            help="Save stats to <outfile> (default: 'scriptname.lprof' with "
-                            "--line-by-line, 'scriptname.prof' without)")
-        parser.add_argument('-s', '--setup',
-                            help='Code to execute before the code to profile')
-        parser.add_argument('-v', '--verbose', '--view',
-                            action='count', default=0,
-                            help='Increase verbosity level. '
-                            'At level 1, view the profiling results '
-                            'in addition to saving them; '
-                            'at level 2, show other diagnostic info.')
-        parser.add_argument('-q', '--quiet',
-                            action='count', default=0,
-                            help='Decrease verbosity level. '
-                            'At level -1, disable helpful messages '
-                            '(e.g. "Wrote profile results to <...>"); '
-                            'at level -2, silence the stdout; '
-                            'at level -3, silence the stderr.')
-        parser.add_argument('-r', '--rich', action='store_true',
-                            help='Use rich formatting if viewing output')
-        parser.add_argument('-u', '--unit', default='1e-6', type=positive_float,
-                            help='Output unit (in seconds) in which the timing info is '
-                            'displayed (default: 1e-6)')
-        parser.add_argument('-z', '--skip-zero', action='store_true',
-                            help="Hide functions which have not been called")
-        parser.add_argument('-i', '--output-interval', type=int, default=0, const=0, nargs='?',
-                            help="Enables outputting of cumulative profiling results to file every n seconds. Uses the threading module. "
-                            "Minimum value is 1 (second). Defaults to disabled.")
-        parser.add_argument('-p', '--prof-mod',
-                            action='append',
-                            metavar=("{path/to/script | object.dotted.path}"
-                                     "[,...]"),
-                            help="List of modules, functions and/or classes "
-                            "to profile specified by their name or path. "
-                            "These profiling targets can be supplied both as "
-                            "comma-separated items, or separately with "
-                            "multiple copies of this flag. "
-                            "Packages are automatically recursed into unless "
-                            "they are specified with `<pkg>.__init__`. "
-                            "Adding the current script/module profiles the "
-                            "entirety of it. "
-                            "Only works with line_profiler -l, --line-by-line.")
-        parser.add_argument('--no-preimports',
-                            action='store_true',
-                            help="Instead of eagerly importing all profiling "
-                            "targets specified via -p and profiling them, "
-                            "only profile those that are directly imported in "
-                            "the profiled code. "
-                            "Only works with line_profiler -l, --line-by-line.")
-        parser.add_argument('--prof-imports', action='store_true',
-                            help="If specified, modules specified to `--prof-mod` will also autoprofile modules that they import. "
-                            "Only works with line_profiler -l, --line-by-line")
+        _add_core_parser_arguments(parser)
 
         if parser is help_parser or module is literal_code is None:
             parser.add_argument('script',
@@ -613,6 +612,20 @@ def main(args=None):
                                 help='The python script file, module, or '
                                 'literal code to run')
         parser.add_argument('args', nargs='...', help='Optional script arguments')
+    special_info = {
+        'module': module,
+        'literal_code': literal_code,
+        'post_args': post_args,
+        'args': args,
+    }
+    return real_parser, help_parser, special_info
+
+
+def _parse_arguments(real_parser, help_parser, special_info, args):
+
+    module = special_info['module']
+    literal_code = special_info['literal_code']
+    post_args = special_info['post_args']
 
     # Hand off to the dummy parser if necessary to generate the help
     # text
@@ -665,6 +678,28 @@ def main(args=None):
             options.rich = False
             diagnostics.log.debug('`rich` not installed, unsetting --rich')
 
+    return options, tempfile_source_and_content
+
+
+@_restore.sequence(sys.argv)
+@_restore.sequence(sys.path)
+@_restore.instance_dict(diagnostics)
+def main(args=None):
+    """
+    Runs the command line interface
+
+    Note:
+        To help with traceback formatting, the deletion of temporary
+        files created during execution may be deferred to when the
+        interpreter exits.
+    """
+    real_parser, help_parser, special_info = _build_parsers(args=args)
+    args = special_info['args']
+    module = special_info['module']
+
+    options, tempfile_source_and_content = _parse_arguments(
+        real_parser, help_parser, special_info, args)
+
     if module is not None:
         diagnostics.log.debug(f'Profiling module: {module}')
     elif tempfile_source_and_content:
@@ -698,7 +733,7 @@ def main(args=None):
                 cleanup()
                 raise
         try:
-            _main(options, module)
+            _profile_module(options, module)
         except BaseException:
             # Defer deletion to after the traceback has been formatted
             # if needs be
@@ -890,40 +925,44 @@ def _dump_filtered_stats(tmpdir, prof, filename):
         pickle.dump(stats, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def _format_call_message(func, *args, **kwargs):
+    if isinstance(func, MethodType):
+        obj = func.__self__
+        func_repr = (
+            '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
+            .format(type(obj), func.__func__))
+    else:
+        func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+    args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
+    lprefix = len('namespace(')
+    kwargs_repr = dedent(
+        ' ' * lprefix
+        + pformat(SimpleNamespace(**kwargs))[lprefix:-len(')')])
+    if args_repr and kwargs_repr:
+        all_args_repr = f'{args_repr},\n{kwargs_repr}'
+    else:
+        all_args_repr = args_repr or kwargs_repr
+    if all_args_repr:
+        call = '{}(\n{})'.format(
+            func_repr, indent(all_args_repr, '    '))
+    else:
+        call = func_repr + '()'
+    return call
+
+
 def _call_with_diagnostics(options, func, *args, **kwargs):
     if options.debug:
-        if isinstance(func, MethodType):
-            obj = func.__self__
-            func_repr = (
-                '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
-                .format(type(obj), func.__func__))
-        else:
-            func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
-        args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
-        lprefix = len('namespace(')
-        kwargs_repr = dedent(
-            ' ' * lprefix
-            + pformat(SimpleNamespace(**kwargs))[lprefix:-len(')')])
-        if args_repr and kwargs_repr:
-            all_args_repr = f'{args_repr},\n{kwargs_repr}'
-        else:
-            all_args_repr = args_repr or kwargs_repr
-        if all_args_repr:
-            call = '{}(\n{})'.format(
-                func_repr, indent(all_args_repr, '    '))
-        else:
-            call = func_repr + '()'
+        call = _format_call_message(func, *args, **kwargs)
         diagnostics.log.debug(f'Calling: {call}')
     if options.dryrun:
         return
     return func(*args, **kwargs)
 
 
-def _main(options, module=False):
+def _profile_module(options, module=False):
     """
-    Called by :py:func:`main()` for the actual execution and profiling
-    of code;
-    not to be invoked on its own.
+    Called by :py:func:`main()` for the actual execution and profiling of code
+    after resolving options; not to be invoked on its own.
     """
 
     if not options.outfile:
@@ -1018,7 +1057,6 @@ def _main(options, module=False):
                   'prof': prof}
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
-
                 _call_with_diagnostics(
                     options,
                     autoprofile.run, script_file, ns,
