@@ -890,39 +890,41 @@ def _dump_filtered_stats(tmpdir, prof, filename):
         pickle.dump(stats, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def _call_with_diagnostics(options, func, *args, **kwargs):
+    if options.debug:
+        if isinstance(func, MethodType):
+            obj = func.__self__
+            func_repr = (
+                '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
+                .format(type(obj), func.__func__))
+        else:
+            func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+        args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
+        lprefix = len('namespace(')
+        kwargs_repr = dedent(
+            ' ' * lprefix
+            + pformat(SimpleNamespace(**kwargs))[lprefix:-len(')')])
+        if args_repr and kwargs_repr:
+            all_args_repr = f'{args_repr},\n{kwargs_repr}'
+        else:
+            all_args_repr = args_repr or kwargs_repr
+        if all_args_repr:
+            call = '{}(\n{})'.format(
+                func_repr, indent(all_args_repr, '    '))
+        else:
+            call = func_repr + '()'
+        diagnostics.log.debug(f'Calling: {call}')
+    if options.dryrun:
+        return
+    return func(*args, **kwargs)
+
+
 def _main(options, module=False):
     """
     Called by :py:func:`main()` for the actual execution and profiling
     of code;
     not to be invoked on its own.
     """
-    def call_with_diagnostics(func, *args, **kwargs):
-        if options.debug:
-            if isinstance(func, MethodType):
-                obj = func.__self__
-                func_repr = (
-                    '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
-                    .format(type(obj), func.__func__))
-            else:
-                func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
-            args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
-            lprefix = len('namespace(')
-            kwargs_repr = dedent(
-                ' ' * lprefix
-                + pformat(SimpleNamespace(**kwargs))[lprefix:-len(')')])
-            if args_repr and kwargs_repr:
-                all_args_repr = f'{args_repr},\n{kwargs_repr}'
-            else:
-                all_args_repr = args_repr or kwargs_repr
-            if all_args_repr:
-                call = '{}(\n{})'.format(
-                    func_repr, indent(all_args_repr, '    '))
-            else:
-                call = func_repr + '()'
-            diagnostics.log.debug(f'Calling: {call}')
-        if options.dryrun:
-            return
-        return func(*args, **kwargs)
 
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
@@ -1017,21 +1019,24 @@ def _main(options, module=False):
             if options.prof_mod and options.line_by_line:
                 from line_profiler.autoprofile import autoprofile
 
-                call_with_diagnostics(
+                _call_with_diagnostics(
+                    options,
                     autoprofile.run, script_file, ns,
                     prof_mod=options.prof_mod,
                     profile_imports=options.prof_imports,
                     as_module=module is not None)
             elif module and options.builtin:
-                call_with_diagnostics(rmod, options.script, ns)
+                _call_with_diagnostics(options, rmod, options.script, ns)
             elif options.builtin:
-                call_with_diagnostics(execfile, script_file, ns, ns)
+                _call_with_diagnostics(options, execfile, script_file, ns, ns)
             elif module:
-                call_with_diagnostics(
+                _call_with_diagnostics(
+                    options,
                     prof.runctx, f'rmod({options.script!r}, globals())',
                     ns, ns)
             else:
-                call_with_diagnostics(
+                _call_with_diagnostics(
+                    options,
                     prof.runctx, f'execfile({script_file!r}, globals())',
                     ns, ns)
         except (KeyboardInterrupt, SystemExit):
