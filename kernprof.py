@@ -733,7 +733,7 @@ def main(args=None):
                 cleanup()
                 raise
         try:
-            _profile_module(options, module)
+            _main_profile(options, module)
         except BaseException:
             # Defer deletion to after the traceback has been formatted
             # if needs be
@@ -959,12 +959,13 @@ def _call_with_diagnostics(options, func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-def _profile_module(options, module=False):
+def _pre_profile(options, module):
     """
-    Called by :py:func:`main()` for the actual execution and profiling of code
-    after resolving options; not to be invoked on its own.
-    """
+    Prepare the environment to execute profiling with requested options.
 
+    Note:
+        modifies ``options`` with extra attributes.
+    """
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = f'{os.path.basename(options.script)}.{extension}'
@@ -1042,12 +1043,22 @@ def _profile_module(options, module=False):
         exclude = set() if module else {script_file}
         _write_preimports(prof, options, exclude)
 
-    use_timer = options.output_interval and not options.dryrun
-    if use_timer:
-        rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
-    original_stdout = sys.stdout
-    if use_timer:
-        rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
+    options.global_profiler = global_profiler
+    options.install_profiler = install_profiler
+    if options.output_interval and not options.dryrun:
+        options.rt = RepeatedTimer(max(options.output_interval, 1), prof.dump_stats, options.outfile)
+    else:
+        options.rt = None
+    options.original_stdout = sys.stdout
+    return script_file, prof
+
+
+def _main_profile(options, module=False):
+    """
+    Called by :py:func:`main()` for the actual execution and profiling of code
+    after initial parsing of options; not to be invoked on its own.
+    """
+    script_file, prof = _pre_profile(options, module)
     try:
         try:
             rmod = functools.partial(run_module,
@@ -1080,38 +1091,45 @@ def _profile_module(options, module=False):
         except (KeyboardInterrupt, SystemExit):
             pass
     finally:
-        if use_timer:
-            rt.stop()
-        if not options.dryrun:
-            _dump_filtered_stats(options.tmpdir, prof, options.outfile)
-        diagnostics.log.info(
-            ('Profile results would have been written to '
-             if options.dryrun else
-             'Wrote profile results ')
-            + f'to {options.outfile!r}')
-        if options.verbose > 0 and not options.dryrun:
-            if isinstance(prof, ContextualProfile):
-                prof.print_stats()
-            else:
-                prof.print_stats(output_unit=options.unit,
-                                 stripzeros=options.skip_zero,
-                                 rich=options.rich,
-                                 stream=original_stdout)
+        _post_profile(options, prof)
+
+
+def _post_profile(options, prof):
+    """
+    Cleanup setup after executing a main profile
+    """
+    if options.rt is not None:
+        options.rt.stop()
+    if not options.dryrun:
+        _dump_filtered_stats(options.tmpdir, prof, options.outfile)
+    diagnostics.log.info(
+        ('Profile results would have been written to '
+         if options.dryrun else
+         'Wrote profile results ')
+        + f'to {options.outfile!r}')
+    if options.verbose > 0 and not options.dryrun:
+        if isinstance(prof, ContextualProfile):
+            prof.print_stats()
         else:
-            py_exe = _python_command()
-            if isinstance(prof, ContextualProfile):
-                show_mod = 'pstats'
-            else:
-                show_mod = 'line_profiler -rmt'
-            diagnostics.log.info('Inspect results with:\n'
-                                 f'{quote(py_exe)} -m {show_mod} '
-                                 f'{quote(options.outfile)}')
-        # Fully disable the profiler
-        for _ in range(prof.enable_count):
-            prof.disable_by_count()
-        # Restore the state of the global `@line_profiler.profile`
-        if global_profiler:
-            install_profiler(None)
+            prof.print_stats(output_unit=options.unit,
+                             stripzeros=options.skip_zero,
+                             rich=options.rich,
+                             stream=options.original_stdout)
+    else:
+        py_exe = _python_command()
+        if isinstance(prof, ContextualProfile):
+            show_mod = 'pstats'
+        else:
+            show_mod = 'line_profiler -rmt'
+        diagnostics.log.info('Inspect results with:\n'
+                             f'{quote(py_exe)} -m {show_mod} '
+                             f'{quote(options.outfile)}')
+    # Fully disable the profiler
+    for _ in range(prof.enable_count):
+        prof.disable_by_count()
+    # Restore the state of the global `@line_profiler.profile`
+    if options.global_profiler:
+        options.install_profiler(None)
 
 
 if __name__ == '__main__':
