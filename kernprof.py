@@ -526,31 +526,6 @@ def main(args=None):
             printer(*args, **kwargs)
             logger.debug(sio.getvalue())
 
-    def print_code_block_diagnostics(
-            header, code, *, line_numbers=True, **kwargs):
-        if options.rich and simple_logging:
-            from rich.syntax import Syntax
-
-            code_repr = Syntax(code, 'python', line_numbers=line_numbers)
-        elif line_numbers:
-            nlines = code.count('\n') + 1
-            line_number_width = len(str(nlines)) + 2
-            code_repr = ''.join(
-                f'{n:>{line_number_width}} {line}'
-                for n, line in zip(range(1, nlines + 1),
-                                   code.splitlines(keepends=True)))
-        else:
-            code_repr = code
-        kwargs['sep'] = '\n'
-
-        # Insert additional space
-        if not header.endswith('\n'):
-            header += '\n'
-        args = [header, code_repr]
-        if not code.endswith('\n'):
-            args.append('')
-        print_diagnostics(*args, **kwargs)
-
     def no_op(*_, **__) -> None:
         pass
 
