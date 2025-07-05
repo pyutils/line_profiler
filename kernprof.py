@@ -704,7 +704,6 @@ def main(args=None):
     else:
         options.message = logger.info
     options.diagnostics = print_diagnostics
-    options.code_diagnostics = print_code_block_diagnostics
     if options.rich:
         try:
             import rich  # noqa: F401
@@ -712,7 +711,6 @@ def main(args=None):
             options.rich = False
             options.diagnostics('`rich` not installed, unsetting --rich')
 
-    options.code_diagnostics('Parser output:', pformat(options))
     if module is not None:
         options.diagnostics('Profiling module:', module)
     elif tempfile_source_and_content:
@@ -784,8 +782,7 @@ def _write_tempfile(source, content, options):
     fname = os.path.join(options.tmpdir, file_prefix + '.py')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
-    options.code_diagnostics(f'Wrote temporary script file to {fname!r}:',
-                             content)
+    options.diagnostics(f'Wrote temporary script file to {fname!r}:')
     options.script = fname
     # Add the tempfile to `--prof-mod`
     if options.prof_mod:
@@ -869,10 +866,9 @@ def _write_preimports(prof, options, exclude):
             code = sio.getvalue()
         with temp_file as fobj:
             print(code, file=fobj)
-        options.code_diagnostics(
+        options.diagnostics(
             'Wrote temporary module for pre-imports '
-            f'to {temp_mod_path!r}:',
-            code)
+            f'to {temp_mod_path!r}:')
     else:
         with temp_file as fobj:
             write_module(stream=fobj)
@@ -923,7 +919,7 @@ def _main(options, module=False):
                     func_repr, indent(all_args_repr, '    '))
             else:
                 call = func_repr + '()'
-            options.code_diagnostics('Calling:', call)
+            options.diagnostics('Calling:', call)
         if options.dryrun:
             return
         return func(*args, **kwargs)
