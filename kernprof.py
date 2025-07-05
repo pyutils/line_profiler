@@ -814,13 +814,15 @@ def _write_preimports(prof, options, exclude):
     temp_mod_path = _touch_tempfile(dir=options.tmpdir,
                                     prefix='kernprof-eager-preimports-',
                                     suffix='.py')
-    write_module = functools.partial(
-        write_eager_import_module, filtered_targets,
-        recurse=recurse_targets, static=options.static)
+    write_module_kwargs = {
+        'dotted_paths': filtered_targets,
+        'recurse': recurse_targets,
+        'static': options.static,
+    }
     temp_file = open(temp_mod_path, mode='w')
     if options.debug:
         with StringIO() as sio:
-            write_module(stream=sio)
+            write_eager_import_module(stream=sio, **write_module_kwargs)
             code = sio.getvalue()
         with temp_file as fobj:
             print(code, file=fobj)
@@ -829,7 +831,7 @@ def _write_preimports(prof, options, exclude):
             f'to {temp_mod_path!r}:')
     else:
         with temp_file as fobj:
-            write_module(stream=fobj)
+            write_eager_import_module(stream=fobj, **write_module_kwargs)
     if not options.dryrun:
         ns = {}  # Use a fresh namespace
         execfile(temp_mod_path, ns, ns)
