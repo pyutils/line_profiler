@@ -870,7 +870,7 @@ def _write_preimports(prof, options, exclude):
             print(code, file=fobj)
         diagnostics.log.debug(
             'Wrote temporary module for pre-imports '
-            f'to {temp_mod_path!r}:')
+            f'to {temp_mod_path!r}')
     else:
         with temp_file as fobj:
             write_eager_import_module(stream=fobj, **write_module_kwargs)
