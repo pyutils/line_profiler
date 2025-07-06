@@ -5,4 +5,3 @@ line\_profiler.autoprofile.ast\_profle\_transformer module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:
