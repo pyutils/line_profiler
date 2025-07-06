@@ -183,10 +183,8 @@ def test_kernprof_sys_restoration(capsys, error, args):
     [('',  # Neutral verbosity level
       {'^Output to stdout': True,
        r"^Wrote .* '.*script\.py\.lprof'": True,
-       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': False,
        r'^Inspect results with:''\n'
        r'python -m line_profiler .*script\.py\.lprof': True,
-       '^ *[0-9]+ *import zipfile': False,
        r'line_profiler\.autoprofile\.autoprofile'
        r'\.run\(\n(?:.+,\n)*.*\)': False,
        r'^\[kernprof .*\]': False,

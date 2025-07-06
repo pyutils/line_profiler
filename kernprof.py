@@ -706,7 +706,7 @@ def main(args=None):
         diagnostics.log.debug(
             f'Profiling script read from: {tempfile_source_and_content[0]}')
     else:
-        diagnostics.log.debug(f'Profiling script: {options.script}')
+        diagnostics.log.debug(f'Profiling script: {options.script!r}')
 
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
@@ -869,8 +869,7 @@ def _write_preimports(prof, options, exclude):
         with temp_file as fobj:
             print(code, file=fobj)
         diagnostics.log.debug(
-            'Wrote temporary module for pre-imports '
-            f'to {temp_mod_path!r}:')
+            f'Wrote temporary module for pre-imports to {temp_mod_path!r}')
     else:
         with temp_file as fobj:
             write_eager_import_module(stream=fobj, **write_module_kwargs)
