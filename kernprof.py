@@ -903,7 +903,12 @@ def _dump_filtered_stats(tmpdir, prof, filename):
         for fname in fnames
     ]
 
-    if not tempfile_paths:
+    if not tempfile_paths or isinstance(prof, ContextualProfile):
+        # - No tempfiles written -> no function lives in tempfiles
+        #   -> no need to filter anything
+        # - Not using `line_profiler`
+        #   -> doesn't matter if the source lines can't be retrieved
+        #   -> no need to filter anything
         prof.dump_stats(filename)
         return
 
