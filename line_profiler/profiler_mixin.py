@@ -126,43 +126,22 @@ class ByCountProfilerMixin:
     def _get_underlying_functions(cls, func, seen=None, stop_at_classes=False):
         if seen is None:
             seen = set()
-        get_underlying = functools.partial(
-            cls._get_underlying_functions,
-            seen=seen, stop_at_classes=stop_at_classes)
+        kwargs = {'seen': seen, 'stop_at_classes': stop_at_classes}
+        # Extract inner functions
         if any(check(func)
                for check in (is_boundmethod, is_classmethod, is_staticmethod)):
-            return get_underlying(func.__func__)
+            return cls._get_underlying_functions(func.__func__, **kwargs)
         if any(check(func)
                for check in (is_partial, is_partialmethod, is_cached_property)):
-            return get_underlying(func.func)
+            return cls._get_underlying_functions(func.func, **kwargs)
+        # Dispatch to specific handlers
         if is_property(func):
-            result = []
-            for impl in func.fget, func.fset, func.fdel:
-                if impl is not None:
-                    result.extend(get_underlying(impl))
-            return result
+            return cls._get_underlying_functions_from_property(func, **kwargs)
         if isinstance(func, type):
             if stop_at_classes:
                 return [func]
-            result = []
-            get_filter = cls._class_scoping_policy.get_filter
-            func_check = get_filter(func, 'func')
-            cls_check = get_filter(func, 'class')
-            for member in vars(func).values():
-                try:
-                    member_funcs = get_underlying(member, stop_at_classes=True)
-                except TypeError:
-                    continue
-                for impl in member_funcs:
-                    is_type = isinstance(impl, type)
-                    check = cls_check if is_type else func_check
-                    if not check(impl):
-                        continue
-                    if is_type:
-                        result.extend(get_underlying(impl))
-                    else:
-                        result.append(impl)
-            return result
+            return cls._get_underlying_functions_from_type(func, **kwargs)
+        # Otherwise, the object should either be a function...
         if not callable(func):
             raise TypeError(f'func = {func!r}: '
                             f'cannot get functions from {type(func)} objects')
@@ -173,10 +152,49 @@ class ByCountProfilerMixin:
             return [func]
         if is_c_level_callable(func):
             return []
+        # ... or a generic callable
         func = type(func).__call__
         if is_c_level_callable(func):  # Can happen with builtin types
             return []
         return [func]
+
+    @classmethod
+    def _get_underlying_functions_from_property(
+            cls, prop, seen, stop_at_classes):
+        result = []
+        for impl in prop.fget, prop.fset, prop.fdel:
+            if impl is not None:
+                result.extend(
+                    cls._get_underlying_functions(impl, seen, stop_at_classes))
+        return result
+
+    @classmethod
+    def _get_underlying_functions_from_type(cls, kls, seen, stop_at_classes):
+        result = []
+        get_filter = cls._class_scoping_policy.get_filter
+        func_check = get_filter(kls, 'func')
+        cls_check = get_filter(kls, 'class')
+        for member in vars(kls).values():
+            try:  # Stop at class boundaries to enforce scoping behavior
+                member_funcs = cls._get_underlying_functions(
+                    member, seen, stop_at_classes=True)
+            except TypeError:
+                continue
+            for impl in member_funcs:
+                if isinstance(impl, type):
+                    # Only descend into nested classes if the policy
+                    # says so
+                    if cls_check(impl):
+                        result.extend(cls._get_underlying_functions(
+                            impl, seen, stop_at_classes))
+                else:
+                    # For non-class callables, they are already filtered
+                    # (and added to `seen`) by the above call to
+                    # `.get_underlying_functions()`, so just add them
+                    # here
+                    if func_check(impl):
+                        result.append(impl)
+        return result
 
     def _wrap_callable_wrapper(self, wrapper, impl_attrs, *,
                                args=None, kwargs=None, name_attr=None):
@@ -410,12 +428,11 @@ class ByCountProfilerMixin:
         get_filter = self._class_scoping_policy.get_filter
         func_check = get_filter(func, 'func')
         cls_check = get_filter(func, 'class')
-        get_underlying = functools.partial(
-            self._get_underlying_functions, stop_at_classes=True)
         members_to_wrap = {}
         for name, member in vars(func).items():
             try:
-                impls = get_underlying(member)
+                impls = self._get_underlying_functions(
+                    member, stop_at_classes=True)
             except TypeError:  # Not a callable (wrapper)
                 continue
             if any((cls_check(impl)

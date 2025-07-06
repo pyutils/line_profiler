@@ -706,7 +706,7 @@ def main(args=None):
         diagnostics.log.debug(
             f'Profiling script read from: {tempfile_source_and_content[0]}')
     else:
-        diagnostics.log.debug(f'Profiling script: {options.script}')
+        diagnostics.log.debug(f'Profiling script: {options.script!r}')
 
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
@@ -869,8 +869,7 @@ def _write_preimports(prof, options, exclude):
         with temp_file as fobj:
             print(code, file=fobj)
         diagnostics.log.debug(
-            'Wrote temporary module for pre-imports '
-            f'to {temp_mod_path!r}:')
+            f'Wrote temporary module for pre-imports to {temp_mod_path!r}')
     else:
         with temp_file as fobj:
             write_eager_import_module(stream=fobj, **write_module_kwargs)
@@ -904,7 +903,12 @@ def _dump_filtered_stats(tmpdir, prof, filename):
         for fname in fnames
     ]
 
-    if not tempfile_paths:
+    if not tempfile_paths or isinstance(prof, ContextualProfile):
+        # - No tempfiles written -> no function lives in tempfiles
+        #   -> no need to filter anything
+        # - Not using `line_profiler`
+        #   -> doesn't matter if the source lines can't be retrieved
+        #   -> no need to filter anything
         prof.dump_stats(filename)
         return
 
@@ -1060,36 +1064,33 @@ def _main_profile(options, module=False):
     """
     script_file, prof = _pre_profile(options, module)
     try:
-        try:
-            rmod = functools.partial(run_module,
-                                     run_name='__main__', alter_sys=True)
-            ns = {'__file__': script_file, '__name__': '__main__',
-                  'execfile': execfile, 'rmod': rmod,
-                  'prof': prof}
-            if options.prof_mod and options.line_by_line:
-                from line_profiler.autoprofile import autoprofile
-                _call_with_diagnostics(
-                    options,
-                    autoprofile.run, script_file, ns,
-                    prof_mod=options.prof_mod,
-                    profile_imports=options.prof_imports,
-                    as_module=module is not None)
-            elif module and options.builtin:
-                _call_with_diagnostics(options, rmod, options.script, ns)
-            elif options.builtin:
-                _call_with_diagnostics(options, execfile, script_file, ns, ns)
-            elif module:
-                _call_with_diagnostics(
-                    options,
-                    prof.runctx, f'rmod({options.script!r}, globals())',
-                    ns, ns)
-            else:
-                _call_with_diagnostics(
-                    options,
-                    prof.runctx, f'execfile({script_file!r}, globals())',
-                    ns, ns)
-        except (KeyboardInterrupt, SystemExit):
-            pass
+        rmod = functools.partial(run_module,
+                                 run_name='__main__', alter_sys=True)
+        ns = {'__file__': script_file, '__name__': '__main__',
+              'execfile': execfile, 'rmod': rmod,
+              'prof': prof}
+        if options.prof_mod and options.line_by_line:
+            from line_profiler.autoprofile import autoprofile
+            _call_with_diagnostics(
+                options,
+                autoprofile.run, script_file, ns,
+                prof_mod=options.prof_mod,
+                profile_imports=options.prof_imports,
+                as_module=module is not None)
+        elif module and options.builtin:
+            _call_with_diagnostics(options, rmod, options.script, ns)
+        elif options.builtin:
+            _call_with_diagnostics(options, execfile, script_file, ns, ns)
+        elif module:
+            _call_with_diagnostics(
+                options,
+                prof.runctx, f'rmod({options.script!r}, globals())',
+                ns, ns)
+        else:
+            _call_with_diagnostics(
+                options,
+                prof.runctx, f'execfile({script_file!r}, globals())',
+                ns, ns)
     finally:
         _post_profile(options, prof)
 
