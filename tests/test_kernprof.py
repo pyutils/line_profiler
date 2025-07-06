@@ -2,6 +2,7 @@ import contextlib
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -175,6 +176,168 @@ def test_kernprof_sys_restoration(capsys, error, args):
         assert out.startswith('1')
         assert tmpdir not in sys.path
         assert sys.modules.get('__main__') is old_main
+
+
+@pytest.mark.parametrize(
+    ('flags', 'expected_stdout', 'expected_stderr'),
+    [('',  # Neutral verbosity level
+      {'^Output to stdout': True,
+       r"^Wrote .* '.*script\.py\.lprof'": True,
+       r'Parser output:''(?:\n)+'r'.*namespace\((?:.+,\n)*.*\)': False,
+       r'^Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': True,
+       '^ *[0-9]+ *import zipfile': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': False,
+       r'^\[kernprof .*\]': False,
+       r'^Function: main': False},
+      {'^Output to stderr': True}),
+     ('--view',  # Verbosity level 1 = `--view`
+      {'^Output to stdout': True,
+       r"^Wrote .* '.*script\.py\.lprof'": True,
+       r'^Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': False,
+       r'^\[kernprof .*\]': False,
+       r'^Function: main': True},
+      {'^Output to stderr': True}),
+     ('-vv',  # Verbosity level 2, show diagnostics
+      {'^Output to stdout': True,
+       r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
+       r'Inspect results with:''\n'
+       r'python -m line_profiler .*script\.py\.lprof': False,
+       r'line_profiler\.autoprofile\.autoprofile'
+       r'\.run\(\n(?:.+,\n)*.*\)': True,
+       r'^Function: main': True},
+      {'^Output to stderr': True}),
+     # Verbosity level -1, suppress `kernprof` output
+     ('--quiet',
+      {'^Output to stdout': True, 'Wrote': False},
+      {'^Output to stderr': True}),
+     # Verbosity level -2, suppress script stdout
+     # (also test verbosity arithmatics)
+     ('--quiet --quiet --verbose -q', None, {'^Output to stderr': True}),
+     # Verbosity level -3, suppress script stderr
+     ('-qq --quiet', None,
+      # This should have been `None`, but there's something weird with
+      # `coverage` in CI which causes a spurious warning...
+      {'^Output to stderr': False})])
+def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
+    """
+    Test the various verbosity levels of `kernprof`.
+    """
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = enter(tempfile.TemporaryDirectory())
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'script.py').write_text(ub.codeblock(
+            '''
+            import sys
+
+
+            def main():
+                print('Output to stdout', file=sys.stdout)
+                print('Output to stderr', file=sys.stderr)
+
+
+            if __name__ == '__main__':
+                main()
+            '''))
+        enter(ub.ChDir(tmpdir))
+        proc = ub.cmd(['kernprof', '-l',
+                       # Add an eager pre-import target
+                       '-p', 'script.py', '-p', 'zipfile', '-z',
+                       *shlex.split(flags), 'script.py'])
+    proc.check_returncode()
+    print(proc.stdout)
+    for expected_outputs, stream in [(expected_stdout, proc.stdout),
+                                     (expected_stderr, proc.stderr)]:
+        if expected_outputs is None:
+            assert not stream
+            continue
+        for pattern, expect_match in expected_outputs.items():
+            found = re.search(pattern, stream, flags=re.MULTILINE)
+            if not bool(found) == expect_match:
+                msg = ub.paragraph(
+                    f'''
+                    Searching for pattern: {pattern!r} in output.
+                    Did we expect a match? {expect_match!r}.
+                    Did we get a match? {bool(found)!r}.
+                    ''')
+                raise AssertionError(msg)
+
+
+def test_kernprof_eager_preimport_bad_module():
+    """
+    Test for the preservation of the full traceback when an error occurs
+    in an auto-generated pre-import module.
+    """
+    bad_module = '''raise Exception('Boo')'''
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        tmpdir = enter(tempfile.TemporaryDirectory())
+        temp_dpath = ub.Path(tmpdir)
+        (temp_dpath / 'my_bad_module.py').write_text(bad_module)
+        enter(ub.ChDir(tmpdir))
+        python_path = os.environ.get('PYTHONPATH', '')
+        if python_path:
+            python_path = f'{python_path}:{tmpdir}'
+        else:
+            python_path = tmpdir
+        proc = ub.cmd(['kernprof', '-l',
+                       # Add an eager pre-import target
+                       '-pmy_bad_module', '-c', 'print(1)'],
+                      env={**os.environ, 'PYTHONPATH': python_path})
+    # Check that the traceback is preserved
+    print(proc.stdout)
+    print(proc.stderr, file=sys.stderr)
+    assert proc.returncode
+    assert 'import my_bad_module' in proc.stderr
+    assert bad_module in proc.stderr
+    # Check that the generated tempfiles are wiped
+    reverse_iter_lines = iter(reversed(proc.stderr.splitlines()))
+    next(line for line in reverse_iter_lines if 'import my_bad_module' in line)
+    tb_header = next(reverse_iter_lines).strip()
+    match = re.match('File ([\'"])(.+)\\1, line [0-9]+, in .*', tb_header)
+    assert match
+    tmp_mod = match.group(2)
+    assert not os.path.exists(tmp_mod)
+    assert not os.path.exists(os.path.dirname(tmp_mod))
+
+
+@pytest.mark.parametrize('stdin', [True, False])
+def test_kernprof_bad_temp_script(stdin):
+    """
+    Test for the preservation of the full traceback when an error occurs
+    in a temporary script supplied via `kernprof -c` or `kernprof -`.
+    """
+    bad_script = '''1 / 0'''
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        if stdin:
+            proc = subprocess.run(
+                ['kernprof', '-'],
+                input=bad_script, capture_output=True, text=True)
+        else:
+            proc = subprocess.run(['kernprof', '-c', bad_script],
+                                  capture_output=True, text=True)
+    # Check that the traceback is preserved
+    print(proc.stdout)
+    print(proc.stderr, file=sys.stderr)
+    assert proc.returncode
+    assert '1 / 0' in proc.stderr
+    assert 'ZeroDivisionError' in proc.stderr
+    # Check that the generated tempfiles are wiped
+    reverse_iter_lines = iter(reversed(proc.stderr.splitlines()))
+    next(line for line in reverse_iter_lines if '1 / 0' in line)
+    tb_header = next(reverse_iter_lines).strip()
+    match = re.match('File ([\'"])(.+)\\1, line [0-9]+, in .*', tb_header)
+    assert match
+    tmp_script = match.group(2)
+    assert not os.path.exists(tmp_script)
+    assert not os.path.exists(os.path.dirname(tmp_script))
 
 
 class TestKernprof(unittest.TestCase):

@@ -1,8 +1,17 @@
-from typing import Literal, List, Tuple
 import io
-from ._line_profiler import LineProfiler as CLineProfiler
-from .profiler_mixin import ByCountProfilerMixin
+from functools import cached_property, partial, partialmethod
+from types import FunctionType, MethodType, ModuleType
+from typing import overload, Callable, List, Literal, Tuple, TypeVar
 from _typeshed import Incomplete
+from ._line_profiler import LineProfiler as CLineProfiler
+from .profiler_mixin import ByCountProfilerMixin, CLevelCallable
+from .scoping_policy import ScopingPolicy, ScopingPolicyDict
+
+
+CallableLike = TypeVar('CallableLike',
+                       FunctionType, partial, property, cached_property,
+                       MethodType, staticmethod, classmethod, partialmethod,
+                       type)
 
 
 def load_ipython_extension(ip) -> None:
@@ -10,7 +19,26 @@ def load_ipython_extension(ip) -> None:
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
-    def add_callable(self, func) -> Literal[0, 1]:
+    @overload
+    def __call__(self,  # type: ignore[overload-overlap]
+                 func: CLevelCallable) -> CLevelCallable:
+        ...
+
+    @overload
+    def __call__(self,  # type: ignore[overload-overlap]
+                 func: CallableLike) -> CallableLike:
+        ...
+
+    # Fallback: just wrap the `.__call__()` of a generic callable
+
+    @overload
+    def __call__(self, func: Callable) -> FunctionType:
+        ...
+
+    def add_callable(
+            self, func,
+            guard: Callable[[FunctionType], bool] | None = None,
+            name: str | None = None) -> Literal[0, 1]:
         ...
 
     def dump_stats(self, filename) -> None:
@@ -26,7 +54,18 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     rich: bool = ...) -> None:
         ...
 
-    def add_module(self, mod) -> int:
+    def add_module(
+            self, mod: ModuleType, *,
+            scoping_policy: (
+                ScopingPolicy | str | ScopingPolicyDict | None) = None,
+            wrap: bool = False) -> int:
+        ...
+
+    def add_class(
+            self, cls: type, *,
+            scoping_policy: (
+                ScopingPolicy | str | ScopingPolicyDict | None) = None,
+            wrap: bool = False) -> int:
         ...
 
 

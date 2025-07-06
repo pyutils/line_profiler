@@ -11,10 +11,19 @@ Changes
 * FIX: Fixed explicit profiling of class methods; added handling for profiling static, bound, and partial methods, ``functools.partial`` objects, (cached) properties, and async generator functions
 * FIX: Fixed namespace bug when running ``kernprof -m`` on certain modules (e.g. ``calendar`` on Python 3.12+).
 * FIX: Fixed ``@contextlib.contextmanager`` bug where the cleanup code (e.g. restoration of ``sys`` attributes) is not run if exceptions occurred inside the context
-* ENH: Added CLI arguments ``-c`` to ``kernprof`` for (auto-)profiling module/package/inline-script execution instead of that of script files; passing ``'-'`` as the script-file name now also reads from and profiles ``stdin``
+* ENH: Added CLI arguments ``-c`` to ``kernprof`` for (auto-)profiling inline-script execution instead of that of script files; passing ``'-'`` as the script-file name now also reads from and profiles ``stdin``
 * ENH: In Python >=3.11, profiled objects are reported using their qualified name.
 * ENH: Highlight final summary using rich if enabled
 * ENH: Made it possible to use multiple profiler instances simultaneously
+* ENH: various improvements related to auto-profiling:
+  * ``kernprof -p`` target entities are now imported and profiled regardless of
+    whether they are directly imported in the run script/module/code (old
+    behavior restored by passing ``--no-preimports``)
+  * ``kernprof -v`` and the new ``-q`` now control the verbosity level instead
+    of being a boolean, allowing diagnostic outputs or output suppression
+  * On-import profiling is now more aggressive so that it doesn't miss entities
+    like class methods and properties
+  * ``LineProfiler`` can now be used as a class decorator
 
 4.2.0
 ~~~~~
