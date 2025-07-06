@@ -1064,36 +1064,33 @@ def _main_profile(options, module=False):
     """
     script_file, prof = _pre_profile(options, module)
     try:
-        try:
-            rmod = functools.partial(run_module,
-                                     run_name='__main__', alter_sys=True)
-            ns = {'__file__': script_file, '__name__': '__main__',
-                  'execfile': execfile, 'rmod': rmod,
-                  'prof': prof}
-            if options.prof_mod and options.line_by_line:
-                from line_profiler.autoprofile import autoprofile
-                _call_with_diagnostics(
-                    options,
-                    autoprofile.run, script_file, ns,
-                    prof_mod=options.prof_mod,
-                    profile_imports=options.prof_imports,
-                    as_module=module is not None)
-            elif module and options.builtin:
-                _call_with_diagnostics(options, rmod, options.script, ns)
-            elif options.builtin:
-                _call_with_diagnostics(options, execfile, script_file, ns, ns)
-            elif module:
-                _call_with_diagnostics(
-                    options,
-                    prof.runctx, f'rmod({options.script!r}, globals())',
-                    ns, ns)
-            else:
-                _call_with_diagnostics(
-                    options,
-                    prof.runctx, f'execfile({script_file!r}, globals())',
-                    ns, ns)
-        except (KeyboardInterrupt, SystemExit):
-            pass
+        rmod = functools.partial(run_module,
+                                 run_name='__main__', alter_sys=True)
+        ns = {'__file__': script_file, '__name__': '__main__',
+              'execfile': execfile, 'rmod': rmod,
+              'prof': prof}
+        if options.prof_mod and options.line_by_line:
+            from line_profiler.autoprofile import autoprofile
+            _call_with_diagnostics(
+                options,
+                autoprofile.run, script_file, ns,
+                prof_mod=options.prof_mod,
+                profile_imports=options.prof_imports,
+                as_module=module is not None)
+        elif module and options.builtin:
+            _call_with_diagnostics(options, rmod, options.script, ns)
+        elif options.builtin:
+            _call_with_diagnostics(options, execfile, script_file, ns, ns)
+        elif module:
+            _call_with_diagnostics(
+                options,
+                prof.runctx, f'rmod({options.script!r}, globals())',
+                ns, ns)
+        else:
+            _call_with_diagnostics(
+                options,
+                prof.runctx, f'execfile({script_file!r}, globals())',
+                ns, ns)
     finally:
         _post_profile(options, prof)
 
