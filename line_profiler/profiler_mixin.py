@@ -20,7 +20,10 @@ C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
                           types.MethodWrapperType,
                           types.WrapperDescriptorType)
 
-# Can't line-profile Cython in 3.12
+# Can't line-profile Cython in 3.12 since the old C API was upended
+# without an appropriate replacement (which only came in 3.13);
+# see also:
+# https://cython.readthedocs.io/en/latest/src/tutorial/profiling_tutorial.html
 _CANNOT_LINE_TRACE_CYTHON = (3, 12) <= version_info < (3, 13, 0, 'beta', 1)
 
 

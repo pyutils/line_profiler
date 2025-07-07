@@ -53,6 +53,74 @@ def get_code_block(filename, lineno):
     Returns:
         lines (list[str])
             Newline-terminated string lines.
+
+    Note:
+        This function makes use of :py:func:`inspect.getblock`, which is
+        public but undocumented API.  That said, it has been in use in
+        this repo since 2008 (`fb60664`_), so we will continue using it
+        until we can't.
+
+        .. _fb60664: https://github.com/pyutils/line_profiler/commit/\
+fb60664135296ba6061cfaa2bb66d4ba77964c53
+
+
+    Example:
+        >>> from os.path import join
+        >>> from tempfile import TemporaryDirectory
+        >>> from textwrap import dedent
+        >>>
+        >>>
+        >>> def get_last_line(*args, **kwargs):
+        ...     lines = get_code_block(*args, **kwargs)
+        ...     return lines[-1].rstrip('\\n')
+        ...
+        >>>
+        >>> with TemporaryDirectory() as tmpdir:
+        ...     fname = join(tmpdir, 'cython_source.pyx')
+        ...     with open(fname, mode='w') as fobj:
+        ...         print(dedent('''
+        ...     class NormalClass:                   # 1
+        ...         def __init__(self):              # 2
+        ...             pass                         # 3
+        ...
+        ...         def normal_method(self, *args):  # 5
+        ...             pass                         # 6
+        ...
+        ...     cdef class CythonClass:              # 8
+        ...         cpdef cython_method(self):       # 9
+        ...             pass                         # 10
+        ...
+        ...         property legacy_cython_prop:     # 12
+        ...             def __get__(self):           # 13
+        ...                 return None              # 14
+        ...             def __set__(self, value):    # 15
+        ...                 pass                     # 16
+        ...
+        ...     def normal_func(x, y, z):            # 18
+        ...         with some_ctx():                 # 19
+        ...             ...                          # 20
+        ...
+        ...     cdef cython_function(                # 22
+        ...             int x, int y, int z):        # 23
+        ...         ...                              # 24
+        ...                      ''').strip('\\n'),
+        ...               file=fobj)
+        ...     # Vanilla Python code blocks:
+        ...     # - `NormalClass`
+        ...     assert get_last_line(fname, 1).endswith('# 6')
+        ...     # - `NormalClass.__init__()`
+        ...     assert get_last_line(fname, 2).endswith('# 3')
+        ...     # - `normal_func()`
+        ...     assert get_last_line(fname, 18).endswith('# 20')
+        ...     # Cython code blocks:
+        ...     # - `CythonClass`
+        ...     assert get_last_line(fname, 8).endswith('# 16')
+        ...     # - `CythonClass.cython_method()`
+        ...     assert get_last_line(fname, 9).endswith('# 10')
+        ...     # - `CythonClass.legacy_cython_prop`
+        ...     assert get_last_line(fname, 12).endswith('# 16')
+        ...     # - `cython_function()`
+        ...     assert get_last_line(fname, 22).endswith('# 24')
     """
     BlockFinder = inspect.BlockFinder
     namespace = inspect.getblock.__globals__
@@ -65,9 +133,14 @@ def get_code_block(filename, lineno):
 
 class _CythonBlockFinder(inspect.BlockFinder):
     """
-    Compatibility layer turning Cython-specific code blocks (`cdef`,
-    `cpdef`, and legacy `property` declaration) into something that is
-    understood by `inspect.BlockFinder`.
+    Compatibility layer turning Cython-specific code blocks (``cdef``,
+    ``cpdef``, and legacy ``property`` declaration) into something that
+    is understood by :py:class:`inspect.BlockFinder`.
+
+    Note:
+        This function makes use of :py:func:`inspect.BlockFinder`, which
+        is public but undocumented API.  See similar caveat in
+        :py:func:`~.get_code_block`.
     """
     def tokeneater(self, type, token, *args, **kwargs):
         if (
