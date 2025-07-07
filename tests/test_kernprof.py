@@ -338,6 +338,52 @@ def test_kernprof_bad_temp_script(stdin):
     assert not os.path.exists(os.path.dirname(tmp_script))
 
 
+@pytest.mark.parametrize('debug', [True, False])
+def test_bad_prof_mod_target(debug):
+    """
+    Test the handling of bad paths in `--prof-mod` targets.
+    """
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        proc = ub.cmd(['kernprof', '-l', '-p', './nonexistent.py',
+                       '-c', 'print("Output: foo")'],
+                      env={**os.environ, 'LINE_PROFILER_DEBUG': str(debug)})
+        print(proc.stdout)
+        print(proc.stderr, file=sys.stderr)
+        proc.check_returncode()
+        assert os.listdir()  # Profile results
+    assert 'Output: foo' in proc.stdout
+    assert re.search(r"1 .* target .*: \['\./nonexistent\.py'\]", proc.stderr)
+
+
+@pytest.mark.parametrize('builtin', [True, False])
+@pytest.mark.parametrize('module', [True, False])
+def test_call_with_diagnostics(module, builtin):
+    """
+    Test the output of call signatures in debug messages.
+    """
+    to_run = ['-m', 'calendar'] if module else ['-c', 'print("Output: foo")']
+    with contextlib.ExitStack() as stack:
+        enter = stack.enter_context
+        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+        cmd = ['kernprof']
+        if builtin:
+            cmd += ['-b']
+        proc = ub.cmd(cmd + to_run,
+                      env={**os.environ, 'LINE_PROFILER_DEBUG': 'true'})
+        print(proc.stdout)
+        print(proc.stderr, file=sys.stderr)
+        proc.check_returncode()
+        assert os.listdir()  # Profile results
+    has_runctx_call = re.search(
+        r'Calling: .+\.runctx\(.+\)', proc.stdout, flags=re.DOTALL)
+    has_execfile_call = re.search(
+        r'execfile\(.+\)', proc.stdout, flags=re.DOTALL)
+    assert bool(has_runctx_call) == (not builtin)
+    assert bool(has_execfile_call) == (not module)
+
+
 class TestKernprof(unittest.TestCase):
 
     def test_enable_disable(self):

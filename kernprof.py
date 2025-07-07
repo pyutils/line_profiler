@@ -832,7 +832,7 @@ def _gather_preimport_targets(options, exclude):
                        '' if len(invalid_targets) == 1 else 's',
                        invalid_targets))
         warnings.warn(msg)
-        diagnostics.log.warn(msg)
+        diagnostics.log.warning(msg)
 
     return filtered_targets, recurse_targets
 
@@ -930,13 +930,19 @@ def _dump_filtered_stats(tmpdir, prof, filename):
 
 
 def _format_call_message(func, *args, **kwargs):
+    if isinstance(func, functools.partial):
+        return _format_call_message(
+            func.func, *func.args, *args, **{**func.keywords, **kwargs})
     if isinstance(func, MethodType):
         obj = func.__self__
         func_repr = (
             '{0.__module__}.{0.__qualname__}(...).{1.__name__}'
             .format(type(obj), func.__func__))
     else:
-        func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+        try:
+            func_repr = '{0.__module__}.{0.__qualname__}'.format(func)
+        except Exception:  # Fallback
+            func_repr = repr(func)
     args_repr = dedent(' ' + pformat(args)[len('['):-len(']')])
     lprefix = len('namespace(')
     kwargs_repr = dedent(
