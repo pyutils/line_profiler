@@ -120,7 +120,9 @@ which displays:
                             copies of this flag. Packages are automatically recursed into
                             unless they are specified with `<pkg>.__init__`. Adding the
                             current script/module profiles the entirety of it. Only works
-                            with line profiling (`-l`/`--line-by-line`). (Default: N/A)
+                            with line profiling (`-l`/`--line-by-line`). (Default: N/A;
+                            pass an empty string to clear the defaults (or any `-p` target
+                            specified earlier)
       ---preimports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             Instead of eagerly importing all profiling targets specified
                             via `-p` and profiling them, only profile those that are
@@ -350,6 +352,8 @@ def _normalize_profiling_targets(targets):
       subsequently to absolute paths.
     * Splitting non-file paths at commas into (presumably) file paths
       and/or dotted paths.
+    * Allowing paths specified earlier to be invalidated by an empty
+      string.
     * Removing duplicates.
     """
     def find(path):
@@ -361,6 +365,9 @@ def _normalize_profiling_targets(targets):
 
     results = {}
     for chunk in targets:
+        if not chunk:
+            results.clear()
+            continue
         filename = find(chunk)
         if filename is not None:
             results.setdefault(filename)
@@ -596,7 +603,9 @@ def _add_core_parser_arguments(parser):
                  "with `<pkg>.__init__`. Adding the current script/module "
                  "profiles the entirety of it. Only works with line "
                  "profiling (`-l`/`--line-by-line`). "
-                 f"(Default: {def_prof_mod})")
+                 f"(Default: {def_prof_mod}; "
+                 "pass an empty string to clear the defaults (or any `-p` "
+                 "target specified earlier))")
     add_argument(prof_opts, '--preimports', action='store_true',
                  help="Eagerly import all profiling targets specified via "
                  "`-p` and profile them, instead of only profiling those "
@@ -751,8 +760,7 @@ def _parse_arguments(
         del options.help
     except AttributeError:
         pass
-    defaults, options.config = get_cli_config(
-        'kernprof', options.config or None)
+    defaults, options.config = get_cli_config('kernprof', options.config)
     for key, default in defaults.items():
         if getattr(options, key, None) is None:
             setattr(options, key, default)
@@ -795,6 +803,8 @@ def _parse_arguments(
             options.rich = False
             diagnostics.log.debug('`rich` not installed, unsetting --rich')
 
+    diagnostics.log.debug(
+        f'Loaded configs from {short_string_path(options.config)!r}')
     return options, tempfile_source_and_content
 
 
@@ -823,7 +833,8 @@ def main(args=None, *, exit_on_error=True):
         diagnostics.log.debug(
             f'Profiling script read from: {tempfile_source_and_content[0]}')
     else:
-        diagnostics.log.debug(f'Profiling script: {options.script!r}')
+        diagnostics.log.debug(
+            f'Profiling script: {short_string_path(options.script)!r}')
 
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
@@ -891,7 +902,8 @@ def _write_tempfile(source, content, options):
     fname = os.path.join(options.tmpdir, file_prefix + '.py')
     with open(fname, mode='w') as fobj:
         print(content, file=fobj)
-    diagnostics.log.debug(f'Wrote temporary script file to {fname!r}:')
+    diagnostics.log.debug(
+        f'Wrote temporary script file to {short_string_path(fname)!r}:')
     options.script = fname
     # Add the tempfile to `--prof-mod`
     if options.prof_mod:
@@ -906,7 +918,8 @@ def _write_tempfile(source, content, options):
                                           prefix=file_prefix + '-',
                                           suffix='.' + extension)
         diagnostics.log.debug(
-            f'Using default output destination {options.outfile!r}')
+            'Using default output destination '
+            f'{short_string_path(options.outfile)!r}')
 
 
 def _gather_preimport_targets(options, exclude):
@@ -986,7 +999,8 @@ def _write_preimports(prof, options, exclude):
         with temp_file as fobj:
             print(code, file=fobj)
         diagnostics.log.debug(
-            f'Wrote temporary module for pre-imports to {temp_mod_path!r}')
+            'Wrote temporary module for pre-imports to '
+            f'{short_string_path(temp_mod_path)!r}')
     else:
         with temp_file as fobj:
             write_eager_import_module(stream=fobj, **write_module_kwargs)
@@ -1091,7 +1105,8 @@ def _pre_profile(options, module, exit_on_error):
         extension = 'lprof' if options.line_by_line else 'prof'
         options.outfile = f'{os.path.basename(options.script)}.{extension}'
         diagnostics.log.debug(
-            f'Using default output destination {options.outfile!r}')
+            'Using default output destination '
+            f'{short_string_path(options.outfile)!r}')
 
     sys.argv = [options.script] + options.args
     if module:
@@ -1109,7 +1124,8 @@ def _pre_profile(options, module, exit_on_error):
         sys.path.insert(0, os.path.dirname(setup_file))
         ns = {'__file__': setup_file, '__name__': '__main__'}
         diagnostics.log.debug(
-            f'Executing file {setup_file!r} as pre-profiling setup')
+            f'Executing file {short_string_path(setup_file)!r} '
+            'as pre-profiling setup')
         if not options.dryrun:
             execfile(setup_file, ns, ns)
 

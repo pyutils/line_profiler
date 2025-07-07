@@ -680,7 +680,7 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
 
 @pytest.mark.parametrize(
     ('explicit_config', 'prof_mod', 'prof_imports', 'profiled_funcs'),
-    [(True, 'test_mod.submod2', False, {'add_two'}),
+    [(True, 'test_mod.submod2', False, {'add_two', 'add_operator'}),
      (False, None, False, {'add_one', 'add_operator'}),
      (True, 'test_mod.subpkg.submod4', None,
       {'add_one', 'add_two', 'add_four', 'add_operator', '_main'}),
