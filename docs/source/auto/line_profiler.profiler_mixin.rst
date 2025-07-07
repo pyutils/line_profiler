@@ -5,4 +5,3 @@ line\_profiler.profiler\_mixin module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

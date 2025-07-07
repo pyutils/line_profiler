@@ -5,4 +5,3 @@ line\_profiler.scoping\_policy module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

@@ -5,4 +5,3 @@ line\_profiler.autoprofile.ast\_tree\_profiler module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

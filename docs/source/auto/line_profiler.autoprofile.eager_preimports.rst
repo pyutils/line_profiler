@@ -5,4 +5,3 @@ line\_profiler.autoprofile.eager\_preimports module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

@@ -5,4 +5,3 @@ line\_profiler.autoprofile.profmod\_extractor module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:
