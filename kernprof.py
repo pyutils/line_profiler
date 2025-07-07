@@ -77,9 +77,9 @@ which displays:
                     [--line-by-line [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [--builtin [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-s SETUP] [-p {path/to/script | object.dotted.path}[,...]]
-                    [--no-preimports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
+                    [--preimports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [--prof-imports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
-                    [-o OUTFILE] [--verbose] [--quiet]
+                    [-o OUTFILE] [-v] [-q]
                     [--rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-u UNIT]
                     [--skip-zero [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
@@ -224,9 +224,6 @@ from line_profiler._logger import Logger
 from line_profiler import _diagnostics as diagnostics
 
 
-# TODO:
-# - Rehabilitate `-v` (now a counter flag
-# - Make `--no-preimports` an enhanced boolean
 DIAGNOSITICS_VERBOSITY = 2
 
 
