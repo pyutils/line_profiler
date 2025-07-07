@@ -11,8 +11,7 @@ Ignore:
     # Assuming the cwd is the repo root.
     cythonize --annotate --inplace \
         ./line_profiler/_line_profiler.pyx \
-        ./line_profiler/timers.c \
-        ./line_profiler/unset_trace.c
+        ./line_profiler/timers.c
 """
 from .python25 cimport PyFrameObject, PyObject, PyStringObject
 from sys import byteorder
@@ -127,9 +126,6 @@ cdef extern from "Python.h":
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
-
-cdef extern from "unset_trace.c":
-    void unset_trace()
 
 cdef struct LineTime:
     int64 code
@@ -526,7 +522,7 @@ cdef class LineProfiler:
         elif CAN_USE_SYS_MONITORING:
             _sys_monitoring_deregister()
         else:
-            unset_trace()
+            PyEval_SetTrace(NULL, <object>NULL)
 
     def get_stats(self):
         """
