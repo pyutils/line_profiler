@@ -5,34 +5,33 @@ inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
 import functools
-import pickle
 import inspect
 import linecache
+import os
+import pickle
+import sys
 import tempfile
 import types
-import os
-import sys
 from argparse import ArgumentParser
+from datetime import datetime
 
 try:
     from ._line_profiler import LineProfiler as CLineProfiler
 except ImportError as ex:
-    raise ImportError('The line_profiler._line_profiler c-extension '
-                      'is not importable. '
-                      f'Has it been compiled? Underlying error is ex={ex!r}')
-from .profiler_mixin import (ByCountProfilerMixin,
-                             is_property, is_cached_property,
-                             is_boundmethod, is_classmethod, is_staticmethod,
-                             is_partial, is_partialmethod)
-from .toml_config import get_config
+    raise ImportError(
+        'The line_profiler._line_profiler c-extension is not importable. '
+        f'Has it been compiled? Underlying error is ex={ex!r}'
+    )
+from . import _diagnostics as diagnostics
 from .cli_utils import (
     add_argument, get_cli_config, positive_float, short_string_path)
+from .profiler_mixin import ByCountProfilerMixin, is_c_level_callable
+from .scoping_policy import ScopingPolicy
+from .toml_config import get_config
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
-
-is_function = inspect.isfunction
 
 
 @functools.lru_cache()
@@ -48,32 +47,19 @@ def load_ipython_extension(ip):
     ip.register_magics(LineProfilerMagics)
 
 
-def _get_underlying_functions(func):
+class _WrapperInfo:
     """
-    Get the underlying function objects of a callable or an adjacent
-    object.
+    Helper object for holding the state of a wrapper function.
 
-    Returns:
-        funcs (list[Callable])
+    Attributes:
+        func (types.FunctionType):
+            The function it wraps.
+        profiler_id (int)
+            ID of the `LineProfiler`.
     """
-    if any(check(func)
-           for check in (is_boundmethod, is_classmethod, is_staticmethod)):
-        return _get_underlying_functions(func.__func__)
-    if any(check(func)
-           for check in (is_partial, is_partialmethod, is_cached_property)):
-        return _get_underlying_functions(func.func)
-    if is_property(func):
-        result = []
-        for impl in func.fget, func.fset, func.fdel:
-            if impl is not None:
-                result.extend(_get_underlying_functions(impl))
-        return result
-    if not callable(func):
-        raise TypeError(f'func = {func!r}: '
-                        f'cannot get functions from {type(func)} objects')
-    if is_function(func):
-        return [func]
-    return [type(func).__call__]
+    def __init__(self, func, profiler_id):
+        self.func = func
+        self.profiler_id = profiler_id
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -93,41 +79,102 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> func()
         >>> profile.print_stats()
     """
-
     def __call__(self, func):
         """
-        Decorate a function, method, property, partial object etc. to
-        start the profiler on function entry and stop it on function
-        exit.
+        Decorate a function, method, :py:class:`property`,
+        :py:func:`~functools.partial` object etc. to start the profiler
+        on function entry and stop it on function exit.
         """
-        # Note: if `func` is a `types.FunctionType` which is already
-        # decorated by the profiler, the same object is returned;
+        # The same object is returned when:
+        # - `func` is a `types.FunctionType` which is already
+        #   decorated by the profiler,
+        # - `func` is a class, or
+        # - `func` is any of the C-level callables that can't be
+        #   profiled
         # otherwise, wrapper objects are always returned.
         self.add_callable(func)
         return self.wrap_callable(func)
 
-    def add_callable(self, func):
+    def wrap_callable(self, func):
+        if is_c_level_callable(func):  # Non-profilable
+            return func
+        return super().wrap_callable(func)
+
+    def add_callable(self, func, guard=None, name=None):
         """
-        Register a function, method, property, partial object, etc. with
-        the underlying Cython profiler.
+        Register a function, method, :py:class:`property`,
+        :py:func:`~functools.partial` object, etc. with the underlying
+        Cython profiler.
+
+        Args:
+            func (...):
+                Function, class/static/bound method, property, etc.
+            guard (Optional[Callable[[types.FunctionType], bool]])
+                Optional checker callable, which takes a function object
+                and returns true(-y) if it *should not* be passed to
+                :py:meth:`.add_function()`.  Defaults to checking
+                whether the function is already a profiling wrapper.
+            name (Optional[str])
+                Optional name for ``func``, to be used in log messages.
 
         Returns:
-            1 if any function is added to the profiler, 0 otherwise
+            1 if any function is added to the profiler, 0 otherwise.
+
+        Note:
+            This method should in general be called instead of the more
+            low-level :py:meth:`.add_function()`.
         """
-        guard = self._already_wrapped
+        if guard is None:
+            guard = self._already_a_wrapper
 
         nadded = 0
-        for impl in _get_underlying_functions(func):
-            if guard(impl):
+        func_repr = self._repr_for_log(func, name)
+        for impl in self.get_underlying_functions(func):
+            info, wrapped_by_this_prof = self._get_wrapper_info(impl)
+            if wrapped_by_this_prof if guard is None else guard(impl):
                 continue
+            if info:
+                # It's still a profiling wrapper, just wrapped by
+                # someone else -> extract the inner function
+                impl = info.func
             self.add_function(impl)
             nadded += 1
+            if impl is func:
+                self._debug(f'added {func_repr}')
+            else:
+                self._debug(f'added {func_repr} -> {self._repr_for_log(impl)}')
 
         return 1 if nadded else 0
 
+    @staticmethod
+    def _repr_for_log(obj, name=None):
+        try:
+            real_name = '{0.__module__}.{0.__qualname__}'.format(obj)
+        except AttributeError:
+            try:
+                real_name = obj.__name__
+            except AttributeError:
+                real_name = '???'
+        return '{} `{}{}` {}@ {:#x}'.format(
+            type(obj).__name__,
+            real_name,
+            '()' if callable(obj) and not isinstance(obj, type) else '',
+            f'(=`{name}`) ' if name and name != real_name else '',
+            id(obj))
+
+    def _debug(self, msg):
+        self_repr = f'{type(self).__name__} @ {id(self):#x}'
+        logger = diagnostics.log
+        if logger.backend == 'print':
+            now = datetime.now().isoformat(sep=' ', timespec='seconds')
+            msg = f'[{self_repr} {now}] {msg}'
+        else:
+            msg = f'{self_repr}: {msg}'
+        logger.debug(msg)
+
     def dump_stats(self, filename):
-        """ Dump a representation of the data to a file as a pickled LineStats
-        object from `get_stats()`.
+        """ Dump a representation of the data to a file as a pickled
+        :py:class:`~.LineStats` object from :py:meth:`~.get_stats()`.
         """
         lstats = self.get_stats()
         with open(filename, 'wb') as f:
@@ -144,23 +191,180 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                   details=details, summarize=summarize, sort=sort, rich=rich,
                   config=config)
 
-    def add_module(self, mod):
-        """ Add all the functions in a module and its classes.
+    def _add_namespace(
+            self, namespace, *,
+            seen=None,
+            func_scoping_policy=ScopingPolicy.NONE,
+            class_scoping_policy=ScopingPolicy.NONE,
+            module_scoping_policy=ScopingPolicy.NONE,
+            wrap=False,
+            name=None):
+        def func_guard(func):
+            return self._already_a_wrapper(func) or not func_check(func)
+
+        if seen is None:
+            seen = set()
+        count = 0
+        add_namespace = functools.partial(
+            self._add_namespace,
+            seen=seen,
+            func_scoping_policy=func_scoping_policy,
+            class_scoping_policy=class_scoping_policy,
+            module_scoping_policy=module_scoping_policy,
+            wrap=wrap)
+        members_to_wrap = {}
+        func_check = func_scoping_policy.get_filter(namespace, 'func')
+        cls_check = class_scoping_policy.get_filter(namespace, 'class')
+        mod_check = module_scoping_policy.get_filter(namespace, 'module')
+
+        # Logging stuff
+        if not name:
+            try:  # Class
+                name = '{0.__module__}.{0.__qualname__}'.format(namespace)
+            except AttributeError:  # Module
+                name = namespace.__name__
+
+        for attr, value in vars(namespace).items():
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            if isinstance(value, type):
+                if not (cls_check(value)
+                        and add_namespace(value, name=f'{name}.{attr}')):
+                    continue
+            elif isinstance(value, types.ModuleType):
+                if not (mod_check(value)
+                        and add_namespace(value, name=f'{name}.{attr}')):
+                    continue
+            else:
+                try:
+                    if not self.add_callable(
+                            value, guard=func_guard, name=f'{name}.{attr}'):
+                        continue
+                except TypeError:  # Not a callable (wrapper)
+                    continue
+                if wrap:
+                    members_to_wrap[attr] = value
+            count += 1
+        if wrap and members_to_wrap:
+            self._wrap_namespace_members(namespace, members_to_wrap,
+                                         warning_stack_level=3)
+        if count:
+            self._debug(
+                'added {} member{} in {}'.format(
+                    count,
+                    '' if count == 1 else 's',
+                    self._repr_for_log(namespace, name)))
+        return count
+
+    def add_class(self, cls, *, scoping_policy=None, wrap=False):
         """
-        from inspect import isclass
+        Add the members (callables (wrappers), methods, classes, ...) in
+        a class' local namespace and profile them.
 
-        nfuncsadded = 0
-        for item in mod.__dict__.values():
-            if isclass(item):
-                for k, v in item.__dict__.items():
-                    if is_function(v):
-                        self.add_function(v)
-                        nfuncsadded += 1
-            elif is_function(item):
-                self.add_function(item)
-                nfuncsadded += 1
+        Args:
+            cls (type):
+                Class to be profiled.
+            scoping_policy (Union[str, ScopingPolicy, \
+ScopingPolicyDict, None]):
+                Whether (and how) to match the scope of members and
+                decide on whether to add them:
 
-        return nfuncsadded
+                :py:class:`str` (incl. :py:class:`~.ScopingPolicy`):
+                    Strings are converted to :py:class:`~.ScopingPolicy`
+                    instances in a case-insensitive manner, and the same
+                    policy applies to all members.
+
+                ``{'func': ..., 'class': ..., 'module': ...}``
+                    Mapping specifying individual policies to be enacted
+                    for the corresponding member types.
+
+                :py:const:`None`
+                    The default, equivalent to
+                    :py:data:\
+`~.scoping_policy.DEFAULT_SCOPING_POLICIES`.
+
+                See :py:class:`~.ScopingPolicy` and
+                :py:meth:`.ScopingPolicy.to_policies` for details.
+            wrap (bool):
+                Whether to replace the wrapped members with wrappers
+                which automatically enable/disable the profiler when
+                called.
+
+        Returns:
+            n (int):
+                Number of members added to the profiler.
+        """
+        policies = ScopingPolicy.to_policies(scoping_policy)
+        return self._add_namespace(cls,
+                                   func_scoping_policy=policies['func'],
+                                   class_scoping_policy=policies['class'],
+                                   module_scoping_policy=policies['module'],
+                                   wrap=wrap)
+
+    def add_module(self, mod, *, scoping_policy=None, wrap=False):
+        """
+        Add the members (callables (wrappers), methods, classes, ...) in
+        a module's local namespace and profile them.
+
+        Args:
+            mod (ModuleType):
+                Module to be profiled.
+            scoping_policy (Union[str, ScopingPolicy, \
+ScopingPolicyDict, None]):
+                Whether (and how) to match the scope of members and
+                decide on whether to add them:
+
+                :py:class:`str` (incl. :py:class:`~.ScopingPolicy`):
+                    Strings are converted to :py:class:`~.ScopingPolicy`
+                    instances in a case-insensitive manner, and the same
+                    policy applies to all members.
+
+                ``{'func': ..., 'class': ..., 'module': ...}``
+                    Mapping specifying individual policies to be enacted
+                    for the corresponding member types.
+
+                :py:const:`None`
+                    The default, equivalent to
+                    :py:data:\
+`~.scoping_policy.DEFAULT_SCOPING_POLICIES`.
+
+                See :py:class:`~.ScopingPolicy` and
+                :py:meth:`.ScopingPolicy.to_policies` for details.
+            wrap (bool):
+                Whether to replace the wrapped members with wrappers
+                which automatically enable/disable the profiler when
+                called.
+
+        Returns:
+            n (int):
+                Number of members added to the profiler.
+        """
+        policies = ScopingPolicy.to_policies(scoping_policy)
+        return self._add_namespace(mod,
+                                   func_scoping_policy=policies['func'],
+                                   class_scoping_policy=policies['class'],
+                                   module_scoping_policy=policies['module'],
+                                   wrap=wrap)
+
+    def _get_wrapper_info(self, func):
+        info = getattr(func, self._profiler_wrapped_marker, None)
+        return info, bool(info and id(self) == info.profiler_id)
+
+    # Override these mixed-in bookkeeping methods to take care of
+    # potential multiple profiler sequences
+
+    def _already_a_wrapper(self, func):
+        return self._get_wrapper_info(func)[1]
+
+    def _mark_wrapper(self, wrapper):
+        # Are re-wrapping an existing wrapper (e.g. created by another
+        # profiler?)
+        wrapped = wrapper.__wrapped__
+        info = getattr(wrapped, self._profiler_wrapped_marker, None)
+        new_info = _WrapperInfo(info.func if info else wrapped, id(self))
+        setattr(wrapper, self._profiler_wrapped_marker, new_info)
+        return wrapper
 
 
 # This could be in the ipython_extension submodule,
@@ -406,7 +610,18 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
               details=True, summarize=False, sort=False, rich=False, *,
               config=None):
-    """ Show text for the given timings.
+    """
+    Show text for the given timings.
+
+    Ignore:
+        # For developer testing, generate some profile output
+        python -m kernprof -l -p uuid -m uuid
+
+        # Use this function to view it with rich
+        python -m line_profiler -rmtz "uuid.lprof"
+
+        # Use this function to view it without rich
+        python -m line_profiler -mtz "uuid.lprof"
     """
     if stream is None:
         stream = sys.stdout
@@ -435,16 +650,35 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 
     if summarize:
         # Summarize the total time for each function
-        for (fn, lineno, name), timings in stats_order:
-            total_time = sum(t[2] for t in timings) * unit
-            if not stripzeros or total_time:
-                line = '%6.2f seconds - %s:%s - %s\n' % (total_time, fn, lineno, name)
-                stream.write(line)
+        if rich:
+            try:
+                from rich.console import Console
+                from rich.markup import escape
+            except ImportError:
+                rich = 0
+        line_template = '%6.2f seconds - %s:%s - %s'
+        if rich:
+            write_console = Console(file=stream, soft_wrap=True,
+                                    color_system='standard')
+            for (fn, lineno, name), timings in stats_order:
+                total_time = sum(t[2] for t in timings) * unit
+                if not stripzeros or total_time:
+                    # Wrap the filename with link markup to allow the user to
+                    # open the file
+                    fn_link = f'[link={fn}]{escape(fn)}[/link]'
+                    line = line_template % (total_time, fn_link, lineno, escape(name))
+                    write_console.print(line)
+        else:
+            for (fn, lineno, name), timings in stats_order:
+                total_time = sum(t[2] for t in timings) * unit
+                if not stripzeros or total_time:
+                    line = line_template % (total_time, fn, lineno, name)
+                    stream.write(line + '\n')
 
 
 def load_stats(filename):
-    """ Utility function to load a pickled LineStats object from a given
-    filename.
+    """ Utility function to load a pickled :py:class:`~.LineStats`
+    object from a given filename.
     """
     with open(filename, 'rb') as f:
         return pickle.load(f)
@@ -452,7 +686,7 @@ def load_stats(filename):
 
 def main():
     """
-    The line profiler CLI to view output from ``kernprof -l``.
+    The line profiler CLI to view output from :command:`kernprof -l`.
     """
     parser = ArgumentParser(
         description='Read and show line profiling results (`.lprof` files) '

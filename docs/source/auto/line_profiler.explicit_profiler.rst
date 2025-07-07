@@ -5,4 +5,3 @@ line\_profiler.explicit\_profiler module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

@@ -5,4 +5,3 @@ line\_profiler.autoprofile.util\_static module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

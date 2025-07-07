@@ -79,20 +79,24 @@ line-by-line = false
 #   - `builtin` (bool):
 #      `-b`/`--builtin` (true) or `--no-builtin` (false)
 builtin = false
-#   - `view` (bool):
-#     `-v`/`--view` (true) or `--no-view` (false)
-view = false
 #   - `rich` (bool):
 #     `-r`/`--rich` (true) or `--no-rich` (false)
 rich = false
 #   - `skip-zero` (bool):
 #     `-z`/`--skip-zero` (true) or `--no-skip-zero` (false)
 skip-zero = false
+#   - `preimports` (bool):
+#     `--preimports` (true) or `--no-preimports` (false)
+preimports = true
 #   - `prof-imports` (bool):
 #     `--prof-imports` (true) or `--no-prof-imports` (false)
 prof-imports = false
 
 # - Misc flags
+#   - `verbose` (count):
+#     `-v`/`--verbose`/`--view` (incrementing) or `-q`/`--quiet`
+#     (decrementing): output verbosity of `kernprof`
+verbose = 0
 #   - `outfile` (str):
 #     `--outfile=...`; filename to which to `LineProfiler.dump_stats()`
 #     the profiling results (use an empty string to fall back to the

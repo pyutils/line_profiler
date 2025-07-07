@@ -5,4 +5,3 @@ line\_profiler.ipython\_extension module
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:

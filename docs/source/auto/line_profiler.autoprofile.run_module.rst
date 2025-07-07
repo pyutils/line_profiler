@@ -1,7 +1,7 @@
-line\_profiler.autoprofile.autoprofile module
+line\_profiler.autoprofile.run\_module module
 =============================================
 
-.. automodule:: line_profiler.autoprofile.autoprofile
+.. automodule:: line_profiler.autoprofile.run_module
    :members:
    :undoc-members:
    :show-inheritance:

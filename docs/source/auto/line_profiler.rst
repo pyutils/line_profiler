@@ -20,6 +20,8 @@ Submodules
    line_profiler.explicit_profiler
    line_profiler.ipython_extension
    line_profiler.line_profiler
+   line_profiler.profiler_mixin
+   line_profiler.scoping_policy
 
 Module contents
 ---------------
@@ -28,4 +30,3 @@ Module contents
    :members:
    :undoc-members:
    :show-inheritance:
-   :private-members:
