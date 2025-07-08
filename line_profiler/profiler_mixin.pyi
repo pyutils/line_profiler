@@ -120,8 +120,7 @@ else:
 CLevelCallable = TypeVar('CLevelCallable',
                          BuiltinFunctionType, BuiltinMethodType,
                          ClassMethodDescriptorType, MethodDescriptorType,
-                         MethodWrapperType, WrapperDescriptorType,
-                         CythonCallable)
+                         MethodWrapperType, WrapperDescriptorType)
 
 
 def is_c_level_callable(func: Any) -> TypeIs[CLevelCallable]:
