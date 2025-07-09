@@ -314,6 +314,22 @@ cdef class _SysMonitoringState:
     cdef dict callbacks  # type: dict[int, Callable | None]
     cdef int events
 
+    if CAN_USE_SYS_MONITORING:
+        line_tracing_event_set = (  # type: ClassVar[FrozenSet[int]]
+            frozenset({sys.monitoring.events.LINE,
+                       sys.monitoring.events.PY_RETURN,
+                       sys.monitoring.events.PY_YIELD,
+                       sys.monitoring.events.RAISE,
+                       sys.monitoring.events.RERAISE}))
+        line_tracing_events = (sys.monitoring.events.LINE
+                               | sys.monitoring.events.PY_RETURN
+                               | sys.monitoring.events.PY_YIELD
+                               | sys.monitoring.events.RAISE
+                               | sys.monitoring.events.RERAISE)
+    else:
+        line_tracing_event_set = frozenset({})
+        line_tracing_events = 0
+
     def __init__(self, name=None, callbacks=None, events=0):
         self.name = name
         self.callbacks = callbacks or {}
@@ -343,13 +359,7 @@ cdef class _SysMonitoringState:
             self.events = mon.get_events(mon.PROFILER_ID)
             mon.free_tool_id(mon.PROFILER_ID)
         mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
-        events = (self.events
-                  | mon.events.LINE
-                  | mon.events.PY_RETURN
-                  | mon.events.PY_YIELD
-                  | mon.events.RAISE
-                  | mon.events.RERAISE)
-        mon.set_events(mon.PROFILER_ID, events)
+        mon.set_events(mon.PROFILER_ID, self.events | self.line_tracing_events)
 
         # Register tracebacks
         for event_id, callback in [
@@ -440,7 +450,7 @@ cdef class _LineProfilerManager:
         :py:func:`sys.monitoring.register_callback`.
         """
         self._base_callback(
-            sys.monitoring.events.LINE, code, lineno, (lineno,))
+            1, sys.monitoring.events.LINE, code, lineno, (lineno,))
 
     @cython.profile(False)
     cpdef handle_return_event(
@@ -492,47 +502,69 @@ cdef class _LineProfilerManager:
             This is deliberately made a non-traceable C method so that
             we don't fall info infinite recursion.
         """
-        self._base_callback(event_id,
-                            code,
-                            PyCode_Addr2Line(<PyCodeObject*>code, offset),
-                            (offset, retval))
+        cdef int lineno = PyCode_Addr2Line(<PyCodeObject*>code, offset)
+        self._base_callback(0, event_id, code, lineno, (offset, obj))
 
     cdef void _base_callback(
-            self, int event_id, object code, int lineno, object other_args):
+            self, int is_line_event, int event_id,
+            object code, int lineno, object other_args):
         """
         Base for the various callbacks passed to
-        :py:func:`sys.monitoring.register_callback`.  Also takes care of
-        the restoration of callbacks should they be unset.
+        :py:func:`sys.monitoring.register_callback`.
 
         Note:
             This is deliberately made a non-traceable C method so that
             we don't fall info infinite recursion.
         """
-        cdef object callback_before, callback_after, callback_wrapped
-        cdef dict callbacks = self.mon_state.callbacks
-        mon = sys.monitoring
-        inner_trace_callback((event_id == mon.events.LINE),
-                             self.active_instances,
-                             code,
-                             lineno)
-        if not self.wrap_trace:
-            return
+        inner_trace_callback(
+            is_line_event, self.active_instances, code, lineno)
+        if self._wrap_trace:
+            self._call_callback(event_id, code, other_args)
 
-        # Call wrapped callback
-        callback_wrapped = callbacks.get(event_id)
-        if callback_wrapped is None:
+    cdef void _call_callback(
+            self, int event_id, object code, object other_args):
+        """
+        Call the stored callback in ``self.mon_state``.  Also takes care
+        of the restoration of :py:mod:`sys.monitoring` callbacks,
+        tool-id lock, and events should they be unset.
+
+        Note:
+            This is deliberately made a non-traceable C method so that
+            we don't fall info infinite recursion.
+        """
+        mon = sys.monitoring
+        cdef object callback  # type: Callable | None
+        cdef object callback_after  # type: Callable | None
+        cdef object callback_wrapped  # type: Callable | None
+        cdef int events_needed
+        cdef int ev_id
+        cdef int prof_id = mon.PROFILER_ID
+        cdef _SysMonitoringState state = self.mon_state
+        cdef dict callbacks_before = {}
+        # Call wrapped callback where suitable
+        callback_wrapped = state.callbacks.get(event_id)
+        if callback_wrapped is None or not (event_id & state.events):
             return
-        callback_before = get_current_callback(event_id)
+        for ev_id in state.line_tracing_event_set:
+            callbacks_before[ev_id] = get_current_callback(ev_id)
+        events_needed = state.line_tracing_events
         try:
             callback_wrapped(code, *other_args)
         finally:
-            callback_after = get_current_callback(event_id)
-            if callback_after is None:
-                # The wrapped callback has unset itself;
-                # remove from `.mon_state.callbacks`
-                callbacks[event_id] = None
-            if callback_before is not callback_after:
-                mon.register_callback(mon.PROFILER_ID, callback_before)
+            state.events = mon.get_events(prof_id)
+            register = mon.register_callback
+            # If the wrapped callback has changed:
+            for ev_id, callback in callbacks_before.items():
+                # - Restore the `sys.monitoring` callback
+                callback_after = register(prof_id, ev_id, callback)
+                # - Remember the updated callback in `state.callbacks`
+                if callback is not callback_after:
+                    state.callbacks[ev_id] = callback_after
+            # Reset the tool ID lock if released
+            if not mon.get_tool(prof_id):
+                mon.use_tool_id(prof_id, 'line_profiler')
+            # Restore the `sys.monitoring` events if unset
+            mon.set_events(prof_id, state.events | events_needed)
 
     cpdef _handle_enable_event(self, prof):
         cdef TraceCallback* legacy_callback
