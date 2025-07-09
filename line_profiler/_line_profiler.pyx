@@ -174,10 +174,6 @@ cdef inline object multibyte_rstrip(bytes bytecode):
     return (unpadded, npad)
 
 
-cdef inline int is_main_thread():
-    return <int>(threading.current_thread() == threading.main_thread())
-
-
 cdef inline object get_current_callback(int event_id):
     """
     Note:
@@ -337,8 +333,6 @@ cdef class _SysMonitoringState:
         # - Since our callbacks are registered globally for events,
         #   there is no risk of events being disrupted by the wrapped
         #   callback's returning `sys.monitoring.DISABLE`
-        if not is_main_thread():
-            return
         mon = sys.monitoring
 
         # Set prior state
@@ -368,8 +362,6 @@ cdef class _SysMonitoringState:
                 mon.PROFILER_ID, event_id, callback)
 
     cpdef deregister(self):
-        if not is_main_thread():
-            return
         mon = sys.monitoring
         cdef dict wrapped_callbacks = self.callbacks
 
