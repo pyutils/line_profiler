@@ -33,7 +33,8 @@ NOP_VALUE: int = opcode.opmap['NOP']
 # The Op code should be 2 bytes as stated in
 # https://docs.python.org/3/library/dis.html
 # if sys.version_info[0:2] >= (3, 11):
-NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
+NOP_BYTES_LEN: int = 2
+NOP_BYTES: bytes = NOP_VALUE.to_bytes(NOP_BYTES_LEN, byteorder=byteorder)
 
 # This should be true for Python >=3.11a1
 HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
@@ -149,6 +150,24 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     # linenum doesn't need to be int64 but it's really a temporary value
     # so it doesn't matter
     return block_hash ^ linenum
+
+
+cdef inline object multibyte_rstrip(bytes bytecode):
+    """
+    Returns:
+        result (tuple[bytes, int])
+        - First item is the bare unpadded bytecode
+        - Second item is the number of :py:const:`NOP_BYTES`
+          ``bytecode`` has been padded with
+    """
+    npad: int = 0
+    nop_len: int = -NOP_BYTES_LEN
+    nop_bytes: bytes = NOP_BYTES
+    unpadded: bytes = bytecode
+    while unpadded.endswith(nop_bytes):
+        unpadded = unpadded[:nop_len]
+        npad += 1
+    return (unpadded, npad)
 
 
 if CAN_USE_SYS_MONITORING:
@@ -378,26 +397,21 @@ cdef class LineProfiler:
         co_code: bytes = code.co_code
         code_hashes = []
         if any(co_code):  # Normal Python functions
-            base_co_code: bytes = co_code
             # Figure out how much padding we need and strip the bytecode
-            # TODO: is there a way to do this faster? `.rstrip()` doesn't
-            # work (reliably) since `NOP_BYTES` should be 2-byte wide
-            npad_code: int = 0
-            nop_len: int = -len(NOP_BYTES)
-            while base_co_code.endswith(NOP_BYTES):
-                base_co_code = base_co_code[:nop_len]
-                npad_code += 1
+            base_co_code: bytes
+            npad_code: int
+            base_co_code, npad_code = multibyte_rstrip(co_code)
             try:
                 npad = self._all_paddings[base_co_code]
             except KeyError:
                 npad = 0
             self._all_paddings[base_co_code] = max(npad, npad_code) + 1
             try:
-                neighbors = self._all_instances_by_funcs[func_id]
-                neighbors.add(self)
+                profilers_to_update = self._all_instances_by_funcs[func_id]
+                profilers_to_update.add(self)
             except KeyError:
-                neighbors = self._all_instances_by_funcs[func_id] = WeakSet(
-                    {self})
+                profilers_to_update = WeakSet({self})
+                self._all_instances_by_funcs[func_id] = profilers_to_update
             # Maintain `.dupes_map` (legacy)
             try:
                 self.dupes_map[base_co_code].append(code)
@@ -413,8 +427,8 @@ cdef class LineProfiler:
                     func.__code__ = code
                 except AttributeError as e:
                     func.__func__.__code__ = code
-            else:  # No re-padding -> no need to update the neighbors
-                neighbors = {self}
+            else:  # No re-padding -> no need to update the other profs
+                profilers_to_update = {self}
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over
@@ -446,11 +460,11 @@ cdef class LineProfiler:
             # We can't replace the code object on Cython functions, but
             # we can *store* a copy with the correct metadata
             code = code.replace(co_filename=cython_source)
-            neighbors = {self}
+            profilers_to_update = {self}
         # Update `._c_code_map` and `.code_hash_map` with the new line
         # hashes on `self` (and other instances profiling the same
         # function if we padded the bytecode)
-        for instance in neighbors:
+        for instance in profilers_to_update:
             prof = <LineProfiler>instance
             try:
                 line_hashes = prof.code_hash_map[code]
