@@ -242,8 +242,8 @@ def disable_line_events(trace_func: Callable) -> Callable:
     """
     Return a thin wrapper around ``trace_func()`` which withholds line
     events.  This is for when a frame-local
-    :py:attr:`~types.FrameType.f_trace` disables
-    :py:attr:`~types.FrameType.f_trace_lines` -- we would like to keep
+    :py:attr:`~frame.f_trace` disables
+    :py:attr:`~frame.f_trace_lines` -- we would like to keep
     line events enabled (so that line profiling works) while
     "unsubscribing" the trace function from it.
     """
@@ -258,7 +258,7 @@ def disable_line_events(trace_func: Callable) -> Callable:
 
 cpdef _code_replace(func, co_code):
     """
-    Implements :py:mod:`types.CodeType.replace` for Python < 3.8
+    Implements :py:mod:`~code.replace` for Python < 3.8
     """
     try:
         code = func.__code__
@@ -391,13 +391,42 @@ cdef class _SysMonitoringState:
 
 cdef class _LineProfilerManager:
     """
-    Helper object for managing the thread-local state.  Supports being
-    called with the same signature as an ordinary trace function (see
-    :py:func:`sys.settrace`).
+    Helper object for managing the thread-local state.
+    Supports being called with the same signature as a legacy trace
+    function (see :py:func:`sys.settrace`).
+
+    Other methods of interest:
+
+    :py:meth:`~.handle_line_event`
+        Callback for |LINE|_ events
+    :py:meth:`~.handle_return_event`
+        Callback for |PY_RETURN|_ events
+    :py:meth:`~.handle_yield_event`
+        Callback for |PY_YIELD|_ events
+    :py:meth:`~.handle_raise_event`
+        Callback for |RAISE|_ events
+    :py:meth:`~.handle_reraise_event`
+        Callback for |RERAISE|_ events
 
     Note:
         Documentations are for reference only, and all APIs are to be
         considered private and subject to change.
+
+    .. |LINE| replace:: :py:attr:`sys.monitoring.events.LINE`
+    .. |PY_RETURN| replace:: :py:attr:`sys.monitoring.events.PY_RETURN`
+    .. |PY_YIELD| replace:: :py:attr:`sys.monitoring.events.PY_YIELD`
+    .. |RAISE| replace:: :py:attr:`sys.monitoring.events.RAISE`
+    .. |RERAISE| replace:: :py:attr:`sys.monitoring.events.RERAISE`
+    .. _LINE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-LINE
+    .. _PY_RETURN: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_RETURN
+    .. _PY_YIELD: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_YIELD
+    .. _RAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RAISE
+    .. _RERAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
@@ -415,15 +444,22 @@ cdef class _LineProfilerManager:
 
     def __call__(self, frame, event, arg):
         """
-        Calls :c:func:`legacy_trace_callback()`.  If
+        Calls |legacy_trace_callback|_.  If
         :py:func:`sys.gettrace` returns this instance, replaces the
         default C-level trace function :c:func:`trace_trampoline` (see
-        the C implementation of :py:mod:`sys`) with
-        :c:func:`legacy_trace_callback` to reduce overhead.
+        the `C implementation`_ of :py:mod:`sys`) with
+        |legacy_trace_callback|_ to reduce overhead.
 
         Returns;
             manager (_LineProfilerManager):
                 This instance.
+
+        .. |legacy_trace_callback| replace:: \
+:c:func:`legacy_trace_callback`
+        .. _legacy_trace_callback: https://github.com/pyutils/\
+line_profiler/blob/main/line_profiler/_line_profiler.pyx
+        .. _C implementation: https://github.com/python/cpython/blob/\
+main/Python/sysmodule.c
         """
         cdef int what = {'call': PyTrace_CALL,
                          'exception': PyTrace_EXCEPTION,
@@ -446,8 +482,12 @@ cdef class _LineProfilerManager:
     @cython.profile(False)
     cpdef handle_line_event(self, object code, int lineno):
         """
-        Line-event (`sys.monitoring.events.LINE`) callback passed to
+        Line-event (|LINE|_) callback passed to
         :py:func:`sys.monitoring.register_callback`.
+
+        .. |LINE| replace:: :py:attr:`sys.monitoring.events.LINE`
+        .. _LINE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-LINE
         """
         self._base_callback(
             1, sys.monitoring.events.LINE, code, lineno, (lineno,))
@@ -456,8 +496,13 @@ cdef class _LineProfilerManager:
     cpdef handle_return_event(
             self, object code, int instruction_offset, object retval):
         """
-        Return-event (`sys.monitoring.events.PY_RETURN`) callback passed
-        to :py:func:`sys.monitoring.register_callback`.
+        Return-event (|PY_RETURN|_) callback passed to
+        :py:func:`sys.monitoring.register_callback`.
+
+        .. |PY_RETURN| replace:: \
+:py:attr:`sys.monitoring.events.PY_RETURN`
+        .. _PY_RETURN: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_RETURN
         """
         self._handle_exit_event(
             sys.monitoring.events.PY_RETURN, code, instruction_offset, retval)
@@ -466,8 +511,13 @@ cdef class _LineProfilerManager:
     cpdef handle_yield_event(
             self, object code, int instruction_offset, object retval):
         """
-        Yield-event (`sys.monitoring.events.PY_YIELD`) callback passed
-        to :py:func:`sys.monitoring.register_callback`.
+        Yield-event (|PY_RETURN|_) callback passed to
+        :py:func:`sys.monitoring.register_callback`.
+
+        .. |PY_YIELD| replace:: \
+:py:attr:`sys.monitoring.events.PY_YIELD`
+        .. _PY_YIELD: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_YIELD
         """
         self._handle_exit_event(
             sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
@@ -476,8 +526,13 @@ cdef class _LineProfilerManager:
     cpdef handle_raise_event(
             self, object code, int instruction_offset, object exception):
         """
-        Raise-event (`sys.monitoring.events.RAISE`) callback passed
-        to :py:func:`sys.monitoring.register_callback`.
+        Raise-event (|RAISE|_) callback passed to
+        :py:func:`sys.monitoring.register_callback`.
+
+        .. |RAISE| replace:: \
+:py:attr:`sys.monitoring.events.RAISE`
+        .. _RAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RAISE
         """
         self._handle_exit_event(
             sys.monitoring.events.RAISE, code, instruction_offset, exception)
@@ -486,8 +541,13 @@ cdef class _LineProfilerManager:
     cpdef handle_reraise_event(
             self, object code, int instruction_offset, object exception):
         """
-        Reraise-event (`sys.monitoring.events.RERAISE`) callback passed
-        to :py:func:`sys.monitoring.register_callback`.
+        Re-raise-event (|RERAISE|_) callback passed to
+        :py:func:`sys.monitoring.register_callback`.
+
+        .. |RERAISE| replace:: \
+:py:attr:`sys.monitoring.events.RERAISE`
+        .. _RERAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RERAISE
         """
         self._handle_exit_event(
             sys.monitoring.events.RERAISE, code, instruction_offset, exception)
@@ -626,9 +686,9 @@ cdef class LineProfiler:
     :py:class:`line_profiler.line_profiler.LineProfiler`.
 
     Arguments:
-        *functions (types.FunctionType)
+        *functions (function)
             Function objects to be profiled.
-        wrap_trace (Optional[bool])
+        wrap_trace (bool | None)
             What to do if there is an existing (non-profiling)
             :py:mod:`sys` trace callback when the profiler is
             :py:meth:`.enable`-ed:
@@ -661,13 +721,13 @@ cdef class LineProfiler:
             was :py:meth:`.enable`-ed.  See the Notes for
             :ref:`caveats <notes-trace-caveats>` and
             :ref:`extra explanation <notes-wrap_trace>`).
-        set_frame_local_trace (Optional[bool])
+        set_frame_local_trace (bool | None)
             What to do when entering a function or code block (i.e. an
             event of type :c:data:`PyTrace_CALL` or ``'call'`` is
             encountered) when the profiler is :py:meth:`.enable`-ed:
 
             :py:const:`True`:
-                Set the frame's :py:attr:`~types.FrameType.f_trace` to
+                Set the frame's :py:attr:`~frame.f_trace` to
                 an object associated with the profiler.
             :py:const:`False`:
                 Don't do so.
@@ -739,8 +799,8 @@ cdef class LineProfiler:
               :py:const:`None` when the profiler is
               :py:meth:`.disable`-ed.
           * It is also allowed for the frame-local trace callable
-            (:py:attr:`~types.FrameType.f_trace`) to set
-            :py:attr:`~types.FrameType.f_trace_lines` to false in a
+            (:py:attr:`~frame.f_trace`) to set
+            :py:attr:`~frame.f_trace_lines` to false in a
             frame to disable line events.  If the wrapped/cached trace
             callback does so, profiling would continue, but said
             callable will no longer receive line events.
@@ -768,8 +828,7 @@ cdef class LineProfiler:
 
             * If :py:attr:`set_frame_local_trace` is true, line
               profiling resumes *immediately*, because the object has
-              already been set to the frame's
-              :py:attr:`~types.FrameType.f_trace`.
+              already been set to the frame's :py:attr:`~frame.f_trace`.
             * However, if :py:attr:`set_frame_local_trace` is false,
               line profiling only resumes *upon entering another code
               block* (e.g. by calling a callable), because trace
@@ -815,11 +874,15 @@ cdef class LineProfiler:
         Record line profiling information for the given Python function.
 
         Note:
-            This is a low-level method and is intended for
-            :py:class:`types.FunctionType`; users should in general use
+            This is a low-level method and is intended for |function|_;
+            users should in general use
             :py:meth:`line_profiler.LineProfiler.add_callable` for
             adding general callables and callable wrappers (e.g.
             :py:class:`property`).
+
+        .. |function| replace:: :py:class:`types.FunctionType`
+        .. _function: https://docs.python.org/3/reference/\
+datamodel.html#user-defined-functions
         """
         if hasattr(func, "__wrapped__"):
             import warnings
