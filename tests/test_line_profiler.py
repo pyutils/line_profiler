@@ -836,6 +836,12 @@ def test_duplicate_code_objects():
         'func1:p1:p2'  # `func1()` padded once?
         '-func2:p3'  # `func2()` padded twice?
         '-func1:p4:p3',  # `func1()` padded once (again)?
+        # - Check that double decoration doesn't mess things up
+        'func1:p1:p2'
+        '-func2:p2:p3'
+        '-func3:p3:p4'
+        '-func4:p4:p1'
+        '-func1:p1',  # Now we're passing `func1()` to `p1` twice
     ])
 def test_multiple_profilers_identical_bytecode(
         tmp_path, ops, force_same_line_numbers):
