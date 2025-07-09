@@ -25,6 +25,7 @@ Changes
     like class methods and properties
   * ``LineProfiler`` can now be used as a class decorator
 * FIX: Fixed line tracing for Cython code; superseded use of the legacy tracing system with ``sys.monitoring``
+* ENH: Fixed edge case where :py:meth:`LineProfiler.get_stats()` neglects data from duplicate code objects (#348)
 
 4.2.0
 ~~~~~

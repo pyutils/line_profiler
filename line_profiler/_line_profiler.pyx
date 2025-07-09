@@ -26,13 +26,15 @@ import threading
 import opcode
 import os
 import types
+from weakref import WeakSet
 
 NOP_VALUE: int = opcode.opmap['NOP']
 
 # The Op code should be 2 bytes as stated in
 # https://docs.python.org/3/library/dis.html
 # if sys.version_info[0:2] >= (3, 11):
-NOP_BYTES: bytes = NOP_VALUE.to_bytes(2, byteorder=byteorder)
+NOP_BYTES_LEN: int = 2
+NOP_BYTES: bytes = NOP_VALUE.to_bytes(NOP_BYTES_LEN, byteorder=byteorder)
 
 # This should be true for Python >=3.11a1
 HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
@@ -148,6 +150,24 @@ cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
     # linenum doesn't need to be int64 but it's really a temporary value
     # so it doesn't matter
     return block_hash ^ linenum
+
+
+cdef inline object multibyte_rstrip(bytes bytecode):
+    """
+    Returns:
+        result (tuple[bytes, int])
+        - First item is the bare unpadded bytecode
+        - Second item is the number of :py:const:`NOP_BYTES`
+          ``bytecode`` has been padded with
+    """
+    npad: int = 0
+    nop_len: int = -NOP_BYTES_LEN
+    nop_bytes: bytes = NOP_BYTES
+    unpadded: bytes = bytecode
+    while unpadded.endswith(nop_bytes):
+        unpadded = unpadded[:nop_len]
+        npad += 1
+    return (unpadded, npad)
 
 
 if CAN_USE_SYS_MONITORING:
@@ -318,8 +338,13 @@ cdef class LineProfiler:
     cdef public double timer_unit
     cdef public object threaddata
 
-    # This is shared between instances and threads
+    # These are shared between instances and threads
+    # type: dict[int, set[LineProfiler]], int = thread id
     _all_active_instances = {}
+    # type: dict[bytes, int], bytes = bytecode
+    _all_paddings = {}
+    # type: dict[int, weakref.WeakSet[LineProfiler]], int = func id
+    _all_instances_by_funcs = {}
 
     def __init__(self, *functions):
         self.functions = []
@@ -345,39 +370,74 @@ cdef class LineProfiler:
             )
         try:
             code = func.__code__
+            func_id = id(func)
         except AttributeError:
             try:
                 code = func.__func__.__code__
+                func_id = id(func.__func__)
             except AttributeError:
                 import warnings
                 warnings.warn("Could not extract a code object for the object %r" % (func,))
                 return
 
+        # Note: if we are to alter the code object, other profilers
+        # which previously added this function would still expect the
+        # old bytecode, and thus will not see anything when the function
+        # is executed;
+        # hence:
+        # - When doing bytecode padding, take into account all instances
+        #   which refers to the same base bytecode to ensure
+        #   disambiguation
+        # - Update all existing instances referring to the old code
+        #   object
+        # Since no code padding is/can be done with Cython mock
+        # "code objects", it is *probably* okay to only do the special
+        # handling on the non-Cython branch.
+        # XXX: tests for the above assertion if necessary
+        co_code: bytes = code.co_code
         code_hashes = []
-        if any(code.co_code):  # Normal Python functions
-            if code.co_code in self.dupes_map:
-                self.dupes_map[code.co_code] += [code]
-                # code hash already exists, so there must be a duplicate
-                # function. add no-op
-                co_padding : bytes = NOP_BYTES * (len(self.dupes_map[code.co_code]) + 1)
-                co_code = code.co_code + co_padding
-                CodeType = type(code)
+        if any(co_code):  # Normal Python functions
+            # Figure out how much padding we need and strip the bytecode
+            base_co_code: bytes
+            npad_code: int
+            base_co_code, npad_code = multibyte_rstrip(co_code)
+            try:
+                npad = self._all_paddings[base_co_code]
+            except KeyError:
+                npad = 0
+            self._all_paddings[base_co_code] = max(npad, npad_code) + 1
+            try:
+                profilers_to_update = self._all_instances_by_funcs[func_id]
+                profilers_to_update.add(self)
+            except KeyError:
+                profilers_to_update = WeakSet({self})
+                self._all_instances_by_funcs[func_id] = profilers_to_update
+            # Maintain `.dupes_map` (legacy)
+            try:
+                self.dupes_map[base_co_code].append(code)
+            except KeyError:
+                self.dupes_map[base_co_code] = [code]
+            if npad > npad_code:
+                # Code hash already exists, so there must be a duplicate
+                # function (on some instance);
+                # (re-)pad with no-op
+                co_code = base_co_code + NOP_BYTES * npad
                 code = _code_replace(func, co_code=co_code)
                 try:
                     func.__code__ = code
                 except AttributeError as e:
                     func.__func__.__code__ = code
-            else:
-                self.dupes_map[code.co_code] = [code]
+            else:  # No re-padding -> no need to update the other profs
+                profilers_to_update = {self}
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over
             # every byte
-            for offset, _ in enumerate(code.co_code):
-                code_hash = compute_line_hash(
-                    hash((code.co_code)),
-                    PyCode_Addr2Line(<PyCodeObject*>code, offset))
-                code_hashes.append(code_hash)
+            for offset, _ in enumerate(co_code):
+                code_hashes.append(
+                    compute_line_hash(
+                        hash(co_code),
+                        PyCode_Addr2Line(<PyCodeObject*>code, offset)))
         else:  # Cython functions have empty/zero bytecodes
             if CANNOT_LINE_TRACE_CYTHON:
                 return
@@ -400,13 +460,21 @@ cdef class LineProfiler:
             # We can't replace the code object on Cython functions, but
             # we can *store* a copy with the correct metadata
             code = code.replace(co_filename=cython_source)
-        for code_hash in code_hashes:
-            if not self._c_code_map.count(code_hash):
-                try:
-                    self.code_hash_map[code].append(code_hash)
-                except KeyError:
-                    self.code_hash_map[code] = [code_hash]
-                self._c_code_map[code_hash]
+            profilers_to_update = {self}
+        # Update `._c_code_map` and `.code_hash_map` with the new line
+        # hashes on `self` (and other instances profiling the same
+        # function if we padded the bytecode)
+        for instance in profilers_to_update:
+            prof = <LineProfiler>instance
+            try:
+                line_hashes = prof.code_hash_map[code]
+            except KeyError:
+                line_hashes = prof.code_hash_map[code] = []
+            for code_hash in code_hashes:
+                line_hash = <int64>code_hash
+                if not prof._c_code_map.count(line_hash):
+                    line_hashes.append(line_hash)
+                    prof._c_code_map[line_hash]
 
         self.functions.append(func)
 
@@ -541,35 +609,29 @@ cdef class LineProfiler:
         """
         cdef dict cmap = self._c_code_map
 
-        stats = {}
+        all_entries = {}
         for code in self.code_hash_map:
             entries = []
             for entry in self.code_hash_map[code]:
-                entries += list(cmap[entry].values())
+                entries.extend(cmap[entry].values())
             key = label(code)
 
-            # Merge duplicate line numbers, which occur for branch entrypoints like `if`
-            nhits_by_lineno = {}
-            total_time_by_lineno = {}
+            # Merge duplicate line numbers, which occur for branch
+            # entrypoints like `if`
+            entries_by_lineno = all_entries.setdefault(key, {})
 
             for line_dict in entries:
                  _, lineno, total_time, nhits = line_dict.values()
-                 nhits_by_lineno[lineno] = nhits_by_lineno.setdefault(lineno, 0) + nhits
-                 total_time_by_lineno[lineno] = total_time_by_lineno.setdefault(lineno, 0) + total_time
+                 orig_nhits, orig_total_time = entries_by_lineno.get(
+                     lineno, (0, 0))
+                 entries_by_lineno[lineno] = (orig_nhits + nhits,
+                                              orig_total_time + total_time)
 
-            entries = [(lineno, nhits, total_time_by_lineno[lineno]) for lineno, nhits in nhits_by_lineno.items()]
-            entries.sort()
-
-            # NOTE: v4.x may produce more than one entry per line. For example:
-            #   1:  for x in range(10):
-            #   2:      pass
-            #  will produce a 1-hit entry on line 1, and 10-hit entries on lines 1 and 2
-            #  This doesn't affect `print_stats`, because it uses the last entry for a given line (line number is
-            #  used a dict key so earlier entries are overwritten), but to keep compatability with other tools,
-            #  let's only keep the last entry for each line
-            # Remove all but the last entry for each line
-            entries = list({e[0]: e for e in entries}.values())
-            stats[key] = entries
+        # Aggregate the timing data
+        stats = {
+            key: sorted((line, nhits, time)
+                        for line, (nhits, time) in entries_by_lineno.items())
+            for key, entries_by_lineno in all_entries.items()}
         return LineStats(stats, self.timer_unit)
 
 
