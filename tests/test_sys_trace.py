@@ -26,7 +26,7 @@ import pytest
 from ast import literal_eval
 from contextlib import nullcontext
 from io import StringIO
-from types import FrameType
+from types import FrameType, ModuleType
 from typing import Any, Optional, Union, Callable, List, Literal
 from line_profiler import LineProfiler
 
@@ -34,6 +34,7 @@ from line_profiler import LineProfiler
 # Common utilities
 
 DEBUG = False
+USE_SYS_MONITORING = isinstance(getattr(sys, 'monitoring', None), ModuleType)
 
 Event = Literal['call', 'line', 'return', 'exception', 'opcode']
 TracingFunc = Callable[[FrameType, Event, Any], Union['TracingFunc', None]]
@@ -163,14 +164,25 @@ def baz(n: int) -> int:
 class suspend_tracing:
     def __init__(self):
         self.callback = None
+        self.events = 0
 
     def __enter__(self):
-        self.callback = sys.gettrace()
-        sys.settrace(None)
+        if USE_SYS_MONITORING:
+            mod = sys.monitoring
+            self.events = mod.get_events(mod.PROFILER_ID)
+            mod.set_events(mod.PROFILER_ID, mod.events.NO_EVENTS)
+        else:
+            self.callback = sys.gettrace()
+            sys.settrace(None)
 
     def __exit__(self, *_, **__):
-        sys.settrace(self.callback)
-        self.callback = None
+        if USE_SYS_MONITORING:
+            mod = sys.monitoring
+            mod.set_events(mod.PROFILER_ID, self.events)
+            self.events = 0
+        else:
+            sys.settrace(self.callback)
+            self.callback = None
 
 
 def get_incr_logger(logs: List[str], func: Literal[foo, bar, baz] = foo, *,
@@ -270,8 +282,9 @@ def _test_helper_callback_preservation(
     assert sys.gettrace() is callback, f'can\'t set trace to {callback!r}'
     profile = LineProfiler(wrap_trace=False)
     profile.enable_by_count()
-    assert profile in sys.gettrace().active_instances, (
-        'can\'t set trace to the profiler')
+    if not USE_SYS_MONITORING:
+        assert profile in sys.gettrace().active_instances, (
+            'can\'t set trace to the profiler')
     profile.disable_by_count()
     assert sys.gettrace() is callback, f'trace not restored to {callback!r}'
     sys.settrace(None)
@@ -311,7 +324,7 @@ def test_callback_wrapping(
     else:
         foo_like = foo
         trace_preserved = True
-    if trace_preserved:
+    if trace_preserved or USE_SYS_MONITORING:
         exp_logs = [f'foo: spam = {spam}' for spam in range(1, 6)]
     else:
         exp_logs = []
@@ -558,9 +571,12 @@ def test_wrapping_thread_local_callbacks(label: str,
     [(True, True, 100, {0: 2,  # Both calls are traced
                         5: 0,  # Tracing suspended
                         7: 100}),  # Tracing restored (both calls)
-     # If `set_frame_local_trace` is false, tracing is suspended for the
-     # rest of the frame
-     (True, False, 100, {0: 2, 5: 0, 7: 0}),
+     # If `set_frame_local_trace` is false:
+     # - When using legacy tracing, tracing is suspended for the rest of
+     #   the frame
+     # - Else, tracing is unaffected
+     (True, False, 100,
+      {0: 2, 5: 0, 7: 100 if USE_SYS_MONITORING else 0}),
      # Calling a function always triggers `<trace>.__call__()`
      (False, True, 100, {0: 1,  # Only one of the calls is traced
                          2: 100}),  # 100 hits on the line in the loop
@@ -621,4 +637,4 @@ def test_python_level_trace_manipulation(
     all_nhits = {lineno - body_start_line: _nhits
                  for (lineno, _nhits, _) in entries}
     all_nhits = {lineno: all_nhits.get(lineno, 0) for lineno in nhits}
-    assert all_nhits == nhits
+    assert all_nhits == nhits, f'expected {nhits=}, got {all_nhits=}'
