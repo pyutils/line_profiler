@@ -53,20 +53,9 @@ ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
 cdef extern from "Python_wrapper.h":
-    """
-    inline void set_default_f_trace(PyFrameObject *frame,
-                                    PyObject *f_trace) {
-        if (frame == NULL) return;
-        // No-op if there's already one
-        if (frame->f_trace == Py_None) return;
-        PyObject_SetAttrString((PyObject *)frame, "f_trace", f_trace);
-        return;
-    }
-    """
     ctypedef struct PyCodeObject
     ctypedef struct PyFrameObject
     cdef PyCodeObject* PyFrame_GetCode(PyFrameObject* frame)
-    cdef void set_default_f_trace(PyFrameObject *frame, PyObject *f_trace)
     ctypedef int (*Py_tracefunc)(
         object self, PyFrameObject *py_frame, int what, PyObject *arg)
 
@@ -128,6 +117,7 @@ cdef extern from "c_trace_callbacks.c":
     cdef void restore_callback(TraceCallback *callback)
     cdef int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
                            int what, PyObject *arg)
+    cdef void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
 
 cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
@@ -248,10 +238,10 @@ def disable_line_events(trace_func: Callable) -> Callable:
     "unsubscribing" the trace function from it.
     """
     @wraps(trace_func)
-    def wrapper(frame, event, args):
+    def wrapper(frame, event, arg):
         if event == 'line':
             return
-        return trace_func(frame, event, args)
+        return trace_func(frame, event, arg)
 
     return wrapper
 
@@ -442,6 +432,7 @@ sys.monitoring.html#monitoring-event-RERAISE
         self.wrap_trace = wrap_trace
         self.set_frame_local_trace = set_frame_local_trace
 
+    @cython.profile(False)
     def __call__(self, frame, event, arg):
         """
         Calls |legacy_trace_callback|_.  If
@@ -474,6 +465,39 @@ main/Python/sysmodule.c
         if sys.gettrace() is self:
             PyEval_SetTrace(legacy_trace_callback, self)
         return self
+
+    def wrap_local_f_trace(self, trace_func):
+        """
+        Arguments:
+            trace_func (Callable[[frame, str, Any], Any])
+                Frame-local trace function, presumably set by another
+                global trace function.
+
+        Returns:
+            wrapper (Callable[[frame, str, Any], Any])
+                Thin wrapper around ``trace_func()`` which calls it,
+                calls the instance, then returns the return value of
+                ``trace_func()``.  This helps prevent other frame-local
+                trace functions from displacing the instance when its
+                :py:attr:`~.set_frame_local_trace` is true.
+
+        Note:
+            The ``.__line_profiler_manager__`` attribute of the returned
+            wrapper is set to the instance.
+        """
+        @wraps(trace_func)
+        def wrapper(frame, event, arg):
+            result = trace_func(frame, event, arg)
+            self(frame, event, arg)
+            return result
+
+        wrapper.__line_profiler_manager__ = self
+        try:  # Unwrap the wrapper
+            if trace_func.__line_profiler_manager__ is self:
+                trace_func = trace_func.__wrapped__
+        except AttributeError:
+            pass
+        return wrapper
 
     # If we allowed these `sys.monitoring` callbacks to be profiled
     # (i.e. to emit line events), we may fall into an infinite recusion;
@@ -675,7 +699,13 @@ sys.monitoring.html#monitoring-event-RERAISE
         def __get__(self):
             return bool(self._set_frame_local_trace)
         def __set__(self, set_frame_local_trace):
-            self._set_frame_local_trace = 1 if set_frame_local_trace else 0
+            # Note: as noted in `LineProfiler.__doc__`, there is no
+            # point in tempering with `.f_trace` when using
+            # `sys.monitoring`... so just set it to false
+            self._set_frame_local_trace = (
+                1
+                if set_frame_local_trace and not CAN_USE_SYS_MONITORING else
+                0)
 
 
 cdef class LineProfiler:
@@ -722,9 +752,10 @@ cdef class LineProfiler:
             :ref:`caveats <notes-trace-caveats>` and
             :ref:`extra explanation <notes-wrap_trace>`).
         set_frame_local_trace (bool | None)
-            What to do when entering a function or code block (i.e. an
-            event of type :c:data:`PyTrace_CALL` or ``'call'`` is
-            encountered) when the profiler is :py:meth:`.enable`-ed:
+            In Python < 3.12, what to do when entering a function or
+            code block (i.e. an event of type :c:data:`PyTrace_CALL` or
+            ``'call'`` is encountered) when the profiler is
+            :py:meth:`.enable`-ed:
 
             :py:const:`True`:
                 Set the frame's :py:attr:`~frame.f_trace` to
@@ -809,14 +840,19 @@ cdef class LineProfiler:
 
           More on :py:attr:`.set_frame_local_trace`:
 
-          * Note that this only applies to the "legacy" trace system
-            (:py:func:`sys.gettrace`, :py:func:`sys.settrace`, etc.);
-            in the new :py:mod:`sys.monitoring`-based system, it is
-            impossible for code-local callbacks to disable global
-            events, so :py:class:`LineProfiler`s (which listens to
-            events globally) are not affected.
+          * In the new :py:mod:`sys.monitoring`-based system (Python
+            3.12+), it is impossible for code-local callbacks to disable
+            global events, therefore:
 
-          * When a :py:class:`LineProfiler` is :py:meth:`.enable`-ed,
+            * :py:class:`LineProfiler`s (which listen to events
+              globally) are not affected by a frame's
+              :py:attr:`~frame.f_trace`; and
+            * The parameter/attribute thus always resolves to
+              :py:const:`False`.
+
+          * In the "legacy" trace system (Python < 3.12, using
+            :py:func:`sys.gettrace`, :py:func:`sys.settrace`, etc.),
+            when a :py:class:`LineProfiler` is :py:meth:`.enable`-ed,
             :py:func:`sys.gettrace` returns an object which manages
             profiling on the thread between all active profiler
             instances.  Said object has the same call signature as
@@ -1261,6 +1297,8 @@ cdef extern int legacy_trace_callback(
 pystate.h#L16
     """
     cdef _LineProfilerManager manager_ = <_LineProfilerManager>manager
+    cdef int result
+
     if what == PyTrace_CALL:
         # Any code using the `sys.gettrace()`-`sys.settrace()` paradigm
         # (e.g. to temporarily suspend or alter tracing) will cause line
@@ -1280,7 +1318,7 @@ pystate.h#L16
         # frame (if not already set), so that tracing can restart upon
         # the restoration with `sys.settrace()`
         if manager_._set_frame_local_trace:
-            set_default_f_trace(py_frame, <PyObject *>manager_)
+            set_local_trace(<PyObject *>manager_, py_frame)
     elif what == PyTrace_LINE or what == PyTrace_RETURN:
         # Normally we'd need to DECREF the return from
         # `PyFrame_GetCode()`, but Cython does that for us
@@ -1292,5 +1330,13 @@ pystate.h#L16
     # Call the trace callback that we're wrapping around where
     # appropriate
     if manager_._wrap_trace:
-        return call_callback(manager_.legacy_callback, py_frame, what, arg)
-    return 0
+        result = call_callback(manager_.legacy_callback, py_frame, what, arg)
+    else:
+        result = 0
+    
+    # Prevent other trace functions from overwritting `manager`;
+    # if there is a frame-local trace function, create a wrapper calling
+    # both it and `manager`
+    if manager_._set_frame_local_trace:
+        set_local_trace(<PyObject *>manager_, py_frame)
+    return result

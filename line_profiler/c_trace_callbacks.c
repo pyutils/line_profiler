@@ -171,9 +171,7 @@ int call_callback(
             }
             // Note: DON'T `Py_[X]DECREF()` the pointer! Nothing else is
             // holding a reference to it.
-            f_trace = PyObject_CallFunctionObjArgs(
-                dle, py_frame->f_trace, NULL
-            );
+            f_trace = PyObject_CallOneArg(dle, py_frame->f_trace);
             if (f_trace == NULL)
             {
                 // No need to raise another exception, it's already
@@ -188,4 +186,37 @@ cleanup:
     Py_XDECREF(mod);
     Py_XDECREF(dle);
     return result;
+}
+
+inline void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
+{
+    /* Set the frame-local trace callable:
+     * - If there isn't one already, set it to `manager`;
+     * - Else, call manager.wrap_local_f_trace()` on `py_frame->f_trace`
+     *   where appropriate, setting the frame-local trace callable.
+     *
+     * Notes:
+     *     This function is necessary for side-stepping Cython's auto
+     *     memory management, which causes the return value of
+     *     `wrap_local_f_trace()` to trigger the "Casting temporary
+     *     Python object to non-numeric non-Python type" error.
+     */
+    PyObject *method = NULL;
+    if (manager == NULL || py_frame == NULL) goto cleanup;
+    // No-op
+    if (py_frame->f_trace == manager) goto cleanup;
+    // No local trace function to wrap, just assign `manager`
+    if (py_frame->f_trace == NULL || py_frame->f_trace == Py_None)
+    {
+        Py_INCREF(manager);
+        py_frame->f_trace = manager;
+        goto cleanup;
+    }
+    // Wrap the trace function
+    method = PyUnicode_FromString("wrap_local_f_trace");
+    py_frame->f_trace = PyObject_CallMethodOneArg(
+        manager, method, py_frame->f_trace);
+cleanup:
+    Py_XDECREF(method);
+    return;
 }
