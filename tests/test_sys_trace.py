@@ -631,6 +631,7 @@ def test_python_level_trace_manipulation(
         assert func(n) == expected
     timings = prof.get_stats().timings
     print(timings)
+    prof.print_stats()
     entries = next(entries for (*_, func_name), entries in timings.items()
                    if func_name.endswith(func.__name__))
     body_start_line = min(lineno for (lineno, *_) in entries)
