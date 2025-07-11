@@ -855,7 +855,7 @@ cdef class LineProfiler:
             3.12+), it is impossible for code-local callbacks to disable
             global events, therefore:
 
-            * :py:class:`LineProfiler`s (which listen to events
+            * :py:class:`LineProfiler` instances (which listen to events
               globally) are not affected by a frame's
               :py:attr:`~frame.f_trace`; and
             * The parameter/attribute thus always resolves to
