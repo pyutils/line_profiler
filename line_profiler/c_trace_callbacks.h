@@ -12,6 +12,8 @@
  *   3.12+, and
  * - Undefine the `_PyGC_FINALIZED()` macro which is removed in 3.13+
  *   and causes problems in 3.12 (see CPython #105268, #105350, #107348)
+ * - Undefine the `HAVE_STD_ATOMIC` macro, which causes problems on
+ *   Linux in 3.12 (see CPython #108216)
  * Note in any case that we don't actually use `PyInterpreterState`
  * directly -- we just need its memory layout so that we can refer to
  * its `.last_restart_version` member
@@ -24,6 +26,9 @@
 #   endif
 #   ifdef _PyGC_FINALIZED
 #       undef _PyGC_FINALIZED
+#   endif
+#   ifdef HAVE_STD_ATOMIC
+#       undef HAVE_STD_ATOMIC
 #   endif
 #   if PY_VERSION_HEX >= 0x030900a6  // 3.9.0a6
 #      include "internal/pycore_interp.h"
