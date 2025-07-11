@@ -220,3 +220,14 @@ cleanup:
     Py_XDECREF(method);
     return;
 }
+
+inline Py_uintptr_t monitoring_restart_version()
+#if PY_VERSION_HEX >= 0x030c00b1  // 3.12.0b1
+{
+    /* Get the `.last_restart_version` of the interpretor state.
+     */
+    return PyThreadState_Get()->interp->last_restart_version;
+}
+#else
+{ return (Py_uintptr_t)0; }  // Dummy implementation
+#endif
