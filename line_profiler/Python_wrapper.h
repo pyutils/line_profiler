@@ -5,18 +5,36 @@
 
 #include "Python.h"
 
-// Ensure PyFrameObject availability as a concretely declared struct
-// CPython 3.11 broke some stuff by moving PyFrameObject :(
+/*
+ * Ensure PyFrameObject and PyInterpreterState availability as
+ * concretely declared structs
+ */
+#ifndef Py_BUILD_CORE
+    #define Py_BUILD_CORE 1
+#endif
+
+// _frame -> PyFrameObject
 #if PY_VERSION_HEX >= 0x030b00a6  // 3.11.0a6
-    #ifndef Py_BUILD_CORE
-        #define Py_BUILD_CORE 1
-    #endif
     #include "internal/pycore_frame.h"
     #include "cpython/code.h"
     #include "pyframe.h"
 #else
     #include "frameobject.h"
 #endif
+
+// _is -> PyInterpreterState
+#if PY_VERSION_HEX >= 0x030b00a6  // 3.11.0a6
+    #include "pytypedefs.h"
+#else
+    #include "pystate.h"
+#endif
+#if PY_VERSION_HEX >= 0x030900a6  // 3.9.0a6
+    #include "internal/pycore_interp.h"
+#else
+    #include "internal/pycore_pystate.h"
+#endif
+
+// Backport of Python 3.9 caller hooks
 
 #if PY_VERSION_HEX < 0x030900a4  // 3.9.0a4
     #define PyObject_CallOneArg(func, arg) \
@@ -48,7 +66,7 @@
     }
 #endif
 
-#if PY_VERSION_HEX < 0x030B00b1  // 3.11.0b1
+#if PY_VERSION_HEX < 0x030b00b1  // 3.11.0b1
     /*
      * Notes:
      *     Since 3.11.0a7 (PR #31888) `co_code` has been made a
@@ -61,7 +79,7 @@
     {
         PyObject *code_bytes;
         if (code == NULL) return NULL;
-        #if PY_VERSION_HEX < 0x030B00a7  // 3.11.0a7
+        #if PY_VERSION_HEX < 0x030b00a7  // 3.11.0a7
             code_bytes = code->co_code;
             Py_XINCREF(code_bytes);
         #else
@@ -71,7 +89,7 @@
     }
 #endif
 
-#if PY_VERSION_HEX < 0x030D00a1  // 3.13.0a1
+#if PY_VERSION_HEX < 0x030d00a1  // 3.13.0a1
     inline PyObject *PyImport_AddModuleRef(const char *name)
     {
         PyObject *mod = NULL, *name_str = NULL;

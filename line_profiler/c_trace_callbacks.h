@@ -32,5 +32,7 @@ int call_callback(
     int what,
     PyObject *arg
 );
+void set_local_trace(PyObject *manager, PyFrameObject *py_frame);
+Py_uintptr_t monitoring_restart_version();
 
 #endif // LINE_PROFILER_C_TRACE_CALLBACKS_H
