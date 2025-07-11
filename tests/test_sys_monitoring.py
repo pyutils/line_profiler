@@ -138,7 +138,32 @@ class LineCallback:
         self.predicate = predicate
         self.disable = disable
         if register:
-            MON.register_callback(MON.LINE, self)
+            self.register()
+
+    def register(self) -> Any:
+        """
+        Returns:
+            Old value of the :py.mod:`sys.monitoring` callback.
+
+        Side effects:
+            Instance registered as the new :py:mod:`sys.monitoring`
+            callback.
+        """
+        return MON.register_callback(MON.LINE, self)
+
+    def handle_line_event(self, code: CodeType, lineno: int) -> bool:
+        """
+        Returns:
+            Whether a line event has been recorded.
+
+        Side effects:
+            Entry created/incremented in :py:attr:`~.nhits` if
+            :py:attr:`~.predicate` evaluates to true.
+        """
+        result = self.predicate(code, lineno)
+        if result:
+            self.nhits.setdefault(label(code), Counter())[lineno] += 1
+        return result
 
     def __call__(self, code: CodeType, lineno: int) -> Any:
         """
@@ -151,10 +176,7 @@ class LineCallback:
             Entry created/incremented in :py:attr:`~.nhits` if
             :py:attr:`~.predicate` evaluates to true.
         """
-        if not self.predicate(code, lineno):
-            return
-        self.nhits.setdefault(label(code), Counter())[lineno] += 1
-        if self.disable:
+        if self.handle_line_event(code, lineno) and self.disable:
             return MON.DISABLE
 
 
@@ -257,7 +279,7 @@ def test_wrapping_trace(wrap_trace: bool) -> None:
     prof = LineProfiler(wrap_trace=wrap_trace)
     try:
         nhits_expected = _test_callback_helper(
-            6, 7, 8, 9, prof=prof, wrap=True, callback_called=wrap_trace)
+            6, 7, 8, 9, prof=prof, callback_called=wrap_trace)
     finally:
         with StringIO() as sio:
             prof.print_stats(sio)
@@ -275,7 +297,6 @@ def _test_callback_helper(
         nloop_trace_local: int,
         nloop_disabled: int,
         prof: Optional[LineProfiler] = None,
-        wrap: bool = False,
         callback_called: bool = True) -> int:
     cumulative_nhits = 0
 
@@ -297,12 +318,8 @@ def _test_callback_helper(
     names = {func.__name__, func.__qualname__}
     code = func.__code__
     if prof is not None:
-        if wrap:
-            orig_func, func = func, prof(func)
-            code = orig_func.__code__
-        else:
-            prof.add_callable(func)
-            code = func.__code__
+        orig_func, func = func, prof(func)
+        code = orig_func.__code__
     callback = LineCallback(lambda code, _: code.co_name in names)
 
     # When line events are suppressed, nothing should happen
@@ -371,3 +388,101 @@ def _test_callback_helper(
             + nloop_trace_global
             + nloop_trace_local
             + 2 * nloop_disabled)
+
+
+def test_standalone_callback_switching() -> None:
+    """
+    Check that hot-swapping of :py:mod:`sys.monitoring` callbacks
+    behaves as expected when `LineProfiler`s are not in use.
+    """
+    _test_callback_switching_helper(17)
+
+
+def test_wrapping_switching_callback() -> None:
+    """
+    Check that hot-swapping of :py:mod:`sys.monitoring` callbacks
+    behaves as expected when wrapped by `LineProfiler`s.
+    """
+    prof = LineProfiler(wrap_trace=True)
+    try:
+        nhits_expected = _test_callback_switching_helper(17, prof)
+    finally:
+        with StringIO() as sio:
+            prof.print_stats(sio)
+            output = sio.getvalue()
+        print(output)
+    line = next(line for line in output.splitlines()
+                if line.endswith('# Loop body'))
+    nhits = int(line.split()[1])
+    assert nhits == nhits_expected
+
+
+def _test_callback_switching_helper(
+        nloop: int, prof: Optional[LineProfiler] = None) -> int:
+    cumulative_nhits = 0, 0
+
+    def func(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n  # Loop body
+        return x
+
+    def get_loop_hits() -> Tuple[int, int]:
+        nonlocal cumulative_nhits
+        cumulative_nhits = tuple(  # type: ignore[assignment]
+            callback.nhits.get(label(code), Counter())[lineno_loop]
+            for callback in (callback_1, callback_2))
+        return cumulative_nhits
+
+    def predicate(code: CodeType, lineno: int) -> bool:
+        return code.co_name in names and lineno == lineno_loop
+
+    class SwitchingCallback(LineCallback):
+        """
+        Callback which switches to the next one after having been
+        triggered.
+        """
+        next: Union['SwitchingCallback', None]
+
+        def __init__(self, *args,
+                     next: Optional['SwitchingCallback'] = None,
+                     **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.next = next
+
+        def __call__(self, code: CodeType, lineno: int) -> Any:
+            if not self.handle_line_event(code, lineno):
+                return
+            if self.next is not None:
+                self.next.register()
+            if self.disable:
+                return MON.DISABLE
+
+    lines, first_lineno = inspect.getsourcelines(func)
+    lineno_loop = first_lineno + next(
+        offset for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body'))
+    names = {func.__name__, func.__qualname__}
+    code = func.__code__
+    if prof is not None:
+        orig_func, func = func, prof(func)
+        code = orig_func.__code__
+
+    # The two callbacks hand off to one another in a loop
+    callback_1 = SwitchingCallback(predicate)
+    callback_2 = SwitchingCallback(predicate, register=False, next=callback_1)
+    callback_1.next = callback_2
+
+    with restore_events():
+        enable_line_events()
+        assert func(nloop) == nloop * (nloop + 1) // 2
+        print(callback_1.nhits, callback_2.nhits)
+        nhits_one = nloop // 2
+        nhits_other = nloop - nhits_one
+        if nhits_one == nhits_other:
+            assert get_loop_hits() == (nhits_one, nhits_other)
+        else:  # Odd number
+            assert get_loop_hits() in ((nhits_one, nhits_other),
+                                       (nhits_other, nhits_one))
+
+    return nloop
