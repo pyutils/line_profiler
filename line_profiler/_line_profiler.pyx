@@ -139,7 +139,7 @@ cdef inline object multibyte_rstrip(bytes bytecode):
     return (unpadded, npad)
 
 
-cdef inline object get_current_callback(int event_id):
+cdef inline object get_current_callback(int tool_id, int event_id):
     """
     Note:
         Unfortunately there's no public API for directly retrieving
@@ -148,9 +148,9 @@ cdef inline object get_current_callback(int event_id):
     """
     mon = sys.monitoring
     cdef object register = mon.register_callback
-    cdef object result = register(mon.PROFILER_ID, event_id, None)
+    cdef object result = register(tool_id, event_id, None)
     if result is not None:
-        register(mon.PROFILER_ID, event_id, result)
+        register(tool_id, event_id, result)
     return result
 
 
@@ -275,6 +275,7 @@ cdef class _SysMonitoringState:
         Documentations are for reference only, and all APIs are to be
         considered private and subject to change.
     """
+    cdef int tool_id
     cdef object name  # type: str | None
     # type: dict[int, Callable | None], int = event id
     cdef dict callbacks
@@ -300,11 +301,12 @@ cdef class _SysMonitoringState:
         line_tracing_event_set = frozenset({})
         line_tracing_events = 0
 
-    def __init__(self, name=None, callbacks=None, disabled=None, events=0):
-        self.name = name
-        self.callbacks = callbacks or {}
-        self.disabled = disabled or {}
-        self.events = events
+    def __init__(self, tool_id: int):
+        self.tool_id = tool_id
+        self.name = None
+        self.callbacks = {}
+        self.disabled = {}
+        self.events = 0  # NO_EVENTS
         self.restart_version = monitoring_restart_version()
 
     cpdef register(self, object handle_line,
@@ -321,14 +323,14 @@ cdef class _SysMonitoringState:
         mon = sys.monitoring
 
         # Set prior state
-        self.name = mon.get_tool(mon.PROFILER_ID)
+        self.name = mon.get_tool(self.tool_id)
         if self.name is None:
             self.events = mon.events.NO_EVENTS
         else:
-            self.events = mon.get_events(mon.PROFILER_ID)
-            mon.free_tool_id(mon.PROFILER_ID)
-        mon.use_tool_id(mon.PROFILER_ID, 'line_profiler')
-        mon.set_events(mon.PROFILER_ID, self.events | self.line_tracing_events)
+            self.events = mon.get_events(self.tool_id)
+            mon.free_tool_id(self.tool_id)
+        mon.use_tool_id(self.tool_id, 'line_profiler')
+        mon.set_events(self.tool_id, self.events | self.line_tracing_events)
 
         # Register tracebacks
         for event_id, callback in [
@@ -338,24 +340,23 @@ cdef class _SysMonitoringState:
                 (mon.events.RAISE, handle_raise),
                 (mon.events.RERAISE, handle_reraise)]:
             self.callbacks[event_id] = mon.register_callback(
-                mon.PROFILER_ID, event_id, callback)
+                self.tool_id, event_id, callback)
 
     cpdef deregister(self):
         mon = sys.monitoring
         cdef dict wrapped_callbacks = self.callbacks
 
         # Restore prior state
-        mon.free_tool_id(mon.PROFILER_ID)
+        mon.free_tool_id(self.tool_id)
         if self.name is not None:
-            mon.use_tool_id(mon.PROFILER_ID, self.name)
-            mon.set_events(mon.PROFILER_ID, self.events)
+            mon.use_tool_id(self.tool_id, self.name)
+            mon.set_events(self.tool_id, self.events)
             self.name = None
             self.events = mon.events.NO_EVENTS
 
         # Reset tracebacks
         while wrapped_callbacks:
-            mon.register_callback(
-                mon.PROFILER_ID, *wrapped_callbacks.popitem())
+            mon.register_callback(self.tool_id, *wrapped_callbacks.popitem())
 
     cdef void call_callback(self, int event_id, object code,
                             object loc_args, object other_args):
@@ -378,7 +379,6 @@ cdef class _SysMonitoringState:
         cdef object arg_tuple  # type: tuple[code, Unpack[tuple]]
         cdef object disabled  # type: set[tuple[code, Unpack[tuple]]]
         cdef int ev_id
-        cdef int prof_id = mon.PROFILER_ID
         cdef Py_uintptr_t version = monitoring_restart_version()
         cdef dict callbacks_before = {}
 
@@ -396,11 +396,11 @@ cdef class _SysMonitoringState:
         if code_location in disabled:  # Events 'disabled' for the loc
             return
         if not (self.events  # Callback should not receive the event
-                | mon.get_local_events(prof_id, code)) & event_id:
+                | mon.get_local_events(self.tool_id, code)) & event_id:
             return
 
         for ev_id in self.line_tracing_event_set:
-            callbacks_before[ev_id] = get_current_callback(ev_id)
+            callbacks_before[ev_id] = get_current_callback(self.tool_id, ev_id)
 
         arg_tuple = code_location + other_args
         try:
@@ -414,20 +414,21 @@ cdef class _SysMonitoringState:
             if result == <PyObject *>(mon.DISABLE):
                 disabled.add(code_location)
         finally:
-            self.events = mon.get_events(prof_id)
+            self.events = mon.get_events(self.tool_id)
             register = mon.register_callback
             # If the wrapped callback has changed:
             for ev_id, callback in callbacks_before.items():
                 # - Restore the `sys.monitoring` callback
-                callback_after = register(prof_id, ev_id, callback)
+                callback_after = register(self.tool_id, ev_id, callback)
                 # - Remember the updated callback in `self.callbacks`
                 if callback is not callback_after:
                     self.callbacks[ev_id] = callback_after
             # Reset the tool ID lock if released
-            if not mon.get_tool(prof_id):
-                mon.use_tool_id(prof_id, 'line_profiler')
+            if not mon.get_tool(self.tool_id):
+                mon.use_tool_id(self.tool_id, 'line_profiler')
             # Restore the `sys.monitoring` events if unset
-            mon.set_events(prof_id, self.events | self.line_tracing_events)
+            mon.set_events(self.tool_id,
+                           self.events | self.line_tracing_events)
 
 
 cdef class _LineProfilerManager:
@@ -475,12 +476,27 @@ sys.monitoring.html#monitoring-event-RERAISE
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
 
-    def __init__(self, instances=(),
-                 wrap_trace=False, set_frame_local_trace=False):
-        self.legacy_callback = NULL
-        self.mon_state = _SysMonitoringState()
+    def __init__(
+            self, tool_id: int, wrap_trace: bool, set_frame_local_trace: bool):
+        """
+        Arguments:
+            tool_id (int)
+                Tool ID for use with :py:mod:`sys.monitoring`.
+            wrap_trace (bool)
+                Whether to wrap around legacy and
+                :py:mod:`sys.monitoring` trace functions and call them.
+            set_frame_local_trace (bool)
+                If using the legacy trace system, whether to insert the
+                instance as a frame's :py:attr:`~frame.f_trace` upon
+                entering a function scope.
 
-        self.active_instances = set(instances)
+        See also:
+            :py:class:`~.LineProfiler`
+        """
+        self.legacy_callback = NULL
+        self.mon_state = _SysMonitoringState(tool_id)
+
+        self.active_instances = set()
         self.wrap_trace = wrap_trace
         self.set_frame_local_trace = set_frame_local_trace
 
@@ -891,6 +907,12 @@ cdef class LineProfiler:
     cdef public object threaddata
 
     # These are shared between instances and threads
+    if CAN_USE_SYS_MONITORING:
+        # Note: just in case we ever need to override this, e.g. for
+        # testing
+        tool_id = sys.monitoring.PROFILER_ID  # type: ClassVar[int]
+    else:
+        tool_id = 0  # Value doesn't matter
     # type: ClassVar[dict[int, _LineProfilerManager]], int = thread id
     _managers = {}
     # type: ClassVar[dict[bytes, int]], bytes = bytecode
@@ -1101,19 +1123,19 @@ datamodel.html#user-defined-functions
                 from os import environ
 
                 falsy_values = {'', '0', 'off', 'false', 'no'}
-                kw = {}
-                for envvar, varname in [
-                        ('LINE_PROFILE_WRAP_TRACE', 'wrap_trace'),
-                        ('LINE_PROFILE_SET_FRAME_LOCAL_TRACE',
-                         'set_frame_local_trace')]:
-                    kw[varname] = (environ.get(envvar, '').lower()
-                                   not in falsy_values)
+                wrap_trace = (
+                    environ.get('LINE_PROFILE_WRAP_TRACE', '').lower()
+                    not in falsy_values)
+                set_frame_local_trace = (
+                    environ.get('LINE_PROFILE_SET_FRAME_LOCAL_TRACE',
+                                '').lower()
+                    not in falsy_values)
             else:
                 # Fetch the values from an existing manager
-                kw = {
-                    'wrap_trace': manager.wrap_trace,
-                    'set_frame_local_trace': manager.set_frame_local_trace}
-            self._managers[thread_id] = manager = _LineProfilerManager(**kw)
+                wrap_trace = manager.wrap_trace
+                set_frame_local_trace = manager.set_frame_local_trace
+            self._managers[thread_id] = manager = _LineProfilerManager(
+                self.tool_id, wrap_trace, set_frame_local_trace)
             return manager
 
     def enable_by_count(self):
