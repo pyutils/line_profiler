@@ -894,15 +894,32 @@ cdef class LineProfiler:
             can also disable events:
 
             * At *specific code locations* by returning
-              :py:data:`sys.monitoring.DISABLE`, and
-            * *Globally* by calling
-              :py:func:`sys.monitoring.set_events`.
+              :py:data:`sys.monitoring.DISABLE`;
+            * By calling :py:func:`sys.monitoring.set_events` and
+              changing the *global event set*; or
+            * By calling :py:func:`sys.monitoring.register_callback` and
+              *replacing itself* with alternative callbacks (or
+              :py:data:`None`).
 
             When that happens, said disabling acts are again suitably
-            intercepted so that line profiling continues, but said
-            callables will no longer receive the corresponding events.
-            Note that locally-disabled events are cleared when
-            :py:func:`sys.monitoring.restart_events` is called.
+            intercepted so that line profiling continues, but:
+
+            * Said callbacks will no longer receive the corresponding
+              events, and
+            * The :py:mod:`sys.monitoring` callbacks and event set are
+              updated correspondingly when the profiler is
+              :py:meth:`.disable`-ed.
+
+            Note that:
+
+            * Events disabled for specific code locations are restored
+              to the wrapped/cached callbacks when
+              :py:func:`sys.monitoring.restart_events` is called, as
+              with when line profiling is not used.
+            * Callbacks which only listen to and alter code-object-local
+              events (via :py:func:`sys.monitoring.set_local_events`) do
+              not interfere with line profiling, and such changes are
+              therefore not intercepted.
 
         * .. _notes-set_frame_local_trace:
 

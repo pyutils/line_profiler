@@ -527,17 +527,19 @@ def _test_callback_switching_helper(
 
 
 @pytest.mark.parametrize('add_events', [True, False])
+@pytest.mark.parametrize('code_local_events', [True, False])
 @pytest.mark.parametrize('start_with_events', [True, False])
 @pytest.mark.parametrize('standalone', [True, False])
-def test_callback_update_global_events(
-        standalone: bool, start_with_events: bool, add_events: bool) -> None:
+def test_callback_update_events(
+        standalone: bool, start_with_events: bool,
+        code_local_events: bool, add_events: bool) -> None:
     """
     Check that a :py:mod:`sys.monitoring` callback which updates the
-    event set after a certain number of hits behaves as expected, no
-    matter if `LineProfiler`s are in use.
+    event set (global and code-object-local) after a certain number of
+    hits behaves as expected, no matter if `LineProfiler`s are in use.
     """
     nloop = 10
-    disable_after = 5
+    nloop_update = 5
     cumulative_nhits = 0
 
     def func(n: int) -> int:
@@ -552,26 +554,34 @@ def test_callback_update_global_events(
             callback.nhits[_line_profiler.label(code)][lineno_loop])
         return cumulative_nhits
 
-    class GlobalDisablingCallback(LineCallback):
+    class EventUpdatingCallback(LineCallback):
         """
         Callback which, after a certain number of hits:
         - Disables :py:attr:`sys.monitoring.LINE` events, and
-        - Enables :py:attr:`sys.monitoring.RAISE` events (if
-          :py:attr:`~.raise_` is true)
+        - Enables :py:attr:`sys.monitoring.CALL` events (if
+          :py:attr:`~.call` is true)
         """
-        def __init__(self, *args, raise_: bool = False, **kwargs) -> None:
+        def __init__(self, *args,
+                     code: Optional[CodeType] = None, call: bool = False,
+                     **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.count = 0
-            self.raise_ = raise_
+            self.code = code
+            self.call = call
 
         def __call__(self, code: CodeType, lineno: int) -> None:
             if not self.handle_line_event(code, lineno):
                 return
             self.count += 1
-            if self.count >= disable_after:
-                disable_line_events()
-                if self.raise_:
-                    MON.set_events(MON.get_events() | MON.RAISE)
+            if self.count >= nloop_update:
+                disable_line_events(self.code)
+                if not self.call:
+                    return
+                if self.code is None:
+                    MON.set_events(MON.get_events() | MON.CALL)
+                else:
+                    MON.set_local_events(
+                        self.code, MON.get_local_events(self.code) | MON.CALL)
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
@@ -585,33 +595,43 @@ def test_callback_update_global_events(
     else:
         prof = LineProfiler(wrap_trace=True)
     if start_with_events:
-        events = MON.CALL
+        global_events = MON.CALL
     else:
-        events = MON.NO_EVENTS
+        global_events = MON.NO_EVENTS
     if prof is not None:
         orig_func, func = func, prof(func)
         code = orig_func.__code__
 
-    callback = GlobalDisablingCallback(
+    callback = EventUpdatingCallback(
         lambda code, lineno: (code.co_name in names and lineno == lineno_loop),
-        raise_=add_events)
+        code=code if code_local_events else None,
+        call=add_events)
 
-    events |= MON.LINE
-    MON.set_events(events)
+    local_events = local_events_after = MON.NO_EVENTS
+    global_events_after = global_events
+    if code_local_events:
+        local_events |= MON.LINE
+        if add_events:
+            local_events_after |= MON.CALL
+    else:
+        global_events |= MON.LINE
+        if add_events:
+            global_events_after |= MON.CALL
+    MON.set_events(global_events)
+    MON.set_local_events(code, local_events)
+
     try:
-        # Check that data is only gathered for the first `disable_after`
+        # Check that data is only gathered for the first `nloop_update`
         # hits
         assert MON.get_current_callback() is callback
         assert func(nloop) == nloop * (nloop + 1) // 2
         assert MON.get_current_callback() is callback
         print(callback.nhits)
-        assert get_loop_hits() == disable_after
+        assert get_loop_hits() == nloop_update
         # Check that the callback has disabled LINE events (and enabled
-        # RAISE events where appropriate)
-        events -= MON.LINE
-        if add_events:
-            events |= MON.RAISE
-        assert MON.get_events() == events
+        # CALL events where appropriate)
+        assert MON.get_events() == global_events_after
+        assert MON.get_local_events(code) == local_events_after
     finally:
         if prof is not None:
             with StringIO() as sio:
