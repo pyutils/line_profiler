@@ -27,7 +27,12 @@ import threading
 import opcode
 import os
 import types
+from warnings import warn
 from weakref import WeakSet
+
+from line_profiler._diagnostics import (
+    WRAP_TRACE, SET_FRAME_LOCAL_TRACE, USE_LEGACY_TRACE)
+
 
 NOP_VALUE: int = opcode.opmap['NOP']
 
@@ -40,12 +45,21 @@ NOP_BYTES: bytes = NOP_VALUE.to_bytes(NOP_BYTES_LEN, byteorder=byteorder)
 # This should be true for Python >=3.11a1
 HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
 
-# "Lightweight" monitoring in 3.12.0b1+
-CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
-
-# Can't line-trace Cython in 3.12
+# Can't line-profile Cython in 3.12 since the old C API was upended
+# without an appropriate replacement (which only came in 3.13);
+# see also:
+# https://cython.readthedocs.io/en/latest/src/tutorial/profiling_tutorial.html
+_CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
 CANNOT_LINE_TRACE_CYTHON = (
-    CAN_USE_SYS_MONITORING and PY_VERSION_HEX < 0x030d00b1)
+    _CAN_USE_SYS_MONITORING and PY_VERSION_HEX < 0x030d00b1)
+
+if not (USE_LEGACY_TRACE or _CAN_USE_SYS_MONITORING):
+    # Shouldn't happen since we're already checking the existence of
+    # `sys.monitoring` in `line_profiler._diagnostics`, but just to be
+    # absolutely sure...
+    warn("`sys.monitoring`-based line profiling selected but unavailable "
+         f"in Python {sys.version}; falling back to the legacy trace system")
+    USE_LEGACY_TRACE = True
 
 # long long int is at least 64 bytes assuming c99
 ctypedef unsigned long long int uint64
@@ -285,7 +299,7 @@ cdef class _SysMonitoringState:
     cdef int events
     cdef Py_uintptr_t restart_version
 
-    if CAN_USE_SYS_MONITORING:
+    if _CAN_USE_SYS_MONITORING:
         line_tracing_event_set = (  # type: ClassVar[FrozenSet[int]]
             frozenset({sys.monitoring.events.LINE,
                        sys.monitoring.events.PY_RETURN,
@@ -681,20 +695,17 @@ sys.monitoring.html#monitoring-event-RERAISE
         instances.add(prof)
         if already_active:
             return
-        # Use `sys.monitoring` in Python 3.12 and above;
-        # otherwise, use the legacy trace-callback system
-        # see: https://docs.python.org/3/library/sys.monitoring.html
-        if CAN_USE_SYS_MONITORING:
+        if USE_LEGACY_TRACE:
+            legacy_callback = alloc_callback()
+            fetch_callback(legacy_callback)
+            self.legacy_callback = legacy_callback
+            PyEval_SetTrace(legacy_trace_callback, self)
+        else:
             self.mon_state.register(self.handle_line_event,
                                     self.handle_return_event,
                                     self.handle_yield_event,
                                     self.handle_raise_event,
                                     self.handle_reraise_event)
-        else:
-            legacy_callback = alloc_callback()
-            fetch_callback(legacy_callback)
-            self.legacy_callback = legacy_callback
-            PyEval_SetTrace(legacy_trace_callback, self)
 
     cpdef _handle_disable_event(self, prof):
         cdef TraceCallback* legacy_callback
@@ -702,16 +713,17 @@ sys.monitoring.html#monitoring-event-RERAISE
         instances.discard(prof)
         if instances:
             return
-        # Use `sys.monitoring` in Python 3.12 and above;
-        # otherwise, use the legacy trace-callback system
+        # Only use the legacy trace-callback system if Python < 3.12 or
+        # if explicitly requested with `LINE_PROFILER_CORE=legacy`;
+        # otherwise, use `sys.monitoring`
         # see: https://docs.python.org/3/library/sys.monitoring.html
-        if CAN_USE_SYS_MONITORING:
-            self.mon_state.deregister()
-        else:
+        if USE_LEGACY_TRACE:
             legacy_callback = self.legacy_callback
             restore_callback(legacy_callback)
             free_callback(legacy_callback)
             self.legacy_callback = NULL
+        else:
+            self.mon_state.deregister()
 
     property wrap_trace:
         def __get__(self):
@@ -727,9 +739,7 @@ sys.monitoring.html#monitoring-event-RERAISE
             # point in tempering with `.f_trace` when using
             # `sys.monitoring`... so just set it to false
             self._set_frame_local_trace = (
-                1
-                if set_frame_local_trace and not CAN_USE_SYS_MONITORING else
-                0)
+                1 if set_frame_local_trace and USE_LEGACY_TRACE else 0)
 
 
 cdef class LineProfiler:
@@ -912,12 +922,14 @@ cdef class LineProfiler:
     cdef public object threaddata
 
     # These are shared between instances and threads
-    if CAN_USE_SYS_MONITORING:
+    if _CAN_USE_SYS_MONITORING:
         # Note: just in case we ever need to override this, e.g. for
         # testing
         tool_id = sys.monitoring.PROFILER_ID  # type: ClassVar[int]
     else:
-        tool_id = 0  # Value doesn't matter
+        # Note: the value doesn't matter here... but set it to be
+        # consistent (because the value is public API)
+        tool_id = 2
     # type: ClassVar[dict[int, _LineProfilerManager]], int = thread id
     _managers = {}
     # type: ClassVar[dict[bytes, int]], bytes = bytecode
@@ -959,11 +971,10 @@ cdef class LineProfiler:
 datamodel.html#user-defined-functions
         """
         if hasattr(func, "__wrapped__"):
-            import warnings
-            warnings.warn(
-                "Adding a function with a __wrapped__ attribute. You may want "
-                "to profile the wrapped function by adding %s.__wrapped__ "
-                "instead." % (func.__name__,)
+            warn(
+                "Adding a function with a `.__wrapped__` attribute. "
+                "You may want to profile the wrapped function by adding "
+                f"`{func.__name__}.__wrapped__` instead."
             )
         try:
             code = func.__code__
@@ -973,10 +984,8 @@ datamodel.html#user-defined-functions
                 code = func.__func__.__code__
                 func_id = id(func.__func__)
             except AttributeError:
-                import warnings
-                warnings.warn(
-                    "Could not extract a code object for the object %r"
-                    % (func,))
+                warn(
+                    f"Could not extract a code object for the object {func!r}")
                 return
 
         # Note: if we are to alter the code object, other profilers
@@ -1122,19 +1131,9 @@ datamodel.html#user-defined-functions
                 manager, *_ = self._managers.values()
             except ValueError:
                 # First thread in the interpretor: load default values
-                # from the environment
-                # (TODO: migrate to `line_profiler.cli_utils.boolean()`
-                # after merging #335)
-                from os import environ
-
-                falsy_values = {'', '0', 'off', 'false', 'no'}
-                wrap_trace = (
-                    environ.get('LINE_PROFILE_WRAP_TRACE', '').lower()
-                    not in falsy_values)
-                set_frame_local_trace = (
-                    environ.get('LINE_PROFILE_SET_FRAME_LOCAL_TRACE',
-                                '').lower()
-                    not in falsy_values)
+                # from the environment (at package startup time)
+                wrap_trace = WRAP_TRACE
+                set_frame_local_trace = SET_FRAME_LOCAL_TRACE
             else:
                 # Fetch the values from an existing manager
                 wrap_trace = manager.wrap_trace

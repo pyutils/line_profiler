@@ -123,7 +123,11 @@ def isolate_test_in_subproc(
             try:
                 with open(fname, mode='w') as fobj:
                     print(code, file=fobj)
-                proc = subprocess.run(cmd, capture_output=True, text=True)
+                env = os.environ.copy()
+                # Make sure that we're testing the "default behavior"
+                env.pop('LINE_PROFILER_CORE', '')
+                proc = subprocess.run(
+                    cmd, capture_output=True, env=env, text=True)
             finally:
                 os.chdir(curdir)
         if proc.stdout:
