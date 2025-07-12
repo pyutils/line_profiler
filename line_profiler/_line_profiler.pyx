@@ -126,7 +126,7 @@ cdef inline object multibyte_rstrip(bytes bytecode):
     Returns:
         result (tuple[bytes, int])
         - First item is the bare unpadded bytecode
-        - Second item is the number of :py:const:`NOP_BYTES`
+        - Second item is the number of :py:data:`NOP_BYTES`
           ``bytecode`` has been padded with
     """
     npad: int = 0
@@ -181,7 +181,7 @@ def find_cython_source_file(cython_func):
 
     Returns:
         result (str | None)
-            Cython source file if found, else :py:const:`None`.
+            Cython source file if found, else :py:data:`None`.
     """
     try:
         compiled_module = cython_func.__globals__['__file__']
@@ -362,7 +362,7 @@ cdef class _SysMonitoringState:
                             object loc_args, object other_args):
         """
         Call the appropriate stored callback.  Also take care of the
-        restoration of :py:mod:`sys.monitoring` callbacks, tool-id lock,
+        restoration of :py:mod:`sys.monitoring` callbacks, tool-ID lock,
         and events should they be unset.
 
         Note:
@@ -454,11 +454,11 @@ cdef class _LineProfilerManager:
         Documentations are for reference only, and all APIs are to be
         considered private and subject to change.
 
-    .. |LINE| replace:: :py:attr:`sys.monitoring.events.LINE`
-    .. |PY_RETURN| replace:: :py:attr:`sys.monitoring.events.PY_RETURN`
-    .. |PY_YIELD| replace:: :py:attr:`sys.monitoring.events.PY_YIELD`
-    .. |RAISE| replace:: :py:attr:`sys.monitoring.events.RAISE`
-    .. |RERAISE| replace:: :py:attr:`sys.monitoring.events.RERAISE`
+    .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
+    .. |PY_RETURN| replace:: :py:attr:`!sys.monitoring.events.PY_RETURN`
+    .. |PY_YIELD| replace:: :py:attr:`!sys.monitoring.events.PY_YIELD`
+    .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
+    .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
     .. _LINE: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-LINE
     .. _PY_RETURN: https://docs.python.org/3/library/\
@@ -603,7 +603,7 @@ sys.monitoring.html#monitoring-event-PY_RETURN
     cpdef handle_yield_event(
             self, object code, int instruction_offset, object retval):
         """
-        Yield-event (|PY_RETURN|_) callback passed to
+        Yield-event (|PY_YIELD|_) callback passed to
         :py:func:`sys.monitoring.register_callback`.
 
         .. |PY_YIELD| replace:: \
@@ -747,23 +747,23 @@ cdef class LineProfiler:
             :py:mod:`sys` trace callback when the profiler is
             :py:meth:`.enable`-ed:
 
-            :py:const:`True`:
+            :py:data:`True`:
                 *Wrap around* said callback: at the end of running our
                 trace callback, also run the existing callback.
-            :py:const:`False`:
+            :py:data:`False`:
                 *Replace* said callback as long as the profiler is
                 enabled.
-            :py:const:`None` (default):
+            :py:data:`None` (default):
                 For the first instance created, resolves to
 
-                :py:const:`False`
+                :py:data:`False`
                     If the environment variable
                     :envvar:`LINE_PROFILE_WRAP_TRACE` is undefined, or
                     if it matches any of
                     ``{'', '0', 'off', 'false', 'no'}``
                     (case-insensitive).
 
-                :py:const:`True`
+                :py:data:`True`
                     Otherwise.
 
                 If other instances already exist, the value is inherited
@@ -781,22 +781,22 @@ cdef class LineProfiler:
             ``'call'`` is encountered) when the profiler is
             :py:meth:`.enable`-ed:
 
-            :py:const:`True`:
+            :py:data:`True`:
                 Set the frame's :py:attr:`~frame.f_trace` to
                 an object associated with the profiler.
-            :py:const:`False`:
+            :py:data:`False`:
                 Don't do so.
-            :py:const:`None` (default):
+            :py:data:`None` (default):
                 For the first instance created, resolves to
 
-                :py:const:`False`
+                :py:data:`False`
                     If the environment variable
                     :envvar:`LINE_PROFILE_SET_FRAME_LOCAL_TRACE` is
                     undefined, or if it matches any of
                     ``{'', '0', 'off', 'false', 'no'}``
                     (case-insensitive).
 
-                :py:const:`True`
+                :py:data:`True`
                     Otherwise.
 
                 If other instances already exist, the value is inherited
@@ -832,7 +832,8 @@ cdef class LineProfiler:
           coverage and debugging tools.  However, these should be
           considered experimental and to be used at one's own risk --
           because tools generally assume that they have sole control
-          over system-wide tracing.
+          over system-wide tracing (if using legacy tracing), or at
+          least over the :py:mod:`sys.monitoring` tool ID it acquired.
         * When setting :py:attr:`.wrap_trace` and
           :py:attr:`.set_frame_local_trace`, they are set process-wide
           for all instances.
@@ -851,32 +852,36 @@ cdef class LineProfiler:
             * The cached callback is cleared and is no longer called,
               and
             * The :py:mod:`sys` trace callback is set to
-              :py:const:`None` when the profiler is
+              :py:data:`None` when the profiler is
               :py:meth:`.disable`-ed.
-          * Frame-local legacy trace callables
-            (:py:attr:`~frame.f_trace`) may set
-            :py:attr:`~frame.f_trace_lines` to false in a
-            frame to disable line events;
-            likewise, :py:mod:`sys.monitoring` callbacks can also
-            disable events at specific code locations by returning
-            :py:data:`sys.monitoring.DISABLE`.  If a wrapped/cached
-            trace callback does so, profiling would continue, but said
-            callable will no longer receive the corresponding events.
+          * If a wrapped/cached frame-local legacy trace callable
+            (:py:attr:`~frame.f_trace`) sets
+            :py:attr:`~frame.f_trace_lines` to false in a frame to
+            disable local line events, :py:attr:`~.frame.f_trace_lines`
+            is restored (so that profiling can continue), but said
+            callable will no longer receive said events.
+          * Likewise, wrapped/cached :py:mod:`sys.monitoring` callbacks
+            can also disable events:
+
+            * At *specific code locations* by returning
+              :py:data:`sys.monitoring.DISABLE`, and
+            * *Globally* by calling
+              :py:func:`sys.monitoring.set_events`.
+
+            When that happens, said disabling acts are again suitably
+            intercepted so that line profiling continues, but said
+            callables will no longer receive the corresponding events.
+            Note that locally-disabled events are cleared when
+            :py:func:`sys.monitoring.restart_events` is called.
 
         * .. _notes-set_frame_local_trace:
 
           More on :py:attr:`.set_frame_local_trace`:
 
-          * In the new :py:mod:`sys.monitoring`-based system (Python
-            3.12+), it is impossible for code-local callbacks to disable
-            global events, therefore:
-
-            * :py:class:`LineProfiler` instances (which listen to events
-              globally) are not affected by a frame's
-              :py:attr:`~frame.f_trace`; and
-            * The parameter/attribute thus always resolves to
-              :py:const:`False`.
-
+          * Since frame-local trace functions is no longer a useful
+            concept in the new :py:mod:`sys.monitoring`-based system
+            (Python 3.12+), the parameter/attribute always resolves to
+            :py:data:`False`.
           * In the "legacy" trace system (Python < 3.12, using
             :py:func:`sys.gettrace`, :py:func:`sys.settrace`, etc.),
             when a :py:class:`LineProfiler` is :py:meth:`.enable`-ed,
