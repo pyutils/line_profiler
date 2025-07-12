@@ -7,7 +7,7 @@ import sys
 import textwrap
 import types
 import pytest
-from line_profiler import LineProfiler
+from line_profiler import _line_profiler, LineProfiler
 
 
 def f(x):
@@ -680,11 +680,12 @@ def test_show_func_column_formatting():
 @pytest.mark.skipif(not hasattr(sys, 'monitoring'),
                     reason='no `sys.monitoring` in version '
                     f'{".".join(str(v) for v in sys.version_info[:2])}')
-def test_sys_monitoring():
+def test_sys_monitoring(monkeypatch):
     """
     Test that `LineProfiler` is properly registered with
     `sys.monitoring`.
     """
+    monkeypatch.setattr(_line_profiler, 'USE_LEGACY_TRACE', False)
     profile = LineProfiler()
     get_name_wrapped = profile(get_profiling_tool_name)
     tool = get_profiling_tool_name()
