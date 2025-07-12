@@ -12,8 +12,7 @@ from typing import (Any, Optional, Union,
 
 import pytest
 
-from line_profiler import LineProfiler
-from line_profiler._line_profiler import label
+from line_profiler import _line_profiler, LineProfiler
 
 
 USE_SYS_MONITORING = isinstance(getattr(sys, 'monitoring', None), ModuleType)
@@ -162,7 +161,8 @@ class LineCallback:
         """
         result = self.predicate(code, lineno)
         if result:
-            self.nhits.setdefault(label(code), Counter())[lineno] += 1
+            self.nhits.setdefault(
+                _line_profiler.label(code), Counter())[lineno] += 1
         return result
 
     def __call__(self, code: CodeType, lineno: int) -> Any:
@@ -213,13 +213,16 @@ def disable_line_events(code: Optional[CodeType] = None) -> None:
 
 
 @pytest.fixture(autouse=True)
-def sys_mon_cleanup() -> Generator[None, None, None]:
+def sys_mon_cleanup(
+        monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """
     If :py:mod:`sys.monitoring` is available:
+    * Make sure that we are using the default behavior by overriding
+      :py:data:`line_profiler._line_profiler.USE_LEGACY_TRACE`;
     * Remember all the relevant global callbacks before running the
-      test,
+      test;
     * If ``sys.monitoring.PROFILER_ID`` isn't already in use, mark it as
-      being used by `'line_profiler_tests'`, and
+      being used by `'line_profiler_tests'`; and
     * Finally, restore these after the test:
       - The callbacks
       - The tool name (if we have set it earlier)
@@ -252,6 +255,7 @@ def sys_mon_cleanup() -> Generator[None, None, None]:
     if set_tool_id:
         MON.use_tool_id('line_profiler_tests')
     try:
+        monkeypatch.setattr(_line_profiler, 'USE_LEGACY_TRACE', False)
         with restore_events():
             yield
     finally:
@@ -308,7 +312,8 @@ def _test_callback_helper(
 
     def get_loop_hits() -> int:
         nonlocal cumulative_nhits
-        cumulative_nhits = callback.nhits[label(code)][lineno_loop]
+        cumulative_nhits = (
+            callback.nhits[_line_profiler.label(code)][lineno_loop])
         return cumulative_nhits
 
     lines, first_lineno = inspect.getsourcelines(func)
@@ -430,7 +435,8 @@ def _test_callback_switching_helper(
     def get_loop_hits() -> Tuple[int, int]:
         nonlocal cumulative_nhits
         cumulative_nhits = tuple(  # type: ignore[assignment]
-            callback.nhits.get(label(code), Counter())[lineno_loop]
+            callback.nhits.get(
+                _line_profiler.label(code), Counter())[lineno_loop]
             for callback in (callback_1, callback_2))
         return cumulative_nhits
 
