@@ -7,6 +7,7 @@ import sys
 from types import ModuleType
 from line_profiler import _logger
 
+
 def _boolean_environ(
         envvar,
         truey=frozenset({'1', 'on', 'true', 'yes'}),
@@ -94,9 +95,9 @@ _MUST_USE_LEGACY_TRACE = not isinstance(
 USE_LEGACY_TRACE = (
     _MUST_USE_LEGACY_TRACE
     or _boolean_environ('LINE_PROFILER_CORE',
-                       # Also provide `coverage-style` aliases
-                       truey={'old', 'legacy', 'ctrace'},
-                       falsy={'new', 'sys.monitoring', 'sysmon'},
-                       default=_MUST_USE_LEGACY_TRACE))
+                        # Also provide `coverage-style` aliases
+                        truey={'old', 'legacy', 'ctrace'},
+                        falsy={'new', 'sys.monitoring', 'sysmon'},
+                        default=_MUST_USE_LEGACY_TRACE))
 
 log = _logger.Logger('line_profiler', backend='auto')
