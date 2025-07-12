@@ -258,6 +258,24 @@ cpdef _code_replace(func, co_code):
     return code
 
 
+cpdef int _patch_events(int events, int before, int after):
+    """
+    Patch ``events`` based on the differences between ``before`` and
+    ``after``.
+
+    Example:
+        >>> events = 0b110000
+        >>> before = 0b101101
+        >>> after = 0b_001011  # Additions: 0b10, deletions: 0b100100
+        >>> assert _patch_events(events, before, after) == 0b010010
+    """
+    cdef int all_set_bits, plus, minus
+    all_set_bits = before | after
+    plus = all_set_bits - before
+    minus = all_set_bits - after
+    return ((events | minus) - minus) | plus
+
+
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
     """
@@ -388,11 +406,10 @@ cdef class _SysMonitoringState:
         cdef PyObject *result
         cdef object callback  # type: Callable | None
         cdef object callback_after  # type: Callable | None
-        cdef object callback_wrapped  # type: Callable | None
         cdef object code_location  # type: tuple[code, Unpack[tuple]]
         cdef object arg_tuple  # type: tuple[code, Unpack[tuple]]
         cdef object disabled  # type: set[tuple[code, Unpack[tuple]]]
-        cdef int ev_id
+        cdef int ev_id, events_before
         cdef Py_uintptr_t version = monitoring_restart_version()
         cdef dict callbacks_before = {}
 
@@ -402,8 +419,8 @@ cdef class _SysMonitoringState:
             self.disabled.clear()
 
         # Call the wrapped callback where suitable
-        callback_wrapped = self.callbacks.get(event_id)
-        if callback_wrapped is None:  # No cached callback
+        callback = self.callbacks.get(event_id)
+        if callback is None:  # No cached callback
             return
         code_location = (code,) + loc_args
         disabled = self.disabled.setdefault(event_id, set())
@@ -418,8 +435,9 @@ cdef class _SysMonitoringState:
 
         arg_tuple = code_location + other_args
         try:
+            events_before = mon.get_events(self.tool_id)
             result = PyObject_Call(
-                <PyObject *>callback_wrapped, <PyObject *>arg_tuple, NULL)
+                <PyObject *>callback, <PyObject *>arg_tuple, NULL)
         else:
             # Since we can't actually disable the event (or line
             # profiling will be interrupted), just mark the location so
@@ -428,9 +446,11 @@ cdef class _SysMonitoringState:
             if result == <PyObject *>(mon.DISABLE):
                 disabled.add(code_location)
         finally:
-            self.events = mon.get_events(self.tool_id)
-            register = mon.register_callback
+            # Update the events
+            self.events = _patch_events(
+                self.events, events_before, mon.get_events(self.tool_id))
             # If the wrapped callback has changed:
+            register = mon.register_callback
             for ev_id, callback in callbacks_before.items():
                 # - Restore the `sys.monitoring` callback
                 callback_after = register(self.tool_id, ev_id, callback)

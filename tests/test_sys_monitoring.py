@@ -4,6 +4,7 @@ from collections import Counter
 from contextlib import AbstractContextManager, ExitStack
 from functools import partial
 from io import StringIO
+from itertools import count
 from types import CodeType, ModuleType
 from typing import (Any, Optional, Union,
                     Callable, Generator,
@@ -62,6 +63,26 @@ class SysMonHelper:
         result = getattr(mon, attr)
         if callable(result) and attr not in self.no_tool_id_callables:
             return partial(result, self.tool_id)
+        return result
+
+    def get_current_callback(
+            self, event_id: Optional[int] = None) -> Union[Callable, None]:
+        """
+        Arguments:
+            event_id (int | None)
+                Optional integer ID to retrieve the callback from;
+                defaults to :py:data:`sys.monitoring.events.LINE`.
+
+        Returns:
+            The current callback (if any) associated with with
+            :py:data:`~.tool_id` and ``event_id``.
+        """
+        register = self.register_callback
+        if event_id is None:
+            event_id = MON.LINE
+        result = register(event_id, None)
+        if result is not None:
+            register(event_id, result)
         return result
 
 
@@ -204,7 +225,7 @@ def disable_line_events(code: Optional[CodeType] = None) -> None:
     else:
         events = MON.get_local_events(code)
         if events & MON.LINE:
-            MON.set_local_events(code, events | MON.LINE)
+            MON.set_local_events(code, events ^ MON.LINE)
 
 
 # -------------------------------------------------------------------- #
@@ -331,7 +352,9 @@ def _test_callback_helper(
     with restore_events():
         disable_line_events()
         n = nloop_no_trace
+        assert MON.get_current_callback() is callback
         assert func(n) == n * (n + 1) // 2
+        assert MON.get_current_callback() is callback
         assert not callback.nhits
 
     # When line events are activated, the callback should see line
@@ -339,7 +362,9 @@ def _test_callback_helper(
     with restore_events():  # Global events
         enable_line_events()
         n = nloop_trace_global
+        assert MON.get_current_callback() is callback
         assert func(n) == n * (n + 1) // 2
+        assert MON.get_current_callback() is callback
         print(callback.nhits)
         if callback_called:
             expected = cumulative_nhits + n
@@ -353,7 +378,9 @@ def _test_callback_helper(
         disable_line_events()
         enable_line_events(code)
         n = nloop_trace_local
+        assert MON.get_current_callback() is callback
         assert func(n) == n * (n + 1) // 2
+        assert MON.get_current_callback() is callback
         print(callback.nhits)
         if callback_called:
             expected = cumulative_nhits + n
@@ -378,7 +405,9 @@ def _test_callback_helper(
             # We still get 1 more hit because that's the call we
             # return `sys.monitoring.DISABLE` from
             n = nloop_disabled
+            assert MON.get_current_callback() is callback
             assert func(n) == n * (n + 1) // 2
+            assert MON.get_current_callback() is callback
             print(callback.nhits)
             if callback_called:
                 expected = cumulative_nhits + 1
@@ -395,27 +424,28 @@ def _test_callback_helper(
             + 2 * nloop_disabled)
 
 
-def test_standalone_callback_switching() -> None:
+@pytest.mark.parametrize('standalone', [True, False])
+def test_callback_switching(standalone: bool) -> None:
     """
     Check that hot-swapping of :py:mod:`sys.monitoring` callbacks
-    behaves as expected when `LineProfiler`s are not in use.
+    behaves as expected, no matter if `LineProfiler`s are in use.
     """
-    _test_callback_switching_helper(17)
+    if standalone:
+        prof: Union[LineProfiler, None] = None
+    else:
+        prof = LineProfiler(wrap_trace=True)
 
-
-def test_wrapping_switching_callback() -> None:
-    """
-    Check that hot-swapping of :py:mod:`sys.monitoring` callbacks
-    behaves as expected when wrapped by `LineProfiler`s.
-    """
-    prof = LineProfiler(wrap_trace=True)
     try:
         nhits_expected = _test_callback_switching_helper(17, prof)
     finally:
-        with StringIO() as sio:
-            prof.print_stats(sio)
-            output = sio.getvalue()
-        print(output)
+        if prof is not None:
+            with StringIO() as sio:
+                prof.print_stats(sio)
+                output = sio.getvalue()
+            print(output)
+    if prof is None:
+        return
+
     line = next(line for line in output.splitlines()
                 if line.endswith('# Loop body'))
     nhits = int(line.split()[1])
@@ -481,7 +511,9 @@ def _test_callback_switching_helper(
 
     with restore_events():
         enable_line_events()
+        assert MON.get_current_callback() is callback_1
         assert func(nloop) == nloop * (nloop + 1) // 2
+        assert MON.get_current_callback() in (callback_1, callback_2)
         print(callback_1.nhits, callback_2.nhits)
         nhits_one = nloop // 2
         nhits_other = nloop - nhits_one
@@ -492,3 +524,213 @@ def _test_callback_switching_helper(
                                        (nhits_other, nhits_one))
 
     return nloop
+
+
+@pytest.mark.parametrize('add_events', [True, False])
+@pytest.mark.parametrize('start_with_events', [True, False])
+@pytest.mark.parametrize('standalone', [True, False])
+def test_callback_update_global_events(
+        standalone: bool, start_with_events: bool, add_events: bool) -> None:
+    """
+    Check that a :py:mod:`sys.monitoring` callback which updates the
+    event set after a certain number of hits behaves as expected, no
+    matter if `LineProfiler`s are in use.
+    """
+    nloop = 10
+    disable_after = 5
+    cumulative_nhits = 0
+
+    def func(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n  # Loop body
+        return x
+
+    def get_loop_hits() -> int:
+        nonlocal cumulative_nhits
+        cumulative_nhits = (
+            callback.nhits[_line_profiler.label(code)][lineno_loop])
+        return cumulative_nhits
+
+    class GlobalDisablingCallback(LineCallback):
+        """
+        Callback which, after a certain number of hits:
+        - Disables :py:attr:`sys.monitoring.LINE` events, and
+        - Enables :py:attr:`sys.monitoring.RAISE` events (if
+          :py:attr:`~.raise_` is true)
+        """
+        def __init__(self, *args, raise_: bool = False, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.count = 0
+            self.raise_ = raise_
+
+        def __call__(self, code: CodeType, lineno: int) -> None:
+            if not self.handle_line_event(code, lineno):
+                return
+            self.count += 1
+            if self.count >= disable_after:
+                disable_line_events()
+                if self.raise_:
+                    MON.set_events(MON.get_events() | MON.RAISE)
+
+    lines, first_lineno = inspect.getsourcelines(func)
+    lineno_loop = first_lineno + next(
+        offset for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body'))
+    names = {func.__name__, func.__qualname__}
+    code = func.__code__
+
+    if standalone:
+        prof: Union[LineProfiler, None] = None
+    else:
+        prof = LineProfiler(wrap_trace=True)
+    if start_with_events:
+        events = MON.CALL
+    else:
+        events = MON.NO_EVENTS
+    if prof is not None:
+        orig_func, func = func, prof(func)
+        code = orig_func.__code__
+
+    callback = GlobalDisablingCallback(
+        lambda code, lineno: (code.co_name in names and lineno == lineno_loop),
+        raise_=add_events)
+
+    events |= MON.LINE
+    MON.set_events(events)
+    try:
+        # Check that data is only gathered for the first `disable_after`
+        # hits
+        assert MON.get_current_callback() is callback
+        assert func(nloop) == nloop * (nloop + 1) // 2
+        assert MON.get_current_callback() is callback
+        print(callback.nhits)
+        assert get_loop_hits() == disable_after
+        # Check that the callback has disabled LINE events (and enabled
+        # RAISE events where appropriate)
+        events -= MON.LINE
+        if add_events:
+            events |= MON.RAISE
+        assert MON.get_events() == events
+    finally:
+        if prof is not None:
+            with StringIO() as sio:
+                prof.print_stats(sio)
+                output = sio.getvalue()
+            print(output)
+    if prof is None:
+        return
+
+    line = next(line for line in output.splitlines()
+                if line.endswith('# Loop body'))
+    nhits = int(line.split()[1])
+    assert nhits == nloop
+
+
+@pytest.mark.parametrize('standalone', [True, False])
+def test_callback_toggle_local_events(standalone: bool) -> None:
+    """
+    Check that a :py:mod:`sys.monitoring` callback which disables local
+    LINE events and later re-enables them with
+    :py:func:`sys.monitoring.restart_events` behaves as expected, no
+    matter if `LineProfiler`s are in use.
+    """
+    if standalone:
+        prof: Union[LineProfiler, None] = None
+    else:
+        prof = LineProfiler(wrap_trace=True)
+
+    try:
+        nhits_expected = _test_callback_toggle_local_events_helper(
+            17, 18, 19, prof)
+    finally:
+        if prof is not None:
+            with StringIO() as sio:
+                prof.print_stats(sio)
+                output = sio.getvalue()
+            print(output)
+    if prof is None:
+        return
+
+    line = next(line for line in output.splitlines()
+                if line.endswith('# Loop body'))
+    nhits = int(line.split()[1])
+    assert nhits == nhits_expected
+
+
+def _test_callback_toggle_local_events_helper(
+        nloop_before_disabling: int,
+        nloop_when_disabled: int,
+        nloop_after_reenabling: int,
+        prof: Optional[LineProfiler] = None) -> int:
+    cumulative_nhits = 0
+
+    def func(*nloops) -> int:
+        x = 0
+        counter = count(1)
+        for n in nloops:
+            for _ in range(n):
+                x += next(counter)  # Loop body
+            pass  # Switching location
+        return x
+
+    def get_loop_hits() -> int:
+        nonlocal cumulative_nhits
+        cumulative_nhits = (
+            callback.nhits[_line_profiler.label(code)][lineno_loop])
+        return cumulative_nhits
+
+    class LocalDisablingCallback(LineCallback):
+        """
+        Callback which disables LINE events locally after a certain
+        number of hits
+        """
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.switch_count = 0
+
+        def __call__(self, code: CodeType, lineno: int) -> Any:
+            if not self.handle_line_event(code, lineno):
+                return
+            # When we hit the "loop" line after having hit the "switch"
+            # line, disable line events on the "loop" line
+            if lineno == lineno_loop and self.switch_count % 2:
+                # Remove the recorded hit
+                self.nhits[_line_profiler.label(code)][lineno] -= 1
+                return MON.DISABLE
+            # When we hit the "switch" line the second line, restart
+            # events to undo disabling of the "loop" line
+            if lineno == lineno_switch:
+                if self.switch_count % 2:
+                    MON.restart_events()
+                self.switch_count += 1
+                return
+
+    lines, first_lineno = inspect.getsourcelines(func)
+    lineno_loop = first_lineno + next(
+        offset for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body'))
+    lineno_switch = first_lineno + next(
+        offset for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Switching location'))
+    linenos = {lineno_loop, lineno_switch}
+    names = {func.__name__, func.__qualname__}
+    code = func.__code__
+    if prof is not None:
+        orig_func, func = func, prof(func)
+        code = orig_func.__code__
+
+    callback = LocalDisablingCallback(
+        lambda code, lineno: (code.co_name in names and lineno in linenos))
+
+    MON.set_events(MON.get_events() | MON.LINE)
+    n = nloop_before_disabling + nloop_when_disabled + nloop_after_reenabling
+    assert MON.get_current_callback() is callback
+    assert func(nloop_before_disabling,
+                nloop_when_disabled,
+                nloop_after_reenabling) == n * (n + 1) // 2
+    assert MON.get_current_callback() is callback
+    print(callback.nhits)
+    assert get_loop_hits() == nloop_before_disabling + nloop_after_reenabling
+
+    return n
