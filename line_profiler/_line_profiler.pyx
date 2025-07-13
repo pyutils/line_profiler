@@ -101,10 +101,11 @@ cdef extern from "c_trace_callbacks.c":  # Legacy tracing
 
     cdef TraceCallback *alloc_callback() except *
     cdef void free_callback(TraceCallback *callback)
-    cdef void fetch_callback(TraceCallback *callback)
+    cdef void populate_callback(TraceCallback *callback)
     cdef void restore_callback(TraceCallback *callback)
-    cdef int call_callback(TraceCallback *callback, PyFrameObject *py_frame,
-                           int what, PyObject *arg)
+    cdef int call_callback(
+        PyObject *disabler, TraceCallback *callback,
+        PyFrameObject *py_frame, int what, PyObject *arg)
     cdef void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
     cdef Py_uintptr_t monitoring_restart_version()
 
@@ -219,12 +220,20 @@ def find_cython_source_file(cython_func):
 
 def disable_line_events(trace_func: Callable) -> Callable:
     """
-    Return a thin wrapper around ``trace_func()`` which withholds line
-    events.  This is for when a frame-local
-    :py:attr:`~frame.f_trace` disables
-    :py:attr:`~frame.f_trace_lines` -- we would like to keep
-    line events enabled (so that line profiling works) while
-    "unsubscribing" the trace function from it.
+    Returns:
+        trace_func (Callable)
+            If it is a wrapper created by
+            :py:attr:`_LineProfilerManager.wrap_local_f_trace`;
+            ``trace_func.disable_line_events`` is also set to true
+        wrapper (Callable)
+            Otherwise, a thin wrapper around ``trace_func()`` which
+            withholds line events.
+
+    Note:
+        This is for when a frame-local :py:attr:`~frame.f_trace`
+        disables :py:attr:`~frame.f_trace_lines` -- we would like to
+        keep line events enabled (so that line profiling works) while
+        "unsubscribing" the trace function from it.
     """
     @wraps(trace_func)
     def wrapper(frame, event, arg):
@@ -232,6 +241,12 @@ def disable_line_events(trace_func: Callable) -> Callable:
             return
         return trace_func(frame, event, arg)
 
+    try:  # Disable the wrapper directly
+        if hasattr(trace_func, '__line_profiler_manager__'):
+            trace_func.disable_line_events = True
+            return trace_func
+    except AttributeError:
+        pass
     return wrapper
 
 
@@ -535,7 +550,7 @@ sys.monitoring.html#monitoring-event-RERAISE
         self.set_frame_local_trace = set_frame_local_trace
 
     @cython.profile(False)
-    def __call__(self, frame, event, arg):
+    def __call__(self, frame: types.FrameType, event: str, arg):
         """
         Calls |legacy_trace_callback|_.  If :py:func:`sys.gettrace`
         returns this instance, replaces the default C-level trace
@@ -568,7 +583,7 @@ main/Python/sysmodule.c
             PyEval_SetTrace(legacy_trace_callback, self)
         return self
 
-    def wrap_local_f_trace(self, trace_func):
+    def wrap_local_f_trace(self, trace_func: Callable) -> Callable:
         """
         Arguments:
             trace_func (Callable[[frame, str, Any], Any])
@@ -584,16 +599,22 @@ main/Python/sysmodule.c
                 :py:attr:`~.set_frame_local_trace` is true.
 
         Note:
-            The ``.__line_profiler_manager__`` attribute of the returned
-            wrapper is set to the instance.
+            * The ``.__line_profiler_manager__`` attribute of the
+              returned wrapper is set to the instance.
+            * Line events are not passed to the wrapped callable if
+              ``wrapper.disable_line_events`` is set to true.
         """
         @wraps(trace_func)
         def wrapper(frame, event, arg):
-            result = trace_func(frame, event, arg)
+            if wrapper.disable_line_events and event == 'line':
+                result = None
+            else:
+                result = trace_func(frame, event, arg)
             self(frame, event, arg)
             return result
 
         wrapper.__line_profiler_manager__ = self
+        wrapper.disable_line_events = False
         try:  # Unwrap the wrapper
             if trace_func.__line_profiler_manager__ is self:
                 trace_func = trace_func.__wrapped__
@@ -717,7 +738,7 @@ sys.monitoring.html#monitoring-event-RERAISE
             return
         if USE_LEGACY_TRACE:
             legacy_callback = alloc_callback()
-            fetch_callback(legacy_callback)
+            populate_callback(legacy_callback)
             self.legacy_callback = legacy_callback
             PyEval_SetTrace(legacy_trace_callback, self)
         else:
@@ -1403,10 +1424,12 @@ pystate.h#L16
     # Call the trace callback that we're wrapping around where
     # appropriate
     if manager_._wrap_trace:
-        result = call_callback(manager_.legacy_callback, py_frame, what, arg)
+        result = call_callback(
+            <PyObject *>disable_line_events, manager_.legacy_callback,
+            py_frame, what, arg)
     else:
         result = 0
-    
+
     # Prevent other trace functions from overwritting `manager`;
     # if there is a frame-local trace function, create a wrapper calling
     # both it and `manager`

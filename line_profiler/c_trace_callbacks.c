@@ -29,7 +29,7 @@ void free_callback(TraceCallback *callback)
     return;
 }
 
-void fetch_callback(TraceCallback *callback)
+void populate_callback(TraceCallback *callback)
 {
     /* Store the members `.c_tracefunc` and `.c_traceobj` of the
      * current thread on `callback`.
@@ -48,6 +48,7 @@ void fetch_callback(TraceCallback *callback)
 
 void nullify_callback(TraceCallback *callback)
 {
+    if (callback == NULL) return;
     // No need for NULL check with `Py_XDECREF()`
     Py_XDECREF(callback->c_traceobj);
     callback->c_tracefunc = NULL;
@@ -78,6 +79,7 @@ inline int is_null_callback(TraceCallback *callback)
 }
 
 int call_callback(
+    PyObject *disabler,
     TraceCallback *callback,
     PyFrameObject *py_frame,
     int what,
@@ -103,7 +105,7 @@ int call_callback(
      *       trace callback errors out, `sys.settrace(None)` is called.
      *     - If a frame-local callback sets the `.f_trace_lines` to
      *       false, `.f_trace_lines` is reverted but `.f_trace` is
-     *       wrapped so that it no loger sees line events.
+     *       wrapped/altered so that it no longer sees line events.
      *
      * Notes:
      *     It is tempting to assume said current callback value to be
@@ -120,13 +122,13 @@ int call_callback(
     if (is_null_callback(callback)) return 0;
 
     f_trace_lines = py_frame->f_trace_lines;
-    fetch_callback(&before);
+    populate_callback(&before);
     result = (callback->c_tracefunc)(
         callback->c_traceobj, py_frame, what, arg
     );
 
     // Check if the callback has unset itself; if so, nullify `callback`
-    fetch_callback(&after);
+    populate_callback(&after);
     if (is_null_callback(&after)) nullify_callback(callback);
     nullify_callback(&after);
     restore_callback(&before);
@@ -142,36 +144,9 @@ int call_callback(
         py_frame->f_trace_lines = f_trace_lines;
         if (py_frame->f_trace != NULL && py_frame->f_trace != Py_None)
         {
-            // FIXME: can we get more performance by stashing a somewhat
-            // permanent reference to
-            // `line_profiler._line_profiler.disable_line_events()`
-            // somewhere?
-            mod = PyImport_AddModuleRef(CYTHON_MODULE);
-            if (mod == NULL)
-            {
-                RAISE_IN_CALL(
-                    "call_callback",
-                    PyExc_ImportError,
-                    "cannot import `" CYTHON_MODULE "`"
-                );
-                result = -1;
-                goto cleanup;
-            }
-            dle = PyObject_GetAttrString(mod, DISABLE_CALLBACK);
-            if (dle == NULL)
-            {
-                RAISE_IN_CALL(
-                    "call_callback",
-                    PyExc_AttributeError,
-                    "`line_profiler._line_profiler` has no "
-                    "attribute `" DISABLE_CALLBACK "`"
-                );
-                result = -1;
-                goto cleanup;
-            }
             // Note: DON'T `Py_[X]DECREF()` the pointer! Nothing else is
             // holding a reference to it.
-            f_trace = PyObject_CallOneArg(dle, py_frame->f_trace);
+            f_trace = PyObject_CallOneArg(disabler, py_frame->f_trace);
             if (f_trace == NULL)
             {
                 // No need to raise another exception, it's already
@@ -179,7 +154,13 @@ int call_callback(
                 result = -1;
                 goto cleanup;
             }
-            py_frame->f_trace = f_trace;
+            // No need to raise another exception, it's already
+            // raised in the call
+            if (PyObject_SetAttrString(
+                (PyObject *)py_frame, "f_trace", f_trace))
+            {
+                result = -1;
+            }
         }
     }
 cleanup:
@@ -213,9 +194,12 @@ inline void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
         goto cleanup;
     }
     // Wrap the trace function
+    // (No need to raise another exception in case the call or the
+    // `setattr()` failed, it's already raised in the call)
     method = PyUnicode_FromString("wrap_local_f_trace");
-    py_frame->f_trace = PyObject_CallMethodOneArg(
-        manager, method, py_frame->f_trace);
+    PyObject_SetAttrString(
+        (PyObject *)py_frame, "f_trace",
+        PyObject_CallMethodOneArg(manager, method, py_frame->f_trace));
 cleanup:
     Py_XDECREF(method);
     return;
@@ -226,7 +210,8 @@ inline Py_uintptr_t monitoring_restart_version()
 {
     /* Get the `.last_restart_version` of the interpretor state.
      */
-    return PyThreadState_Get()->interp->last_restart_version;
+    return PyThreadState_GetInterpreter(
+        PyThreadState_Get())->last_restart_version;
 }
 #else
 { return (Py_uintptr_t)0; }  // Dummy implementation

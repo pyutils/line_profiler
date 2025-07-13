@@ -32,6 +32,11 @@
         PyObject_CallMethodObjArgs(obj, name, NULL)
 #endif
 
+#if PY_VERSION_HEX < 0x030900a5  // 3.9.0a5
+#   define PyThreadState_GetInterpreter(tstate) \
+        ((tstate)->interp)
+#endif
+
 #if PY_VERSION_HEX < 0x030900b1  // 3.9.0b1
     /*
      * Notes:

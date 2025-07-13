@@ -57,9 +57,10 @@ typedef struct TraceCallback
 
 TraceCallback *alloc_callback();
 void free_callback(TraceCallback *callback);
-void fetch_callback(TraceCallback *callback);
+void populate_callback(TraceCallback *callback);
 void restore_callback(TraceCallback *callback);
 int call_callback(
+    PyObject *disabler,
     TraceCallback *callback,
     PyFrameObject *py_frame,
     int what,
