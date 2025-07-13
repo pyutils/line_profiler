@@ -524,6 +524,7 @@ sys.monitoring.html#monitoring-event-RERAISE
     cdef public object active_instances  # type: set[LineProfiler]
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
+    cdef int recursion_guard
 
     def __init__(
             self, tool_id: int, wrap_trace: bool, set_frame_local_trace: bool):
@@ -548,6 +549,7 @@ sys.monitoring.html#monitoring-event-RERAISE
         self.active_instances = set()
         self.wrap_trace = wrap_trace
         self.set_frame_local_trace = set_frame_local_trace
+        self.recursion_guard = 0
 
     @cython.profile(False)
     def __call__(self, frame: types.FrameType, event: str, arg):
@@ -574,8 +576,11 @@ main/Python/sysmodule.c
                          'line': PyTrace_LINE,
                          'return': PyTrace_RETURN,
                          'opcode': PyTrace_OPCODE}[event]
-        legacy_trace_callback(self, <PyFrameObject *>frame,
-                              what, <PyObject *>arg)
+        if not self.recursion_guard:
+            # Prevent recursion (e.g. when `.wrap_trace` and
+            # `.set_frame_local_trace` are both true)
+            legacy_trace_callback(self, <PyFrameObject *>frame,
+                                  what, <PyObject *>arg)
         # Set the C-level trace callback back to
         # `legacy_trace_callback()` where appropriate, so that future
         # calls can bypass this `.__call__()` method
@@ -632,7 +637,7 @@ main/Python/sysmodule.c
         Line-event (|LINE|_) callback passed to
         :py:func:`sys.monitoring.register_callback`.
 
-        .. |LINE| replace:: :py:attr:`sys.monitoring.events.LINE`
+        .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
         .. _LINE: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-LINE
         """
@@ -647,7 +652,7 @@ sys.monitoring.html#monitoring-event-LINE
         :py:func:`sys.monitoring.register_callback`.
 
         .. |PY_RETURN| replace:: \
-:py:attr:`sys.monitoring.events.PY_RETURN`
+:py:attr:`!sys.monitoring.events.PY_RETURN`
         .. _PY_RETURN: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-PY_RETURN
         """
@@ -662,7 +667,7 @@ sys.monitoring.html#monitoring-event-PY_RETURN
         :py:func:`sys.monitoring.register_callback`.
 
         .. |PY_YIELD| replace:: \
-:py:attr:`sys.monitoring.events.PY_YIELD`
+:py:attr:`!sys.monitoring.events.PY_YIELD`
         .. _PY_YIELD: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-PY_YIELD
         """
@@ -676,8 +681,7 @@ sys.monitoring.html#monitoring-event-PY_YIELD
         Raise-event (|RAISE|_) callback passed to
         :py:func:`sys.monitoring.register_callback`.
 
-        .. |RAISE| replace:: \
-:py:attr:`sys.monitoring.events.RAISE`
+        .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
         .. _RAISE: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-RAISE
         """
@@ -691,8 +695,7 @@ sys.monitoring.html#monitoring-event-RAISE
         Re-raise-event (|RERAISE|_) callback passed to
         :py:func:`sys.monitoring.register_callback`.
 
-        .. |RERAISE| replace:: \
-:py:attr:`sys.monitoring.events.RERAISE`
+        .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
         .. _RERAISE: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-RERAISE
         """
@@ -1392,6 +1395,7 @@ pystate.h#L16
     """
     cdef _LineProfilerManager manager_ = <_LineProfilerManager>manager
     cdef int result
+    cdef int recursion_guard = manager_.recursion_guard
 
     if what == PyTrace_CALL:
         # Any code using the `sys.gettrace()`-`sys.settrace()` paradigm
@@ -1424,9 +1428,17 @@ pystate.h#L16
     # Call the trace callback that we're wrapping around where
     # appropriate
     if manager_._wrap_trace:
-        result = call_callback(
-            <PyObject *>disable_line_events, manager_.legacy_callback,
-            py_frame, what, arg)
+        # Due to how the frame-local callback could be set to the active
+        # `_LineProfilerManager` or a wrapper object (see
+        # `set_local_trace()`), wrap the callback call to make sure that
+        # we don't recurse back here
+        manager_.recursion_guard = 1
+        try:
+            result = call_callback(
+                <PyObject *>disable_line_events, manager_.legacy_callback,
+                py_frame, what, arg)
+        finally:
+            manager_.recursion_guard = recursion_guard
     else:
         result = 0
 

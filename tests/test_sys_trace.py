@@ -304,6 +304,7 @@ def test_callback_preservation():
     _test_helper_callback_preservation(lambda frame, event, arg: None)
 
 
+@pytest.mark.parametrize('set_frame_local_trace', [True, False])
 @pytest.mark.parametrize(
     ('label', 'use_profiler', 'wrap_trace'),
     [('base case', False, False),
@@ -311,7 +312,8 @@ def test_callback_preservation():
      ('profiled (trace wrapped)', True, True)])
 @isolate_test_in_subproc
 def test_callback_wrapping(
-        label: str, use_profiler: bool, wrap_trace: bool) -> None:
+        label: str, use_profiler: bool,
+        wrap_trace: bool, set_frame_local_trace: bool) -> None:
     """
     Test in a subprocess that the profiler can wrap around an existing
     trace callback such that we both profile the code and do whatever
@@ -322,7 +324,8 @@ def test_callback_wrapping(
     sys.settrace(my_callback)
 
     if use_profiler:
-        profile = LineProfiler(wrap_trace=wrap_trace)
+        profile = LineProfiler(
+            wrap_trace=wrap_trace, set_frame_local_trace=set_frame_local_trace)
         foo_like = profile(foo)
         trace_preserved = wrap_trace
     else:
