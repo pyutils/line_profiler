@@ -1028,12 +1028,19 @@ def test_aggregate_profiling_data_between_code_versions():
         assert loop_body.split()[1] == str(count)
 
 
+@pytest.mark.xfail(condition=sys.version_info[:2] == (3, 9),
+                   reason='Handling of `finally` bugged in Python 3.9')
 def test_profiling_exception():
     """
     Test that profiling data is reported for:
     - The line raising an exception
     - The last lines in the `except` and `finally` subblocks of a
       `try`-(`except`-)`finally` statement
+
+    Notes
+    -----
+    Seems to be bugged for Python 3.9 only; may be related to CPython
+    issue #83295.
     """
     prof = LineProfiler()
 
