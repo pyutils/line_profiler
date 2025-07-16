@@ -1026,3 +1026,58 @@ def test_aggregate_profiling_data_between_code_versions():
         loop_body = next(line for line in result.splitlines()
                          if line.endswith('x += n'))
         assert loop_body.split()[1] == str(count)
+
+
+def test_profiling_exception():
+    """
+    Test that profiling data is reported for:
+    - The line raising an exception
+    - The last lines in the `except` and `finally` subblocks of a
+      `try`-(`except`-)`finally` statement
+    """
+    prof = LineProfiler()
+
+    class MyException(Exception):
+        pass
+
+    @prof
+    def func_raise():
+        pass
+        raise MyException  # Raise: raise
+        l.append(0)
+
+    @prof
+    def func_try_finally():
+        try:
+            raise MyException  # Try-finally: try
+        finally:
+            l.append(1)  # Try-finally: finally
+
+    @prof
+    def func_try_except_finally(reraise):
+        try:
+            raise MyException  # Try-except-finally: try
+        except MyException:
+            l.append(2)  # Try-except-finally: except
+            if reraise:
+                raise
+        finally:
+            l.append(3)  # Try-except-finally: finally
+
+    l = []
+    for func in [func_raise, func_try_finally,
+                 functools.partial(func_try_except_finally, True),
+                 functools.partial(func_try_except_finally, False)]:
+        try:
+            func()
+        except MyException:
+            pass
+    result = get_prof_stats(prof)
+    assert l == [1, 2, 3, 2, 3]
+    for stmt, nhits in [
+            ('raise', 1), ('try-finally', 1), ('try-except-finally', 2)]:
+        for step in stmt.split('-'):
+            comment = '# {}: {}'.format(stmt.capitalize(), step)
+            line = next(line for line in result.splitlines()
+                        if line.endswith(comment))
+            assert line.split()[1] == str(nhits)
