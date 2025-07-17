@@ -559,8 +559,8 @@ sys.monitoring.html#monitoring-event-RERAISE
         function |trace_trampoline|_ with |legacy_trace_callback|_ to
         reduce overhead.
 
-        Returns;
-            manager (_LineProfilerManager):
+        Returns:
+            self (_LineProfilerManager):
                 This instance.
 
         .. |legacy_trace_callback| replace:: \
