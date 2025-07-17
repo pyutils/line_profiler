@@ -191,7 +191,9 @@ if CAN_USE_SYS_MONITORING:
         events = (mon.get_events(mon.PROFILER_ID)
                   | mon.events.LINE
                   | mon.events.PY_RETURN
-                  | mon.events.PY_YIELD)
+                  | mon.events.PY_YIELD
+                  | mon.events.RAISE
+                  | mon.events.RERAISE)
         mon.set_events(mon.PROFILER_ID, events)
         # TODO: store and/or call previous callbacks, see #334
         line_callback = functools.partial(
@@ -203,6 +205,10 @@ if CAN_USE_SYS_MONITORING:
             mon.PROFILER_ID, mon.events.PY_RETURN, exit_callback)
         mon.register_callback(
             mon.PROFILER_ID, mon.events.PY_YIELD, exit_callback)
+        mon.register_callback(
+            mon.PROFILER_ID, mon.events.RAISE, exit_callback)
+        mon.register_callback(
+            mon.PROFILER_ID, mon.events.RERAISE, exit_callback)
 
     def _sys_monitoring_deregister() -> None:
         if not _is_main_thread():
@@ -212,6 +218,8 @@ if CAN_USE_SYS_MONITORING:
         mon.register_callback(mon.PROFILER_ID, mon.events.LINE, None)
         mon.register_callback(mon.PROFILER_ID, mon.events.PY_RETURN, None)
         mon.register_callback(mon.PROFILER_ID, mon.events.PY_YIELD, None)
+        mon.register_callback(mon.PROFILER_ID, mon.events.RAISE, None)
+        mon.register_callback(mon.PROFILER_ID, mon.events.RERAISE, None)
 
 
 def label(code):
