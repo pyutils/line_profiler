@@ -556,20 +556,20 @@ sys.monitoring.html#monitoring-event-RERAISE
         """
         Calls |legacy_trace_callback|_.  If :py:func:`sys.gettrace`
         returns this instance, replaces the default C-level trace
-        function :c:func:`trace_trampoline` (see the `C implementation`_
-        of :py:mod:`sys`) with |legacy_trace_callback|_ to reduce
-        overhead.
+        function |trace_trampoline|_ with |legacy_trace_callback|_ to
+        reduce overhead.
 
         Returns;
             manager (_LineProfilerManager):
                 This instance.
 
         .. |legacy_trace_callback| replace:: \
-:c:func:`legacy_trace_callback`
+:c:func:`!legacy_trace_callback`
+        .. |trace_trampoline| replace:: :c:func:`!trace_trampoline`
         .. _legacy_trace_callback: https://github.com/pyutils/\
 line_profiler/blob/main/line_profiler/_line_profiler.pyx
-        .. _C implementation: https://github.com/python/cpython/blob/\
-main/Python/sysmodule.c
+        .. _trace_trampoline: https://github.com/python/cpython/blob/\
+6cb20a219a860eaf687b2d968b41c480c7461909/Python/sysmodule.c#L1124
         """
         cdef int what = {'call': PyTrace_CALL,
                          'exception': PyTrace_EXCEPTION,
@@ -997,9 +997,9 @@ cdef class LineProfiler:
             :py:mod:`sys`).
 
     .. _C implementation: https://github.com/python/cpython/blob/\
-main/Python/sysmodule.c
+6cb20a219a860eaf687b2d968b41c480c7461909/Python/sysmodule.c#L1124
     .. _"legacy" trace system: https://github.com/python/cpython/blob/\
-main/Python/legacy_tracing.c
+3.13/Python/legacy_tracing.c
     """
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
     # Mapping between thread-id and map of LastTime
@@ -1359,10 +1359,6 @@ cdef inline inner_trace_callback(
         int is_line_event, object instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
-
-    References:
-       https://github.com/python/cpython/blob/de2a4036/Include/cpython/\
-pystate.h#L16
     """
     cdef object prof_
     cdef object bytecode = code.co_code
