@@ -797,43 +797,41 @@ cdef class LineProfiler:
         *functions (function)
             Function objects to be profiled.
         wrap_trace (bool | None)
-            What to do if there is an existing (non-profiling)
-            :py:mod:`sys` trace callback when the profiler is
-            :py:meth:`.enable`-ed:
+            What to do for existing :py:mod:`sys` trace callbacks when
+            an instance is :py:meth:`.enable`-ed:
 
             :py:data:`True`:
-                *Wrap around* said callback: at the end of running our
-                trace callback, also run the existing callback.
+                *Wrap around* said callbacks: when our profiling trace
+                callbacks run, they call the corresponding existing
+                callbacks (where applicable).
             :py:data:`False`:
-                *Replace* said callback as long as the profiler is
-                enabled.
+                *Suspend* said callbacks as long as
+                :py:class:`LineProfiler` instances are enabled.
             :py:data:`None` (default):
                 For the first instance created, resolves to
 
-                :py:data:`False`
-                    If the environment variable
-                    :envvar:`LINE_PROFILE_WRAP_TRACE` is undefined, or
-                    if it matches any of
-                    ``{'', '0', 'off', 'false', 'no'}``
-                    (case-insensitive).
-
                 :py:data:`True`
+                    If the environment variable
+                    :envvar:`LINE_PROFILER_WRAP_TRACE` is set to any of
+                    ``{'1', 'on', 'true', 'yes'}`` (case-insensitive).
+
+                :py:data:`False`
                     Otherwise.
 
                 If other instances already exist, the value is inherited
                 therefrom.
 
-            In any case, when the profiler is :py:meth:`.disable`-ed,
-            it tries to restore the :py:mod:`sys` trace callback (or the
-            lack thereof) to the state it was in from when the profiler
-            was :py:meth:`.enable`-ed.  See the Notes for
-            :ref:`caveats <notes-trace-caveats>` and
-            :ref:`extra explanation <notes-wrap_trace>`).
+            In any case, when all instances are :py:meth:`.disable`-ed,
+            the :py:mod:`sys` trace system is restored to the state from
+            when the first instance was :py:meth:`.enable`-ed.
+            See the :ref:`caveats <warning-trace-caveats>` and also the
+            :ref:`extra explanation <note-wrap_trace>`.
         set_frame_local_trace (bool | None)
-            In Python < 3.12, what to do when entering a function or
-            code block (i.e. an event of type :c:data:`PyTrace_CALL` or
-            ``'call'`` is encountered) when the profiler is
-            :py:meth:`.enable`-ed:
+            When using the
+            :ref:`"legacy" trace system <note-backends>`), what to do
+            when entering a function or code block (i.e. an event of
+            type :c:data:`PyTrace_CALL` or ``'call'`` is encountered)
+            when an instance is :py:meth:`.enable`-ed:
 
             :py:data:`True`:
                 Set the frame's :py:attr:`~frame.f_trace` to
@@ -843,21 +841,20 @@ cdef class LineProfiler:
             :py:data:`None` (default):
                 For the first instance created, resolves to
 
-                :py:data:`False`
+                :py:data:`True`
                     If the environment variable
-                    :envvar:`LINE_PROFILE_SET_FRAME_LOCAL_TRACE` is
-                    undefined, or if it matches any of
-                    ``{'', '0', 'off', 'false', 'no'}``
+                    :envvar:`LINE_PROFILER_SET_FRAME_LOCAL_TRACE` is set
+                    to any of ``{'1', 'on', 'true', 'yes'}``
                     (case-insensitive).
 
-                :py:data:`True`
+                :py:data:`False`
                     Otherwise.
 
                 If other instances already exist, the value is inherited
                 therefrom.
 
-            See the Notes for
-            :ref:`extra explanation <notes-set_frame_local_trace>`.
+            See the :ref:`caveats <warning-trace-caveats>` and also the
+            :ref:`extra explanation <note-set_frame_local_trace>`.
 
     Example:
         >>> import copy
@@ -877,102 +874,132 @@ cdef class LineProfiler:
         >>> # Print stats
         >>> self.print_stats()
 
-    Notes:
-        * .. _notes-trace-caveats:
+    .. _warning-trace-caveats:
 
-          Setting :py:attr:`.wrap_trace` and/or
+    Warning:
+        * Setting :py:attr:`.wrap_trace` and/or
           :py:attr:`.set_frame_local_trace` helps with using
           :py:class:`LineProfiler` cooperatively with other tools, like
-          coverage and debugging tools.  However, these should be
-          considered experimental and to be used at one's own risk --
-          because tools generally assume that they have sole control
-          over system-wide tracing (if using legacy tracing), or at
-          least over the :py:mod:`sys.monitoring` tool ID it acquired.
+          coverage and debugging tools, especially when using the
+          :ref:`"legacy" trace system <note-backends>`.  However, these
+          parameters should be considered **experimental** and to be
+          used at one's own risk -- because tools generally assume that
+          they have sole control over system-wide tracing (if using
+          "legacy" tracing), or at least over the
+          :py:mod:`sys.monitoring` tool ID it acquired.
         * When setting :py:attr:`.wrap_trace` and
           :py:attr:`.set_frame_local_trace`, they are set process-wide
           for all instances.
-        * .. _notes-wrap_trace:
 
-          More on :py:attr:`.wrap_trace`:
+    .. _note-backends:
 
-          * In general, Python allows for trace callbacks to unset
-            themselves, either intentionally (via
-            ``sys.settrace(None)`` or
-            ``sys.monitoring.register_callback(..., None)``) or if it
-            errors out.  If the
-            wrapped/cached trace callback does so, profiling would
-            continue, but:
+    Note:
+        There are two "cores"/"backends" for :py:class:`LineProfiler`
+        between which users can choose:
 
-            * The cached callback is cleared and is no longer called,
-              and
-            * The :py:mod:`sys` trace callback is set to
-              :py:data:`None` when the profiler is
-              :py:meth:`.disable`-ed.
-          * If a wrapped/cached frame-local legacy trace callable
-            (:py:attr:`~frame.f_trace`) sets
-            :py:attr:`~frame.f_trace_lines` to false in a frame to
-            disable local line events, :py:attr:`~.frame.f_trace_lines`
-            is restored (so that profiling can continue), but said
-            callable will no longer receive said events.
-          * Likewise, wrapped/cached :py:mod:`sys.monitoring` callbacks
-            can also disable events:
+        ``'new'``, ``'sys.monitoring'``, or ``'sysmon'``
+            Use :py:mod:`sys.monitoring` events and callbacks.  Only
+            available on (and is the default for) Python 3.12 and newer.
+        ``'old'``, ``'legacy'``, or ``'ctrace'``
+            Use the `"legacy" trace system`_ (:py:func:`sys.gettrace`,
+            :py:func:`sys.settrace`, and :c:func:`PyEval_SetTrace`).
+            Default for Python < 3.12.
 
-            * At *specific code locations* by returning
-              :py:data:`sys.monitoring.DISABLE`;
-            * By calling :py:func:`sys.monitoring.set_events` and
-              changing the *global event set*; or
-            * By calling :py:func:`sys.monitoring.register_callback` and
-              *replacing itself* with alternative callbacks (or
-              :py:data:`None`).
+        Where both cores are available, the user can choose between the
+        two by supplying a suitable value to the environment variable
+        :envvar:`LINE_PROFILER_CORE`.
 
-            When that happens, said disabling acts are again suitably
-            intercepted so that line profiling continues, but:
+    .. _note-wrap_trace:
 
-            * Said callbacks will no longer receive the corresponding
-              events, and
-            * The :py:mod:`sys.monitoring` callbacks and event set are
-              updated correspondingly when the profiler is
-              :py:meth:`.disable`-ed.
+    Note:
+        More on :py:attr:`.wrap_trace`:
 
-            Note that:
+        * In general, Python allows for trace callbacks to unset
+          themselves, either intentionally (via
+          ``sys.settrace(None)`` or
+          ``sys.monitoring.register_callback(..., None)``) or if they
+          error out.  If the wrapped/cached trace callbacks do so,
+          profiling would continue, but:
 
-            * Events disabled for specific code locations are restored
-              to the wrapped/cached callbacks when
-              :py:func:`sys.monitoring.restart_events` is called, as
-              with when line profiling is not used.
-            * Callbacks which only listen to and alter code-object-local
-              events (via :py:func:`sys.monitoring.set_local_events`) do
-              not interfere with line profiling, and such changes are
-              therefore not intercepted.
+          * The cached callbacks are cleared and are no longer called,
+            and
+          * The trace callbacks are unset when all profiler instances
+            are :py:meth:`.disable`-ed.
+        * If a wrapped/cached frame-local
+          :ref:`"legacy" trace callable <note-backends>`
+          (:py:attr:`~frame.f_trace`) sets
+          :py:attr:`~frame.f_trace_lines` to false in a frame to
+          disable local line events, :py:attr:`~.frame.f_trace_lines`
+          is restored (so that profiling can continue), but said
+          callable will no longer receive said events.
+        * Likewise, wrapped/cached :py:mod:`sys.monitoring` callbacks
+          can also disable events:
 
-        * .. _notes-set_frame_local_trace:
+          * At *specific code locations* by returning
+            :py:data:`sys.monitoring.DISABLE`;
+          * By calling :py:func:`sys.monitoring.set_events` and
+            changing the *global event set*; or
+          * By calling :py:func:`sys.monitoring.register_callback` and
+            *replacing itself* with alternative callbacks (or
+            :py:data:`None`).
 
-          More on :py:attr:`.set_frame_local_trace`:
+          When that happens, said disabling acts are again suitably
+          intercepted so that line profiling continues, but:
 
-          * Since frame-local trace functions is no longer a useful
-            concept in the new :py:mod:`sys.monitoring`-based system
-            (Python 3.12+), the parameter/attribute always resolves to
-            :py:data:`False`.
-          * In the "legacy" trace system (Python < 3.12, using
-            :py:func:`sys.gettrace`, :py:func:`sys.settrace`, etc.),
-            when a :py:class:`LineProfiler` is :py:meth:`.enable`-ed,
-            :py:func:`sys.gettrace` returns an object which manages
-            profiling on the thread between all active profiler
-            instances.  Said object has the same call signature as
-            callables that :py:func:`sys.settrace` takes, so that pure
-            Python code which temporarily overrides the trace callable
-            (e.g. :py:meth:`doctest.DocTestRunner.run`) can function
-            with profiling.  After the object is restored with
-            :py:func:`sys.settrace` by said code:
+          * Said callbacks will no longer receive the corresponding
+            events, and
+          * The :py:mod:`sys.monitoring` callbacks and event set are
+            updated correspondingly when all profiler instances are
+            :py:meth:`.disable`-ed.
 
-            * If :py:attr:`set_frame_local_trace` is true, line
-              profiling resumes *immediately*, because the object has
-              already been set to the frame's :py:attr:`~frame.f_trace`.
-            * However, if :py:attr:`set_frame_local_trace` is false,
-              line profiling only resumes *upon entering another code
-              block* (e.g. by calling a callable), because trace
-              callables set via :py:func:`sys.settrace` is only called
-              for ``'call'`` events.
+          Note that:
+
+          * As with when line profiling is not used, if 
+            :py:func:`sys.monitoring.restart_events` is called, the list
+            of code locations where events are suppressed is cleared,
+            and the wrapped/cached callbacks will once again receive
+            events from the
+            previously-:py:data:`~sys.monitoring.DISABLE`-d locations.
+          * Callbacks which only listen to and alter code-object-local
+            events (via :py:func:`sys.monitoring.set_local_events`) do
+            not interfere with line profiling, and such changes are
+            therefore not intercepted.
+
+    .. _note-set_frame_local_trace:
+
+    Note:
+        More on :py:attr:`.set_frame_local_trace`:
+
+        * Since frame-local trace functions is no longer a useful
+          concept in the new :py:mod:`sys.monitoring`-based system
+          (see also the :ref:`Note on "cores" <note-backends>`), the
+          parameter/attribute always resolves to :py:data:`False` when
+          using the new :py:class:`LineProfiler` core.
+        * With the :ref:`"legacy" trace system <note-backends>`, when
+          :py:class:`LineProfiler` instances are :py:meth:`.enable`-ed,
+          :py:func:`sys.gettrace` returns an object which manages
+          profiling on the thread between all active profiler instances.
+          Said object has the same call signature as callables that
+          :py:func:`sys.settrace` takes, so that pure-Python code which
+          temporarily overrides the trace callable (e.g.
+          :py:meth:`doctest.DocTestRunner.run`) can function with
+          profiling.  After the object is restored with
+          :py:func:`sys.settrace` by said code:
+
+          * If :py:attr:`set_frame_local_trace` is true, line
+            profiling resumes *immediately*, because the object has
+            already been set to the frame's :py:attr:`~frame.f_trace`.
+          * However, if :py:attr:`set_frame_local_trace` is false,
+            line profiling only resumes *upon entering another code
+            block* (e.g. by calling a callable), because trace
+            callables set via :py:func:`sys.settrace` is only called
+            for ``'call'`` events (see the `C implementation`_ of
+            :py:mod:`sys`).
+
+    .. _C implementation: https://github.com/python/cpython/blob/\
+main/Python/sysmodule.c
+    .. _"legacy" trace system: https://github.com/python/cpython/blob/\
+main/Python/legacy_tracing.c
     """
     cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
     # Mapping between thread-id and map of LastTime
