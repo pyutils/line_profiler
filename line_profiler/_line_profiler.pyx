@@ -1320,6 +1320,15 @@ datamodel.html#user-defined-functions
         self._c_last_time[threading.get_ident()].clear()
         self._manager._handle_disable_event(self)
 
+    def reset_stats(self):
+        """
+        Reset the currently accumulated timings information.
+        """
+        it = self._c_code_map.begin()
+        while it != self._c_code_map.end():
+            cython.operator.dereference(it).second.clear()
+            cython.operator.preincrement(it)
+
     def get_stats(self):
         """
         Returns:
