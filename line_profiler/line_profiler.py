@@ -12,6 +12,7 @@ import pickle
 import sys
 import tempfile
 import types
+import tokenize
 from argparse import ArgumentParser
 from datetime import datetime
 
@@ -45,6 +46,119 @@ def load_ipython_extension(ip):
     """
     from .ipython_extension import LineProfilerMagics
     ip.register_magics(LineProfilerMagics)
+
+
+def get_code_block(filename, lineno):
+    """
+    Get the lines in the code block in a file starting from required
+    line number; understands Cython code.
+
+    Args:
+        filename (Union[os.PathLike, str])
+            Path to the source file.
+        lineno (int)
+            1-indexed line number of the first line in the block.
+
+    Returns:
+        lines (list[str])
+            Newline-terminated string lines.
+
+    Note:
+        This function makes use of :py:func:`inspect.getblock`, which is
+        public but undocumented API.  That said, it has been in use in
+        this repo since 2008 (`fb60664`_), so we will continue using it
+        until we can't.
+
+        .. _fb60664: https://github.com/pyutils/line_profiler/commit/\
+fb60664135296ba6061cfaa2bb66d4ba77964c53
+
+
+    Example:
+        >>> from os.path import join
+        >>> from tempfile import TemporaryDirectory
+        >>> from textwrap import dedent
+        >>>
+        >>>
+        >>> def get_last_line(*args, **kwargs):
+        ...     lines = get_code_block(*args, **kwargs)
+        ...     return lines[-1].rstrip('\\n')
+        ...
+        >>>
+        >>> with TemporaryDirectory() as tmpdir:
+        ...     fname = join(tmpdir, 'cython_source.pyx')
+        ...     with open(fname, mode='w') as fobj:
+        ...         print(dedent('''
+        ...     class NormalClass:                   # 1
+        ...         def __init__(self):              # 2
+        ...             pass                         # 3
+        ...
+        ...         def normal_method(self, *args):  # 5
+        ...             pass                         # 6
+        ...
+        ...     cdef class CythonClass:              # 8
+        ...         cpdef cython_method(self):       # 9
+        ...             pass                         # 10
+        ...
+        ...         property legacy_cython_prop:     # 12
+        ...             def __get__(self):           # 13
+        ...                 return None              # 14
+        ...             def __set__(self, value):    # 15
+        ...                 pass                     # 16
+        ...
+        ...     def normal_func(x, y, z):            # 18
+        ...         with some_ctx():                 # 19
+        ...             ...                          # 20
+        ...
+        ...     cdef cython_function(                # 22
+        ...             int x, int y, int z):        # 23
+        ...         ...                              # 24
+        ...                      ''').strip('\\n'),
+        ...               file=fobj)
+        ...     # Vanilla Python code blocks:
+        ...     # - `NormalClass`
+        ...     assert get_last_line(fname, 1).endswith('# 6')
+        ...     # - `NormalClass.__init__()`
+        ...     assert get_last_line(fname, 2).endswith('# 3')
+        ...     # - `normal_func()`
+        ...     assert get_last_line(fname, 18).endswith('# 20')
+        ...     # Cython code blocks:
+        ...     # - `CythonClass`
+        ...     assert get_last_line(fname, 8).endswith('# 16')
+        ...     # - `CythonClass.cython_method()`
+        ...     assert get_last_line(fname, 9).endswith('# 10')
+        ...     # - `CythonClass.legacy_cython_prop`
+        ...     assert get_last_line(fname, 12).endswith('# 16')
+        ...     # - `cython_function()`
+        ...     assert get_last_line(fname, 22).endswith('# 24')
+    """
+    BlockFinder = inspect.BlockFinder
+    namespace = inspect.getblock.__globals__
+    namespace['BlockFinder'] = _CythonBlockFinder
+    try:
+        return inspect.getblock(linecache.getlines(filename)[lineno - 1:])
+    finally:
+        namespace['BlockFinder'] = BlockFinder
+
+
+class _CythonBlockFinder(inspect.BlockFinder):
+    """
+    Compatibility layer turning Cython-specific code blocks (``cdef``,
+    ``cpdef``, and legacy ``property`` declaration) into something that
+    is understood by :py:class:`inspect.BlockFinder`.
+
+    Note:
+        This function makes use of :py:func:`inspect.BlockFinder`, which
+        is public but undocumented API.  See similar caveat in
+        :py:func:`~.get_code_block`.
+    """
+    def tokeneater(self, type, token, *args, **kwargs):
+        if (
+                not self.started
+                and type == tokenize.NAME
+                and token in ('cdef', 'cpdef', 'property')):
+            # Fudge the token to get the desired 'scoping' behavior
+            token = 'def'
+        return super().tokeneater(type, token, *args, **kwargs)
 
 
 class _WrapperInfo:
@@ -484,8 +598,7 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         if os.path.exists(filename):
             # Clear the cache to ensure that we get up-to-date results.
             linecache.clearcache()
-        all_lines = linecache.getlines(filename)
-        sublines = inspect.getblock(all_lines[start_lineno - 1:])
+        sublines = get_code_block(filename, start_lineno)
     else:
         stream.write('\n')
         stream.write(f'Could not find file {filename}\n')

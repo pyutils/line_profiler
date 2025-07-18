@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools", "Cython"]
+
+[project]
+name = 'cython_example'
+description = 'Sample Cython module to be profiled'
+version = '0.0.0'
