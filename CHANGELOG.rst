@@ -16,6 +16,7 @@ Changes
 * ENH: Highlight final summary using rich if enabled
 * ENH: Made it possible to use multiple profiler instances simultaneously
 * ENH: various improvements related to auto-profiling:
+
   * ``kernprof -p`` target entities are now imported and profiled regardless of
     whether they are directly imported in the run script/module/code (old
     behavior restored by passing ``--no-preimports``)
@@ -25,7 +26,23 @@ Changes
     like class methods and properties
   * ``LineProfiler`` can now be used as a class decorator
 * FIX: Fixed line tracing for Cython code; superseded use of the legacy tracing system with ``sys.monitoring``
-* ENH: Fixed edge case where :py:meth:`LineProfiler.get_stats()` neglects data from duplicate code objects (#348)
+* FIX: Fixed edge cases where:
+
+  * ``LineProfiler.get_stats()`` neglected data from duplicate code objects
+    (#348)
+  * ``LineProfiler`` instances may stop receiving tracing events when multiple
+    instances were used (#350)
+  * Line events were not reported for ``raise`` statements and ``finally:``
+    bodies when using ``sys.monitoring`` (#355)
+* FIX: Tracing-system-related fixes (#333):
+
+  * ``LineProfiler`` now caches the existing ``sys`` or ``sys.monitoring`` trace
+    callbacks in ``.enable()`` and restores them in ``.disable()``, instead of
+    always discarding them on the way out
+  * Also added experimental support for calling (instead of suspending) said
+    callbacks during profiling
+  * Now allowing switching back to the "legacy" trace system on Python 3.12+,
+    controlled by an environment variable
 
 4.2.0
 ~~~~~
