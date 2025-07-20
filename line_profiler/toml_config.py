@@ -264,17 +264,17 @@ def get_config(config=None, *, read_env=True):
 def get_default_config():
     """
     Return:
-        conf_dict, path (tuple[dict, Path])
+        tuple[dict, Path]: conf_dict, path
             - `conf_dict`: the default config file's
               `tool.line_profiler` table as a dictionary
             - `path`: absolute path to the default config file
     """
+    global _defaults
     if _defaults is None:
         package = __spec__.name.rpartition('.')[0]
         with importlib.resources.path(package + '.rc',
                                       'line_profiler.toml') as path:
             conf_dict, source = find_and_read_config_file(config=path)
-        globals()['_defaults'] = (get_subtable(conf_dict, namespace,
-                                               allow_absence=False),
-                                  source)
+        conf_dict = get_subtable(conf_dict, namespace, allow_absence=False)
+        _defaults = (conf_dict, source)
     return copy.deepcopy(_defaults[0]), _defaults[1]
