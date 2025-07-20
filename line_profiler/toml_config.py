@@ -228,7 +228,7 @@ def get_config(config=None, *, read_env=True):
                 Error = ValueError
             else:
                 Error = FileNotFoundError
-            raise Error(r'Cannot load configurations from {config!r}') from None
+            raise Error(f'Cannot load configurations from {config!r}') from None
         return default_conf, default_source
     conf = {}
     try:
