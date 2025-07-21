@@ -4,8 +4,16 @@ Using the line-profiler TOML configuration
 This tutorial walks the user through setting up a toy Python project and then
 interacting with it via the new line-profiler TOML configuration.
 
-First, we need to setup a small project, for which we will use ``uv``.
+First, we need to setup a small project, for which we will use ``uv``. We will
+also use the ``tomlkit`` package to edit the config file programatically. If
+you don't have these installed, fist run:
 
+.. code:: bash
+
+   pip install uv tomlkit
+
+
+Next, we are going to setup a small package for this demonstration.
 
 .. code:: bash
 
@@ -15,57 +23,57 @@ First, we need to setup a small project, for which we will use ``uv``.
 
    uv init --lib --name demo_pkg
 
-    # helper to prevent indentation errors
-    codeblock(){
-        echo "$1" | python -c "import sys; from textwrap import dedent; print(dedent(sys.stdin.read()).strip('\n'))"
-    }
+   # helper to prevent indentation errors
+   codeblock(){
+       echo "$1" | python -c "import sys; from textwrap import dedent; print(dedent(sys.stdin.read()).strip('\n'))"
+   }
 
-    codeblock "
-    import time
-    from demo_pkg.utils import leq
-    from demo_pkg import utils
+   codeblock "
+   import time
+   from demo_pkg.utils import leq
+   from demo_pkg import utils
 
-    def fib(n):
-        if leq(n, 1):
-            return n
-        part1 = fib(n - 1)
-        part2 = fib(n - 2)
-        result = utils.add(part1, part2)
-        return result
+   def fib(n):
+       if leq(n, 1):
+           return n
+       part1 = fib(n - 1)
+       part2 = fib(n - 2)
+       result = utils.add(part1, part2)
+       return result
 
-    def sleep_loop(n):
-        for _ in range(n):
-            time.sleep(0.01)
-    " > src/demo_pkg/core.py
+   def sleep_loop(n):
+       for _ in range(n):
+           time.sleep(0.01)
+   " > src/demo_pkg/core.py
 
-    codeblock "
-    def leq(a, b):
-        return a <= b
+   codeblock "
+   def leq(a, b):
+       return a <= b
 
-    def add(a, b):
-        return a + b
-    " > src/demo_pkg/utils.py
+   def add(a, b):
+       return a + b
+   " > src/demo_pkg/utils.py
 
-    codeblock "
-    from demo_pkg import core
-    import uuid
+   codeblock "
+   from demo_pkg import core
+   import uuid
 
-    def main():
-        run_uuid = uuid.uuid4()
-        print('The UUID of this run is', run_uuid)
-        print('compute fib 10')
-        result = core.fib(10)
-        print('result', result)
-        print('sleeping 5')
-        core.sleep_loop(5)
-        print('done')
+   def main():
+       run_uuid = uuid.uuid4()
+       print('The UUID of this run is', run_uuid)
+       print('compute fib 10')
+       result = core.fib(10)
+       print('result', result)
+       print('sleeping 5')
+       core.sleep_loop(5)
+       print('done')
 
-    if __name__ == '__main__':
-        main()
-    " > src/demo_pkg/__main__.py
+   if __name__ == '__main__':
+       main()
+   " > src/demo_pkg/__main__.py
 
-    # Run `uv pip install -e .` to install the project locally:
-    uv pip install -e .
+   # Run `uv pip install -e .` to install the project locally:
+   uv pip install -e .
 
 
 Test that the main entrypoint works.
