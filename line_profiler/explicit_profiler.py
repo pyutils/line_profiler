@@ -1,21 +1,22 @@
 """
 New in ``line_profiler`` version 4.1.0, this module defines a top-level
 ``profile`` decorator which will be disabled by default **unless** a script is
-being run with :mod:`kernprof`, if the environment variable ``LINE_PROFILE`` is
-set, or if ``--line-profile`` is given on the command line.
+being run with :mod:`kernprof`, if the environment variable
+:envvar:`LINE_PROFILE` is set, or if ``--line-profile`` is given on the command
+line.
 
 In the latter two cases, the :mod:`atexit` module is used to display and dump
 line profiling results to disk when Python exits.
 
 If none of the enabling conditions are met, then
-:py:obj:`line_profiler.profile` is a noop. This means you no longer have to add
+:py:obj:`line_profiler.profile` is a no-op. This means you no longer have to add
 and remove the implicit ``profile`` decorators required by previous version of
 this library.
 
 Basic usage is to import line_profiler and decorate your function with
 line_profiler.profile.  By default this does nothing, it's a no-op decorator.
 However, if you run with the environment variable ``LINE_PROFILER=1`` or if
-``'--profile' in sys.argv'``, then it enables profiling and at the end of your
+``'--profile' in sys.argv``, then it enables profiling and at the end of your
 script it will output the profile text.
 
 Here is a minimal example that will write a script to disk and then run it

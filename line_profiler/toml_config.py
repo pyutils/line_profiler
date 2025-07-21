@@ -41,8 +41,9 @@ class ConfigSource:
             Absolute path to the config file whence the config options
             are loaded.
         subtable (list[str])
-            Sequence of table headers under which in :py:data:`~.path`
-            :py:data:`~.conf_dict` can be found.
+            Sequence of table headers under which in
+            :py:attr:`~.ConfigSource.path`
+            :py:attr:`~.ConfigSource.conf_dict` can be found.
     """
     conf_dict: Dict[str, Any]
     path: pathlib.Path
@@ -63,11 +64,13 @@ class ConfigSource:
                 Table headers.
             allow_absence (bool):
                 If true, allow for the keys to be absent (and return an
-                instance with an empty :py:data:`~.conf_dict`);
+                instance with an empty
+                :py:attr:`~.ConfigSource.conf_dict`);
                 otherwise, raise a :py:class:`KeyError`.
             copy (bool):
                 If true, create a (deep) copy of the subtable in
-                ``self`` for the new instance's :py:data:`~.conf_dict`;
+                ``self`` for the new instance's
+                :py:attr:`~.ConfigSource.conf_dict`;
                 otherwise, just refer to the existing subtable.
 
         Returns:

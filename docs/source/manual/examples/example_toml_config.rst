@@ -6,7 +6,7 @@ interacting with it via the new line-profiler TOML configuration.
 
 First, we need to setup a small project, for which we will use ``uv``. We will
 also use the ``tomlkit`` package to edit the config file programatically. If
-you don't have these installed, fist run:
+you don't have these installed, first run:
 
 .. code:: bash
 

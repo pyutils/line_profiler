@@ -40,7 +40,7 @@ def get_column_widths(config=False):
     """
     Arguments
         config (bool | str | pathlib.PurePath | None)
-            Passed to :py:meth:`~.ConfigSource.from_config`.
+            Passed to :py:meth:`.ConfigSource.from_config`.
     Note:
         * Results are cached.
         * The default value (:py:data:`False`) loads the config from the

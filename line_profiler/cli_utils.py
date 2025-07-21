@@ -20,20 +20,21 @@ _BOOLEAN_VALUES = {**{k.casefold(): False
 def add_argument(parser_like, arg, /, *args,
                  hide_complementary_options=True, **kwargs):
     """
-    Override the 'store_true' and 'store_false' actions so that they
-    are turned into options which:
-    - Don't set the default to the opposite boolean, thus allowing us to
+    Override the ``'store_true'`` and ``'store_false'`` actions so that
+    they are turned into options which:
+
+    * Don't set the default to the opposite boolean, thus allowing us to
       later distinguish between cases where the flag has been passed or
       not, and
-    - Set the destination value to the corresponding value in the no-arg
+    * Set the destination value to the corresponding value in the no-arg
       form, but also allow (for long options) for a single arg which is
       parsed by :py:func:`.boolean()`.
     Also automatically generates complementary boolean options for
     ``action='store_true'`` options.
     If ``hide_complementary_options`` is
     true, the auto-generated option (all the long flags prefixed
-    with 'no-', e.g. '--foo' is negated by '--no-foo') is hidden
-    from the help text.
+    with ``'no-'``, e.g. ``'--foo'`` is negated by ``'--no-foo'``) is
+    hidden from the help text.
 
     Arguments:
         parser_like (Any):
@@ -52,9 +53,9 @@ def add_argument(parser_like, arg, /, *args,
             Return value of ``parser_like.add_argument()``
 
     Note:
-        * Short and long flags for 'store_true' and 'store_false'
-          actions are implemented in separate actions so as to allow for
-          short-flag concatenation.
+        * Short and long flags for ``'store_true'`` and
+          ``'store_false'`` actions are implemented in separate actions
+          so as to allow for short-flag concatenation.
         * If an option has both short and long flags, the short-flag
           action is hidden from the help text, but the long-flag
           action's help text is updated to mention the corresponding
@@ -165,7 +166,7 @@ def get_cli_config(subtable, /, *args, **kwargs):
     Arguments:
         subtable (str):
             Name of the subtable the CLI app should refer to (e.g.
-            'kernprof')
+            ``'kernprof'``)
         *args, **kwargs
             Passed to \
 :py:meth:`line_profiler.toml_config.ConfigSource.from_config`
@@ -201,7 +202,7 @@ def positive_float(value):
         value (str)
 
     Returns:
-        x (float > 0)
+        float: positive_num
     """
     val = float(value)
     if val <= 0:
