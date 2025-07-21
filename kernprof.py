@@ -1248,14 +1248,15 @@ def _post_profile(options, prof):
          'Wrote profile results ')
         + f'to {short_outfile!r}')
     if options.verbose > 0 and not options.dryrun:
-        if isinstance(prof, ContextualProfile):
-            prof.print_stats()
-        else:
-            prof.print_stats(output_unit=options.unit,
-                             stripzeros=options.skip_zero,
-                             rich=options.rich,
-                             stream=options.original_stdout,
-                             config=options.config)
+        kwargs = {}
+        if not isinstance(prof, ContextualProfile):
+            kwargs.update(output_unit=options.unit,
+                          stripzeros=options.skip_zero,
+                          summarize=options.summarize,
+                          rich=options.rich,
+                          stream=options.original_stdout,
+                          config=options.config)
+        _call_with_diagnostics(options, prof.print_stats, **kwargs)
     else:
         py_exe = _python_command()
         if isinstance(prof, ContextualProfile):
