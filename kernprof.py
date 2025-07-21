@@ -83,6 +83,7 @@ which displays:
                     [--rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-u UNIT]
                     [--skip-zero [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
+                    [--summarize [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-i [OUTPUT_INTERVAL]]
                     {path/to/script | -m path.to.module | -c "literal code"} ...
 
@@ -158,6 +159,8 @@ which displays:
       --skip-zero [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             Hide functions which have not been called. (Default: False;
                             short form: -z)
+      --summarize [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
+                            Print a summary of total function time. (Default: False)
       -i, --output-interval [OUTPUT_INTERVAL]
                             Enables outputting of cumulative profiling results to OUTFILE
                             every OUTPUT_INTERVAL seconds. Uses the threading module.
@@ -652,6 +655,9 @@ def _add_core_parser_arguments(parser):
     add_argument(out_opts, '-z', '--skip-zero', action='store_true',
                  help="Hide functions which have not been called. "
                  f"(Default: {default.conf_dict['skip_zero']})")
+    add_argument(out_opts, '--summarize', action='store_true',
+                 help='Print a summary of total function time. '
+                 f'(Default: {default.conf_dict["summarize"]})')
     if default.conf_dict['output_interval']:
         def_out_int = f'{default.conf_dict["output_interval"]} s'
     else:

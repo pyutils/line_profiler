@@ -85,6 +85,9 @@ rich = false
 #   - `skip-zero` (bool):
 #     `-z`/`--skip-zero` (true) or `--no-skip-zero` (false)
 skip-zero = false
+#   - `summarize` (bool):
+#     `--summarize` (true) or `--no-summarize` (false)
+summarize = false
 #   - `preimports` (bool):
 #     `--preimports` (true) or `--no-preimports` (false)
 preimports = true

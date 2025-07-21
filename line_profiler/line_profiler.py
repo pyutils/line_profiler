@@ -841,10 +841,10 @@ def main():
                  f'(Default: {default.conf_dict["skip_zero"]})')
     add_argument(parser, '-t', '--sort', action='store_true',
                  help='Sort by ascending total time. '
-                 f'(Default: {default.conf_dict["rich"]})')
+                 f'(Default: {default.conf_dict["sort"]})')
     add_argument(parser, '-m', '--summarize', action='store_true',
                  help='Print a summary of total function time. '
-                 f'(Default: {default.conf_dict["skip_zero"]})')
+                 f'(Default: {default.conf_dict["summarize"]})')
     add_argument(parser, 'profile_output',
                  help="'*.lprof' file created by `kernprof`")
 
