@@ -558,14 +558,14 @@ def _add_core_parser_arguments(parser):
     Add the core kernprof args to a
     :py:class:`~argparse.ArgumentParser`.
     """
-    defaults, default_source = get_cli_config('kernprof')
+    default = get_cli_config('kernprof')
     add_argument(parser, '-V', '--version',
                  action='version', version=__version__)
     add_argument(parser, '--config',
                  help='Path to the TOML file, from the '
                  '`tool.line_profiler.kernprof` table of which to load '
                  'defaults for the options. '
-                 f'(Default: {short_string_path(default_source)!r})')
+                 f'(Default: {short_string_path(default.path)!r})')
     add_argument(parser, '--no-config',
                  action='store_const', dest='config', const=False,
                  help='Disable the loading of configuration files other '
@@ -574,24 +574,24 @@ def _add_core_parser_arguments(parser):
     add_argument(prof_opts, '-l', '--line-by-line', action='store_true',
                  help='Use the line-by-line profiler instead of cProfile. '
                  'Implies `--builtin`. '
-                 f'(Default: {defaults["line_by_line"]})')
+                 f'(Default: {default.conf_dict["line_by_line"]})')
     add_argument(prof_opts, '-b', '--builtin', action='store_true',
                  help="Put `profile` in the builtins. "
                  "Use `profile.enable()`/`.disable()` to "
                  "toggle profiling, "
                  "`@profile` to decorate functions, "
                  "or `with profile:` to profile a section of code. "
-                 f"(Default: {defaults['builtin']})")
-    if defaults['setup']:
-        def_setupfile = repr(defaults['setup'])
+                 f"(Default: {default.conf_dict['builtin']})")
+    if default.conf_dict['setup']:
+        def_setupfile = repr(default.conf_dict['setup'])
     else:
         def_setupfile = 'N/A'
     add_argument(prof_opts, '-s', '--setup',
                  help='Path to the Python source file containing setup '
                  'code to execute before the code to profile. '
                  f'(Default: {def_setupfile})')
-    if defaults['prof_mod']:
-        def_prof_mod = repr(defaults['prof_mod'])
+    if default.conf_dict['prof_mod']:
+        def_prof_mod = repr(default.conf_dict['prof_mod'])
     else:
         def_prof_mod = 'N/A'
     add_argument(prof_opts, '-p', '--prof-mod', action='append',
@@ -611,15 +611,15 @@ def _add_core_parser_arguments(parser):
                  "`-p` and profile them, instead of only profiling those "
                  "that are directly imported in the profiled code. "
                  "Only works with line profiling (`-l`/`--line-by-line`). "
-                 f"(Default: {defaults['preimports']})")
+                 f"(Default: {default.conf_dict['preimports']})")
     add_argument(prof_opts, '--prof-imports', action='store_true',
                  help="If the script/module profiled is in `--prof-mod`, "
                  "autoprofile all its imports. "
                  "Only works with line profiling (`-l`/`--line-by-line`). "
-                 f"(Default: {defaults['prof_imports']})")
+                 f"(Default: {default.conf_dict['prof_imports']})")
     out_opts = parser.add_argument_group('output options')
-    if defaults['outfile']:
-        def_outfile = repr(defaults['outfile'])
+    if default.conf_dict['outfile']:
+        def_outfile = repr(default.conf_dict['outfile'])
     else:
         def_outfile = (
             "'<script_or_module_name>.lprof' in line-profiling mode "
@@ -628,32 +628,32 @@ def _add_core_parser_arguments(parser):
     add_argument(out_opts, '-o', '--outfile',
                  help=f'Save stats to OUTFILE. (Default: {def_outfile})')
     add_argument(out_opts, '-v', '--verbose', '--view',
-                 action='count', default=defaults['verbose'],
+                 action='count', default=default.conf_dict['verbose'],
                  help="Increase verbosity level "
-                 f"(default: {defaults['verbose']}). "
+                 f"(default: {default.conf_dict['verbose']}). "
                  "At level 1, view the profiling results in addition to "
                  "saving them; "
                  "at level 2, show other diagnostic info.")
     add_argument(out_opts, '-q', '--quiet',
                  action='count', default=0,
                  help='Decrease verbosity level '
-                 f"(default: {defaults['verbose']}). "
+                 f"(default: {default.conf_dict['verbose']}). "
                  'At level -1, disable '
                  'helpful messages (e.g. "Wrote profile results to <...>"); '
                  'at level -2, silence the stdout; '
                  'at level -3, silence the stderr.')
     add_argument(out_opts, '-r', '--rich', action='store_true',
                  help='Use rich formatting if viewing output. '
-                 f'(Default: {defaults["rich"]})')
+                 f'(Default: {default.conf_dict["rich"]})')
     add_argument(out_opts, '-u', '--unit', type=positive_float,
                  help='Output unit (in seconds) in which '
                  'the timing info is displayed. '
-                 f'(Default: {defaults["unit"]} s)')
+                 f'(Default: {default.conf_dict["unit"]} s)')
     add_argument(out_opts, '-z', '--skip-zero', action='store_true',
                  help="Hide functions which have not been called. "
-                 f"(Default: {defaults['skip_zero']})")
-    if defaults['output_interval']:
-        def_out_int = f'{defaults["output_interval"]} s'
+                 f"(Default: {default.conf_dict['skip_zero']})")
+    if default.conf_dict['output_interval']:
+        def_out_int = f'{default.conf_dict["output_interval"]} s'
     else:
         def_out_int = '0 s (disabled)'
     add_argument(out_opts, '-i', '--output-interval',
@@ -760,8 +760,9 @@ def _parse_arguments(
         del options.help
     except AttributeError:
         pass
-    defaults, options.config = get_cli_config('kernprof', options.config)
-    for key, default in defaults.items():
+    default = get_cli_config('kernprof', options.config)
+    options.config = default.path
+    for key, default in default.conf_dict.items():
         if getattr(options, key, None) is None:
             setattr(options, key, default)
 

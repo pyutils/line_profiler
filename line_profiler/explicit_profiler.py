@@ -168,7 +168,7 @@ import sys
 # This is for compatibility
 from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
-from .toml_config import get_config
+from .toml_config import ConfigSource
 
 
 class GlobalProfiler:
@@ -181,15 +181,15 @@ class GlobalProfiler:
         config (Union[str, PurePath, bool, None]):
             Optional TOML config file from which to load the
             configurations (see Attributes);
-            if not explicitly given (= ``True`` or ``None``), it is
-            either resolved from the ``LINE_PROFILER_RC`` environment
-            variable or looked up among the current directory or its
-            ancestors.  Should all that fail, the default config file at
-            ``importlib.resources.path('line_profiler.rc',
-            'line_profiler.toml')``
-            is used;
-            passing ``False`` disables all lookup and falls back to the
-            default configuration
+            if not explicitly given (= :py:data:`True` or
+            :py:data:`None`), it is either resolved from the
+            :envvar:`!LINE_PROFILER_RC` environment variable or looked
+            up among the current directory or its ancestors.  Should all
+            that fail, the default config file at
+            ``importlib.resources.path('line_profiler.rc', \
+'line_profiler.toml')`` is used;
+            passing :py:data:`False` disables all lookup and falls back
+            to the default configuration
 
     Attributes:
         setup_config (Dict[str, List[str]]):
@@ -259,20 +259,21 @@ class GlobalProfiler:
 
     def __init__(self, config=None):
         # Remember which config file we loaded settings from
-        conf_dict, self._config = get_config(config=config)
+        config_source = ConfigSource.from_config(config)
+        self._config = config_source.path
 
         self._profile = None
         self.enabled = None
 
         # Configs:
         # - How to toggle the profiler
-        self.setup_config = conf_dict['setup']
+        self.setup_config = config_source.conf_dict['setup']
         # - Which outputs to write on exit
-        self.write_config = conf_dict['write']
+        self.write_config = config_source.conf_dict['write']
         # - Whither to write output files
         self.output_prefix = self.write_config.pop('output_prefix')
         # - How output will be displayed
-        self.show_config = conf_dict['show']
+        self.show_config = config_source.conf_dict['show']
         # (This is not stored here nor is accepted by any method, but is
         # re-parsed by `LineProfiler.print_stats()` etc. from the
         # supplied `config`)

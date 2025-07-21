@@ -1,6 +1,6 @@
 """
-Shared utilities between the `python -m line_profiler` and `kernprof`
-CLI tools.
+Shared utilities between the :command:`python -m line_profiler` and
+:command:`kernprof` CLI tools.
 """
 import argparse
 import functools
@@ -8,7 +8,7 @@ import os
 import pathlib
 import shutil
 import sys
-from .toml_config import get_config
+from .toml_config import ConfigSource
 
 
 _BOOLEAN_VALUES = {**{k.casefold(): False
@@ -39,7 +39,7 @@ def add_argument(parser_like, arg, /, *args,
         parser_like (Any):
             Object having a method ``add_argument()``, which has the
             same semantics and call signature as
-            ``ArgumentParser.add_argument()``.
+            :py:meth:`argparse.ArgumentParser.add_argument()`.
         hide_complementary_options (bool):
             Whether to hide the auto-generated complementary options to
             ``action='store_true'`` options from the help text for
@@ -48,10 +48,10 @@ def add_argument(parser_like, arg, /, *args,
             Passed to ``parser_like.add_argument()``
 
     Returns:
-        action_like (Any):
+        Any: action_like
             Return value of ``parser_like.add_argument()``
 
-    Notes:
+    Note:
         * Short and long flags for 'store_true' and 'store_false'
           actions are implemented in separate actions so as to allow for
           short-flag concatenation.
@@ -167,28 +167,25 @@ def get_cli_config(subtable, /, *args, **kwargs):
             Name of the subtable the CLI app should refer to (e.g.
             'kernprof')
         *args, **kwargs
-            Passed to ``line_profiler.toml_config.get_config()``
+            Passed to \
+:py:meth:`line_profiler.toml_config.ConfigSource.from_config`
 
     Returns:
-        subconf_dict, path (tuple[dict, Path])
-            - ``subconf_dict``: the combination of the
-              ``tool.line_profiler.<subtable>`` subtables of the
-              provided/looked-up config file (if any) and the default as
-              a dictionary
-            - ``path``: absolute path to the config file whence the
-              config options are loaded
+        New :py:class:`~.line_profiler.toml_config.ConfigSource`
+        instance
     """
-    conf, source = get_config(*args, **kwargs)
-    cli_conf = {key.replace('-', '_'): value
-                for key, value in conf[subtable].items()}
-    return cli_conf, source
+    config = ConfigSource.from_config(*args, **kwargs).get_subconfig(subtable)
+    config.conf_dict = {key.replace('-', '_'): value
+                        for key, value in config.conf_dict.items()}
+    return config
 
 
 def get_python_executable():
     """
     Returns:
-        command (str)
-            Command or path thereto corresponding to ``sys.executable``.
+        str: command
+            Command or path thereto corresponding to
+            :py:data:`sys.executable`.
     """
     if os.path.samefile(shutil.which('python'), sys.executable):
         return 'python'
@@ -225,23 +222,44 @@ def boolean(value, *, fallback=None, invert=False):
             Optional value to fall back to in case ``value`` doesn't
             match any of the specified
         invert (bool)
-            If ``True``, invert the result of parsing ``value`` (but not
-            ``fallback``)
+            If :py:data:`True`, invert the result of parsing ``value``
+            (but not ``fallback``)
 
     Returns:
-        b (bool)
+        bool: result
 
-    Notes:
-        These values are parsed into ``False``:
+    Example:
+        These values are parsed into :py:data:`False`:
 
-        * The empty string
-        * ``'0'``, ``'F'``, ``'N'``
-        * ``'off'``, ``'False'``, ``'no'``
+        >>> assert not any(
+        ...     boolean(value)
+        ...     for value in ['', '0', 'F', 'N', 'off', 'False', 'no'])
 
-        And these into ``True``:
+        These values are parsed into :py:data:`True`:
 
-        * ``'1'``, ``'T'``, ``'Y'``
-        * ``'on'``, ``'True'``, ``'yes'``
+        >>> assert all(
+        ...     boolean(value)
+        ...     for value in ['1', 'T', 'Y', 'on', 'True', 'yes'])
+
+        Fallback:
+
+        >>> assert boolean('invalid', fallback=True) == True
+        >>> assert boolean('invalid', fallback=False) == False
+        >>> try:
+        ...     result = boolean('invalid')
+        ... except ValueError:
+        ...     pass
+        ... except Exception as e:
+        ...     assert False, (
+        ...         f'Expected `ValueError`, got `{type(e).__name__}`')
+        ... else:
+        ...     assert False, (
+        ...         f'Expected `ValueError`, got result {result!r}')
+
+        Case insensitivity:
+
+        >>> assert boolean('fAlSe') == False
+        >>> assert boolean('YeS') == True
     """
     try:
         result = _BOOLEAN_VALUES[value.casefold()]
@@ -263,7 +281,7 @@ def short_string_path(path):
             Path-like
 
     Returns:
-        short_path (str):
+        str: short_path
             The shortest formatted ``path`` among the provided path, the
             corresponding absolute path, and its relative path to the
             current directory.

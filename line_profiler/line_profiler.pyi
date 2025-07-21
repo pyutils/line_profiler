@@ -17,7 +17,8 @@ CallableLike = TypeVar('CallableLike',
                        type)
 
 
-def get_minimum_column_widths() -> Mapping[
+def get_column_widths(
+    config: Union[bool, str, pathlib.PurePath, None] = False) -> Mapping[
         Literal['line', 'hits', 'time', 'perhit', 'percent'], int]:
     ...
 

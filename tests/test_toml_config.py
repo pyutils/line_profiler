@@ -5,7 +5,7 @@ import os
 import pathlib
 import pytest
 import textwrap
-from line_profiler.toml_config import get_config, get_default_config
+from line_profiler.toml_config import ConfigSource
 
 
 def write_text(path: pathlib.Path, text: str, /, *args, **kwargs) -> int:
@@ -18,8 +18,8 @@ def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
                  tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
-    the environment variable `${LINE_PROFILER_RC}`, nor should the
-    `get_config()` lookup find any config file.
+    the environment variable :envvar:`LINE_PROFILER_RC`, nor should the
+    :py:meth:`~.ConfigSource.from_config` lookup find any config file.
 
     Yields:
         curdir (pathlib.Path):
@@ -34,18 +34,19 @@ def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
 def test_environment_isolation() -> None:
     """
     Test that we have isolated the tests from the environment with the
-    `fresh_curdir()` fixture.
+    :py:func:`fresh_curdir` fixture.
     """
     assert 'LINE_PROFILER_RC' not in os.environ
-    assert get_config() == get_default_config()
+    assert ConfigSource.from_config() == ConfigSource.from_default()
 
 
 def test_default_config_deep_copy() -> None:
     """
-    Test that `line_profiler.toml_config.get_default_config()` always
-    return a fresh copy of the default config.
+    Test that :py:meth:`ConfigSource.from_default` always return a fresh
+    copy of the default config.
     """
-    (default_1, _), (default_2, _) = (get_default_config() for _ in (1, 2))
+    default_1, default_2 = (
+        ConfigSource.from_default().conf_dict for _ in (1, 2))
     assert default_1 == default_2
     assert default_1 is not default_2
     # Sublist
@@ -66,7 +67,7 @@ def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
     ones), it is properly normalized to contain the same keys as the
     default table.
     """
-    default_config, default_source = get_default_config()
+    default_config = ConfigSource.from_default().conf_dict
     toml = fresh_curdir / 'foo.toml'
     write_text(toml, """
     [unrelated.table]
@@ -76,13 +77,13 @@ def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
     output_prefix = 'my_prefix'  # This is parsed and retained
     nonexistent_key = 'nonexistent_value'  # This should be ignored
     """)
-    loaded_config, loaded_source = get_config(toml)
-    assert loaded_source.samefile(toml)
-    assert loaded_config['write']['output_prefix'] == 'my_prefix'
-    assert 'nonexistent_key' not in loaded_config['write']
-    del loaded_config['write']['output_prefix']
+    loaded = ConfigSource.from_config(toml)
+    assert loaded.path.samefile(toml)
+    assert loaded.conf_dict['write']['output_prefix'] == 'my_prefix'
+    assert 'nonexistent_key' not in loaded.conf_dict['write']
+    del loaded.conf_dict['write']['output_prefix']
     del default_config['write']['output_prefix']
-    assert loaded_config == default_config
+    assert loaded.conf_dict == default_config
 
 
 def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
@@ -98,7 +99,7 @@ def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
     with pytest.raises(ValueError,
                        match=r"config = .*: expected .* keys.*:"
                        r".*'tool\.line_profiler\.write'"):
-        get_config(toml)
+        ConfigSource.from_config(toml)
 
 
 def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
@@ -106,7 +107,7 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     """
     Test the hierarchy according to which we load config files.
     """
-    _, default = get_default_config()
+    default = ConfigSource.from_default().path
     # Lowest priority: `pyproject.toml` or `line_profiler.toml` in an
     # ancestral directory
     curdir = fresh_curdir
@@ -115,31 +116,32 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     curdir = curdir / 'child'
     curdir.mkdir()
     monkeypatch.chdir(curdir)
-    assert get_config()[1].samefile(lowest_priority)
+    assert ConfigSource.from_config().path.samefile(lowest_priority)
     # Higher priority: the same in the current directory
     # (`line_profiler.toml` preferred over `pyproject.toml`)
     lower_priority = curdir / 'pyproject.toml'
     lower_priority.touch()
-    assert get_config()[1].samefile(lower_priority)
+    assert ConfigSource.from_config().path.samefile(lower_priority)
     low_priority = curdir / 'line_profiler.toml'
     low_priority.touch()
-    assert get_config()[1].samefile(low_priority)
+    assert ConfigSource.from_config().path.samefile(low_priority)
     # Higher priority: a file specified by the `${LINE_PROFILER_RC}`
     # environment variable (but we fall back to the default if that
     # fails)
     monkeypatch.setenv('LINE_PROFILER_RC', 'foo.toml')
-    assert get_config()[1].samefile(default)
+    assert ConfigSource.from_config().path.samefile(default)
     high_priority = curdir / 'foo.toml'
     high_priority.touch()
-    assert get_config()[1].samefile(high_priority)
+    assert ConfigSource.from_config().path.samefile(high_priority)
     # Highest priority: a file passed explicitly to the `config`
     # parameter
     highest_priority = curdir.parent / 'bar.toml'
     with pytest.raises(FileNotFoundError):
-        get_config(highest_priority)
+        ConfigSource.from_config(highest_priority)
     highest_priority.touch()
-    assert get_config(highest_priority)[1].samefile(highest_priority)
+    assert (ConfigSource.from_config(highest_priority)
+            .path.samefile(highest_priority))
     # Also test that `True` is equivalent to the default behavior
     # (`None`), and `False` to disabling all lookup
-    assert get_config(True)[1].samefile(high_priority)
-    assert get_config(False)[1].samefile(default)
+    assert ConfigSource.from_config(True).path.samefile(high_priority)
+    assert ConfigSource.from_config(False).path.samefile(default)

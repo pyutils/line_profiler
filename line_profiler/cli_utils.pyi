@@ -1,10 +1,12 @@
 """
-Shared utilities between the `python -m line_profiler` and `kernprof`
-CLI tools.
+Shared utilities between the :command:`python -m line_profiler` and
+:command:`kernprof` CLI tools.
 """
 import argparse
 import pathlib
 from typing import Protocol, Sequence, Tuple, TypeVar, Union
+
+from line_profiler.toml_config import ConfigSource
 
 
 A_co = TypeVar('A_co', bound='ActionLike', covariant=True)
@@ -35,8 +37,7 @@ def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
     ...
 
 
-def get_cli_config(subtable: str, /,
-                   *args, **kwargs) -> Tuple[dict, pathlib.Path]:
+def get_cli_config(subtable: str, /, *args, **kwargs) -> ConfigSource:
     ...
 
 
