@@ -13,7 +13,7 @@ import sys
 import tempfile
 import types
 import tokenize
-from argparse import ArgumentError, ArgumentParser
+from argparse import ArgumentParser
 from datetime import datetime
 
 try:
@@ -24,12 +24,31 @@ except ImportError as ex:
         f'Has it been compiled? Underlying error is ex={ex!r}'
     )
 from . import _diagnostics as diagnostics
+from .cli_utils import (
+    add_argument, get_cli_config, positive_float, short_string_path)
 from .profiler_mixin import ByCountProfilerMixin, is_c_level_callable
 from .scoping_policy import ScopingPolicy
+from .toml_config import ConfigSource
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '4.3.0'
+
+
+@functools.lru_cache()
+def get_column_widths(config=False):
+    """
+    Arguments
+        config (bool | str | pathlib.PurePath | None)
+            Passed to :py:meth:`.ConfigSource.from_config`.
+    Note:
+        * Results are cached.
+        * The default value (:py:data:`False`) loads the config from the
+          default TOML file that the package ships with.
+    """
+    subconf = (ConfigSource.from_config(config)
+               .get_subconfig('show', 'column_widths'))
+    return types.MappingProxyType(subconf.conf_dict)
 
 
 def load_ipython_extension(ip):
@@ -177,10 +196,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> import line_profiler
         >>> profile = line_profiler.LineProfiler()
         >>> @profile
-        >>> def func():
-        >>>     x1 = list(range(10))
-        >>>     x2 = list(range(100))
-        >>>     x3 = list(range(1000))
+        ... def func():
+        ...     x1 = list(range(10))
+        ...     x2 = list(range(100))
+        ...     x3 = list(range(1000))
         >>> func()
         >>> profile.print_stats()
     """
@@ -286,13 +305,15 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
 
     def print_stats(self, stream=None, output_unit=None, stripzeros=False,
-                    details=True, summarize=False, sort=False, rich=False):
+                    details=True, summarize=False, sort=False, rich=False, *,
+                    config=None):
         """ Show the gathered statistics.
         """
         lstats = self.get_stats()
         show_text(lstats.timings, lstats.unit, output_unit=output_unit,
                   stream=stream, stripzeros=stripzeros,
-                  details=details, summarize=summarize, sort=sort, rich=rich)
+                  details=details, summarize=summarize, sort=sort, rich=rich,
+                  config=config)
 
     def _add_namespace(
             self, namespace, *,
@@ -487,21 +508,23 @@ def is_generated_code(filename):
 
 
 def show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit=None, stream=None, stripzeros=False, rich=False):
+              output_unit=None, stream=None, stripzeros=False, rich=False,
+              *,
+              config=None):
     """
     Show results for a single function.
 
     Args:
         filename (str):
-            path to the profiled file
+            Path to the profiled file
 
         start_lineno (int):
-            first line number of profiled function
+            First line number of profiled function
 
         func_name (str): name of profiled function
 
         timings (List[Tuple[int, int, float]]):
-            measurements for each line (lineno, nhits, time).
+            Measurements for each line (lineno, nhits, time).
 
         unit (float):
             The number of seconds used as the cython LineProfiler's unit.
@@ -510,13 +533,22 @@ def show_func(filename, start_lineno, func_name, timings, unit,
             Output unit (in seconds) in which the timing info is displayed.
 
         stream (io.TextIOBase | None):
-            defaults to sys.stdout
+            Defaults to sys.stdout
 
         stripzeros (bool):
-            if True, prints nothing if the function was not run
+            If True, prints nothing if the function was not run
 
         rich (bool):
-            if True, attempt to use rich highlighting.
+            If True, attempt to use rich highlighting.
+
+        config (Union[str, PurePath, bool, None]):
+            Optional filename from which to load configurations (e.g.
+            output column widths);
+            default (= `True` or `None`) is to look for a config file
+            based on the environment variable `${LINE_PROFILER_RC}` and
+            path-based lookup;
+            passing `False` disables all lookup and falls back to the
+            default configuration
 
     Example:
         >>> from line_profiler.line_profiler import show_func
@@ -529,18 +561,18 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         >>> # Build fake timeings for each line in the example function
         >>> import inspect
         >>> num_lines = len(inspect.getsourcelines(func)[0])
-        >>> line_numbers = list(range(start_lineno + 3, start_lineno + num_lines))
-        >>> timings = [
-        >>>     (lineno, idx * 1e13, idx * (2e10 ** (idx % 3)))
-        >>>     for idx, lineno in enumerate(line_numbers, start=1)
-        >>> ]
+        >>> line_numbers = list(range(start_lineno + 3,
+        ...                           start_lineno + num_lines))
+        >>> timings = [(lineno, idx * 1e13, idx * (2e10 ** (idx % 3)))
+        ...            for idx, lineno
+        ...            in enumerate(line_numbers, start=1)]
         >>> unit = 1.0
         >>> output_unit = 1.0
         >>> stream = None
         >>> stripzeros = False
         >>> rich = 1
         >>> show_func(filename, start_lineno, func_name, timings, unit,
-        >>>           output_unit, stream, stripzeros, rich)
+        ...           output_unit, stream, stripzeros, rich)
     """
     if stream is None:
         stream = sys.stdout
@@ -588,13 +620,10 @@ def show_func(filename, start_lineno, func_name, timings, unit,
         sublines = [''] * nlines
 
     # Define minimum column sizes so text fits and usually looks consistent
+    conf_column_sizes = get_column_widths(config)
     default_column_sizes = {
-        'line': 6,
-        'hits': 9,
-        'time': 12,
-        'perhit': 8,
-        'percent': 8,
-    }
+        col: max(width, conf_column_sizes.get(col, width))
+        for col, width in get_column_widths().items()}
 
     display = {}
 
@@ -667,16 +696,14 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
         # Use a table to horizontally concatenate the text
         # reference: https://github.com/Textualize/rich/discussions/3076
-        table = Table(
-            box=None,
-            padding=0,
-            collapse_padding=True,
-            show_header=False,
-            show_footer=False,
-            show_edge=False,
-            pad_edge=False,
-            expand=False,
-        )
+        table = Table(box=None,
+                      padding=0,
+                      collapse_padding=True,
+                      show_header=False,
+                      show_footer=False,
+                      show_edge=False,
+                      pad_edge=False,
+                      expand=False)
         table.add_row(lhs, '  ', rhs)
 
         # Use a Console to render to the stream
@@ -704,7 +731,8 @@ def show_func(filename, start_lineno, func_name, timings, unit,
 
 
 def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
-              details=True, summarize=False, sort=False, rich=False):
+              details=True, summarize=False, sort=False, rich=False, *,
+              config=None):
     """
     Show text for the given timings.
 
@@ -733,12 +761,15 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         # Default ordering
         stats_order = sorted(stats.items())
 
+    # Pre-lookup the appropriate config file
+    config = ConfigSource.from_config(config).path
+
     if details:
         # Show detailed per-line information for each function.
         for (fn, lineno, name), timings in stats_order:
             show_func(fn, lineno, name, stats[fn, lineno, name], unit,
                       output_unit=output_unit, stream=stream,
-                      stripzeros=stripzeros, rich=rich)
+                      stripzeros=stripzeros, rich=rich, config=config)
 
     if summarize:
         # Summarize the total time for each function
@@ -780,56 +811,59 @@ def main():
     """
     The line profiler CLI to view output from :command:`kernprof -l`.
     """
-    def positive_float(value):
-        val = float(value)
-        if val <= 0:
-            raise ArgumentError
-        return val
+    parser = ArgumentParser(
+        description='Read and show line profiling results (`.lprof` files) '
+        'as generated by the CLI application `kernprof` or by '
+        '`LineProfiler.dump_stats()`.')
+    get_main_config = functools.partial(get_cli_config, 'cli')
+    default = config = get_main_config()
 
-    parser = ArgumentParser()
-    parser.add_argument('-V', '--version', action='version', version=__version__)
-    parser.add_argument(
-        '-u',
-        '--unit',
-        default='1e-6',
-        type=positive_float,
-        help='Output unit (in seconds) in which the timing info is displayed (default: 1e-6)',
-    )
-    parser.add_argument(
-        '-z',
-        '--skip-zero',
-        action='store_true',
-        help='Hide functions which have not been called',
-    )
-    parser.add_argument(
-        '-r',
-        '--rich',
-        action='store_true',
-        help='Use rich formatting',
-    )
-    parser.add_argument(
-        '-t',
-        '--sort',
-        action='store_true',
-        help='Sort by ascending total time',
-    )
-    parser.add_argument(
-        '-m',
-        '--summarize',
-        action='store_true',
-        help='Print a summary of total function time',
-    )
-    parser.add_argument('profile_output', help='*.lprof file created by kernprof')
+    add_argument(parser, '-V', '--version',
+                 action='version', version=__version__)
+    add_argument(parser, '-c', '--config',
+                 help='Path to the TOML file, from the '
+                 '`tool.line_profiler.cli` table of which to load '
+                 'defaults for the options. '
+                 f'(Default: {short_string_path(default.path)!r})')
+    add_argument(parser, '--no-config',
+                 action='store_const', dest='config', const=False,
+                 help='Disable the loading of configuration files other than '
+                 'the default one')
+    add_argument(parser, '-u', '--unit', type=positive_float,
+                 help='Output unit (in seconds) in which '
+                 'the timing info is displayed. '
+                 f'(Default: {default.conf_dict["unit"]} s)')
+    add_argument(parser, '-r', '--rich', action='store_true',
+                 help='Use rich formatting. '
+                 f'(Default: {default.conf_dict["rich"]})')
+    add_argument(parser, '-z', '--skip-zero', action='store_true',
+                 help='Hide functions which have not been called. '
+                 f'(Default: {default.conf_dict["skip_zero"]})')
+    add_argument(parser, '-t', '--sort', action='store_true',
+                 help='Sort by ascending total time. '
+                 f'(Default: {default.conf_dict["sort"]})')
+    add_argument(parser, '-m', '--summarize', action='store_true',
+                 help='Print a summary of total function time. '
+                 f'(Default: {default.conf_dict["summarize"]})')
+    add_argument(parser, 'profile_output',
+                 help="'*.lprof' file created by `kernprof`")
 
     args = parser.parse_args()
+    if args.config:
+        config = get_main_config(args.config)
+        args.config = config.path
+    for key, default in config.conf_dict.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, default)
+
     lstats = load_stats(args.profile_output)
-    show_text(
-        lstats.timings, lstats.unit, output_unit=args.unit,
-        stripzeros=args.skip_zero,
-        rich=args.rich,
-        sort=args.sort,
-        summarize=args.summarize,
-    )
+    show_text(lstats.timings, lstats.unit,
+              output_unit=args.unit,
+              stripzeros=args.skip_zero,
+              rich=args.rich,
+              sort=args.sort,
+              summarize=args.summarize,
+              config=args.config)
 
 
 if __name__ == '__main__':

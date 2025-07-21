@@ -1,7 +1,10 @@
 import io
+import pathlib
 from functools import cached_property, partial, partialmethod
 from types import FunctionType, MethodType, ModuleType
-from typing import overload, Callable, List, Literal, Tuple, TypeVar
+from typing import (overload,
+                    Callable, List, Literal, Mapping, Tuple,
+                    TypeVar, Union)
 from _typeshed import Incomplete
 from ._line_profiler import LineProfiler as CLineProfiler
 from .profiler_mixin import ByCountProfilerMixin, CLevelCallable
@@ -12,6 +15,12 @@ CallableLike = TypeVar('CallableLike',
                        FunctionType, partial, property, cached_property,
                        MethodType, staticmethod, classmethod, partialmethod,
                        type)
+
+
+def get_column_widths(
+    config: Union[bool, str, pathlib.PurePath, None] = False) -> Mapping[
+        Literal['line', 'hits', 'time', 'perhit', 'percent'], int]:
+    ...
 
 
 def load_ipython_extension(ip) -> None:
@@ -51,7 +60,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     details: bool = ...,
                     summarize: bool = ...,
                     sort: bool = ...,
-                    rich: bool = ...) -> None:
+                    rich: bool = ...,
+                    *,
+                    config: Union[str, pathlib.PurePath,
+                                  bool, None] = None) -> None:
         ...
 
     def add_module(
@@ -81,7 +93,9 @@ def show_func(filename: str,
               output_unit: float | None = None,
               stream: io.TextIOBase | None = None,
               stripzeros: bool = False,
-              rich: bool = False) -> None:
+              rich: bool = False,
+              *,
+              config: Union[str, pathlib.PurePath, bool, None] = None) -> None:
     ...
 
 
@@ -93,7 +107,9 @@ def show_text(stats,
               details: bool = ...,
               summarize: bool = ...,
               sort: bool = ...,
-              rich: bool = ...):
+              rich: bool = ...,
+              *,
+              config: Union[str, pathlib.PurePath, bool, None] = None) -> None:
     ...
 
 

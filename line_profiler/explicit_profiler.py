@@ -1,21 +1,22 @@
 """
 New in ``line_profiler`` version 4.1.0, this module defines a top-level
 ``profile`` decorator which will be disabled by default **unless** a script is
-being run with :mod:`kernprof`, if the environment variable ``LINE_PROFILE`` is
-set, or if ``--line-profile`` is given on the command line.
+being run with :mod:`kernprof`, if the environment variable
+:envvar:`LINE_PROFILE` is set, or if ``--line-profile`` is given on the command
+line.
 
 In the latter two cases, the :mod:`atexit` module is used to display and dump
 line profiling results to disk when Python exits.
 
 If none of the enabling conditions are met, then
-:py:obj:`line_profiler.profile` is a noop. This means you no longer have to add
+:py:obj:`line_profiler.profile` is a no-op. This means you no longer have to add
 and remove the implicit ``profile`` decorators required by previous version of
 this library.
 
 Basic usage is to import line_profiler and decorate your function with
 line_profiler.profile.  By default this does nothing, it's a no-op decorator.
 However, if you run with the environment variable ``LINE_PROFILER=1`` or if
-``'--profile' in sys.argv'``, then it enables profiling and at the end of your
+``'--profile' in sys.argv``, then it enables profiling and at the end of your
 script it will output the profile text.
 
 Here is a minimal example that will write a script to disk and then run it
@@ -162,13 +163,13 @@ for ``func2`` and ``func4``.
 
 The core functionality in this module was ported from :mod:`xdev`.
 """
-from .line_profiler import LineProfiler
-import sys
-import os
 import atexit
-
-
-_FALSY_STRINGS = {'', '0', 'off', 'false', 'no'}
+import os
+import sys
+# This is for compatibility
+from .cli_utils import boolean, get_python_executable as _python_command
+from .line_profiler import LineProfiler
+from .toml_config import ConfigSource
 
 
 class GlobalProfiler:
@@ -177,22 +178,46 @@ class GlobalProfiler:
 
     The :py:obj:`line_profile.profile` decorator is an instance of this object.
 
+    Arguments:
+        config (Union[str, PurePath, bool, None]):
+            Optional TOML config file from which to load the
+            configurations (see Attributes);
+            if not explicitly given (= :py:data:`True` or
+            :py:data:`None`), it is either resolved from the
+            :envvar:`!LINE_PROFILER_RC` environment variable or looked
+            up among the current directory or its ancestors.  Should all
+            that fail, the default config file at
+            ``importlib.resources.path('line_profiler.rc', \
+'line_profiler.toml')`` is used;
+            passing :py:data:`False` disables all lookup and falls back
+            to the default configuration
+
     Attributes:
         setup_config (Dict[str, List[str]]):
             Determines how the implicit setup behaves by defining which
             environment variables / command line flags to look for.
+            Defaults to the ``[tool.line_profiler.setup]`` table of the
+            loaded config file.
 
         output_prefix (str):
             The prefix of any output files written. Should include
-            a part of a filename. Defaults to "profile_output".
+            a part of a filename. Defaults to the ``output_prefix``
+            value in the ``[tool.line_profiler.write]`` table of the
+            loaded config file.
 
         write_config (Dict[str, bool]):
-            Which outputs are enabled. All default to True.
-            Options are lprof, text, timestamped_text, and stdout.
+            Which outputs are enabled;
+            options are lprof, text, timestamped_text, and stdout.
+            Defaults to the rest of the ``[tool.line_profiler.write]``
+            table of the loaded config file.
 
         show_config (Dict[str, bool]):
-            Display configuration options. Some outputs force certain options.
-            (e.g. text always has details and is never rich).
+            Display configuration options;
+            some outputs force certain options (e.g. text always has
+            details and is never rich).
+            Defaults to the rest of the ``[tool.line_profiler.show]``
+            table of the loaded config file, excluding the
+            ``[tool.line_profiler.show.column_widths]`` subtable.
 
         enabled (bool | None):
             True if the profiler is enabled (i.e. if it will wrap a function
@@ -212,12 +237,12 @@ class GlobalProfiler:
         >>> self.write_config['timestamped_text'] = False
         >>> # Demo data: a function to profile
         >>> def collatz(n):
-        >>>     while n != 1:
-        >>>         if n % 2 == 0:
-        >>>             n = n // 2
-        >>>         else:
-        >>>             n = 3 * n + 1
-        >>>     return n
+        ...     while n != 1:
+        ...         if n % 2 == 0:
+        ...             n = n // 2
+        ...         else:
+        ...             n = 3 * n + 1
+        ...     return n
         >>> # Disabled by default, implicitly checks to auto-enable on first wrap
         >>> assert self.enabled is None
         >>> wrapped = self(collatz)
@@ -233,31 +258,27 @@ class GlobalProfiler:
         >>> self.show()
     """
 
-    def __init__(self):
-        self.setup_config = {
-            'environ_flags': ['LINE_PROFILE'],
-            'cli_flags': ['--line-profile', '--line_profile'],
-        }
-        self.output_prefix = 'profile_output'
+    def __init__(self, config=None):
+        # Remember which config file we loaded settings from
+        config_source = ConfigSource.from_config(config)
+        self._config = config_source.path
+
         self._profile = None
         self.enabled = None
 
-        # Control which outputs will be written on exit
-        self.write_config = {
-            'lprof': True,
-            'text': True,
-            'timestamped_text': True,
-            'stdout': True,
-        }
-
-        # Configuration for how output will be displayed
-        self.show_config = {
-            'sort': 1,
-            'stripzeros': 1,
-            'rich': 1,
-            'details': 0,
-            'summarize': 1,
-        }
+        # Configs:
+        # - How to toggle the profiler
+        self.setup_config = config_source.conf_dict['setup']
+        # - Which outputs to write on exit
+        self.write_config = config_source.conf_dict['write']
+        # - Whither to write output files
+        self.output_prefix = self.write_config.pop('output_prefix')
+        # - How output will be displayed
+        self.show_config = config_source.conf_dict['show']
+        # (This is not stored here nor is accepted by any method, but is
+        # re-parsed by `LineProfiler.print_stats()` etc. from the
+        # supplied `config`)
+        self.show_config.pop('column_widths')
 
     def _kernprof_overwrite(self, profile):
         """
@@ -277,7 +298,7 @@ class GlobalProfiler:
         """
         environ_flags = self.setup_config['environ_flags']
         cli_flags = self.setup_config['cli_flags']
-        is_profiling = any(os.environ.get(f, '').lower() not in _FALSY_STRINGS
+        is_profiling = any(boolean(os.environ.get(f, ''), fallback=True)
                            for f in environ_flags)
         is_profiling |= any(f in sys.argv for f in cli_flags)
         if is_profiling:
@@ -340,21 +361,19 @@ class GlobalProfiler:
         import io
         import pathlib
 
-        srite_stdout = self.write_config['stdout']
+        write_stdout = self.write_config['stdout']
         write_text = self.write_config['text']
         write_timestamped_text = self.write_config['timestamped_text']
         write_lprof = self.write_config['lprof']
 
-        if srite_stdout:
-            kwargs = self.show_config.copy()
+        if write_stdout:
+            kwargs = {'config': self._config, **self.show_config}
             self._profile.print_stats(**kwargs)
 
         if write_text or write_timestamped_text:
             stream = io.StringIO()
             # Text output always contains details, and cannot be rich.
-            text_kwargs = self.show_config.copy()
-            text_kwargs['rich'] = 0
-            text_kwargs['details'] = 1
+            text_kwargs = {**kwargs, 'rich': False, 'details': True}
             self._profile.print_stats(stream=stream, **text_kwargs)
             raw_text = stream.getvalue()
 
@@ -367,7 +386,8 @@ class GlobalProfiler:
                 from datetime import datetime as datetime_cls
                 now = datetime_cls.now()
                 timestamp = now.strftime('%Y-%m-%dT%H%M%S')
-                txt_output_fpath2 = pathlib.Path(f'{self.output_prefix}_{timestamp}.txt')
+                txt_output_fpath2 = pathlib.Path(
+                    f'{self.output_prefix}_{timestamp}.txt')
                 txt_output_fpath2.write_text(raw_text, encoding='utf-8')
                 print('Wrote profile results to %s' % txt_output_fpath2)
 
@@ -377,20 +397,8 @@ class GlobalProfiler:
             print('Wrote profile results to %s' % lprof_output_fpath)
             print('To view details run:')
             py_exe = _python_command()
-            print(py_exe + ' -m line_profiler -rtmz ' + str(lprof_output_fpath))
-
-
-def _python_command():
-    """
-    Return a command that corresponds to :py:obj:`sys.executable`.
-    """
-    import shutil
-    if shutil.which('python') == sys.executable:
-        return 'python'
-    elif shutil.which('python3') == sys.executable:
-        return 'python3'
-    else:
-        return sys.executable
+            print(py_exe + ' -m line_profiler -rtmz '
+                  + str(lprof_output_fpath))
 
 
 # Construct the global profiler.

@@ -1,0 +1,208 @@
+########################################################################
+#
+# Sample configuration file
+# =========================
+#
+# This file provides defaults for the behaviors of the CLI application
+# `kernprof`, the executable module `line_profiler`, and the class
+# `line_profiler.GlobalProfiler`.
+# Users can customize said behaviors by writing a suitable configuation
+# file in the TOML syntax (https://toml.io/en/latest).
+#
+# Namespacing
+# -----------
+#
+# All options read by `line_profiler` live under the
+# `tool.line_profiler` namespace. The same applies no matter if reading
+# from a `line_profiler.toml`, `pyproject.toml`, or other user-specified
+# file.
+#
+# Naming scheme
+# -------------
+#
+# - `tool.line_profiler.kernprof` (resp. `.cli`) items:
+#   Same as the corresponding `kernprof` (resp.
+#   `python -m line_profiler`) CLI options, minus the leading '--'.
+# - `tool.line_profiler.setup` (resp. `.write`, `.show`) items:
+#   Same as the corresponding `GlobalProfiler.setup_config` (resp.
+#   `.write_config`, `.show_config`) key-value pairs, except for:
+#   - `tool.line_profiler.write.output_prefix`:
+#     Not a part of `GlobalProfiler.write_config`, but rather the
+#     default value for `GlobalProfiler.output_prefix`.
+#   - `tool.line_profiler.show.column_widths`:
+#     Not a part of `GlobalProfiler.show_config`, but rather controls
+#     the column widths in outputs (see below).
+# - `tool.line_profiler.show.column_widths` items:
+#   - `line`: Line number
+#   - `hits`: Number of line hits
+#   - `time`: Total time spent on the line
+#   - `perhit`: Mean time spent per hit
+#   - `percent`: % time spent on the line (relative to the func/method)
+#
+# Resolution order
+# ----------------
+#
+# - Lookup for either of these two files starts from the current
+#   directory: `line_profiler.toml` or `pyproject.toml`. In case when
+#   both are present, the former takes priority.
+# - If the current directory
+#   - Doesn't contain such a file; or if
+#   - None of them is a (1) valid and (2) readable TOML config file,
+#   we look in the parent directory for a config file, and so on.
+# - If we have reached the file-system root without finding a readable
+#   config file, this default file is used.
+#
+# ### Notes
+#
+# - To explicitly specify the config file and skip lookup, the user can:
+#   - Set the `${LINE_PROFILER_RC}` environment variable to be the path
+#     to the appropriate config file.
+#   - For the CLI applications `kernprof` and `python -m line_profiler`,
+#     it is also possible to supply the config file via the
+#     `-c`/`--config` flag.
+# - The first looked-up file that is readable TOML (possibly empty) is
+#   used;
+#   it doesn't matter if it contains the `tool.line_profiler` namespace.
+# - If any option is missing from the specified or looked-up file, its
+#   default value (as defined here) is used.
+#
+########################################################################
+
+# `kernprof` options
+
+[tool.line_profiler.kernprof]
+
+# - Boolean flags
+#   - `line-by-line` (bool):
+#      `-l`/`--line-by-line` (true) or `--no-line-by-line` (false)
+line-by-line = false
+#   - `builtin` (bool):
+#      `-b`/`--builtin` (true) or `--no-builtin` (false)
+builtin = false
+#   - `rich` (bool):
+#     `-r`/`--rich` (true) or `--no-rich` (false)
+rich = false
+#   - `skip-zero` (bool):
+#     `-z`/`--skip-zero` (true) or `--no-skip-zero` (false)
+skip-zero = false
+#   - `summarize` (bool):
+#     `--summarize` (true) or `--no-summarize` (false)
+summarize = false
+#   - `preimports` (bool):
+#     `--preimports` (true) or `--no-preimports` (false)
+preimports = true
+#   - `prof-imports` (bool):
+#     `--prof-imports` (true) or `--no-prof-imports` (false)
+prof-imports = false
+
+# - Misc flags
+#   - `verbose` (count):
+#     `-v`/`--verbose`/`--view` (incrementing) or `-q`/`--quiet`
+#     (decrementing): output verbosity of `kernprof`
+verbose = 0
+#   - `outfile` (str):
+#     `--outfile=...`; filename to which to `LineProfiler.dump_stats()`
+#     the profiling results (use an empty string to fall back to the
+#     default, which depends on the script/module profiled)
+outfile = ""
+#   - `setup` (str):
+#     `--setup=...`: filename from which to read setup code (if any)
+#     before running the main script/module
+setup = ""
+#   - `unit` (float):
+#     `--unit=...`: timer unit for the displayed profiling results when
+#     `view` is true
+unit = 1e-6
+#   - `output-interval` (int):
+#     `--output-interval=...`: interval in which partial profiling
+#     results are written to `outfile` (set to 0 to only write when the
+#     code finishes running/errors out)
+output-interval = 0
+#   - `prof-mod` (list[str]):
+#     `--prof-mod`: filenames and dotted import paths (modules,
+#     functions, or classes) to be profiled if imported in the profiled
+#     script/module
+prof-mod = []
+
+# `python -m line_profiler` options
+
+[tool.line_profiler.cli]
+
+# - `unit` (float):
+#   `--unit=...`: timer unit for the displayed profiling results when
+#   `view` is true
+unit = 1e-6
+# - `rich` (bool):
+#   `-r`/`--rich` (true) or `--no-rich` (false)
+rich = false
+# - `skip-zero` (bool):
+#   `-z`/`--skip-zero` (true) or `--no-skip-zero` (false)
+skip-zero = false
+# - `sort` (bool):
+#   `-t`/`--sort` (true) or `--no-sort` (false)
+sort = false
+# - `summarize` (bool):
+#   `-m`/`--summarize` (true) or `--no-summarize` (false)
+summarize = false
+
+# `line_profiler.GlobalProfiler` options
+
+[tool.line_profiler.setup]
+
+# - `GlobalProfiler.setup_config` key-value pairs
+#   - `environ_flags` (list[str]):
+#     If any of these environment variables is set to a "non-falsy"
+#     value, the `GlobalProfiler` is `.enable()`-ed
+environ_flags = ["LINE_PROFILE"]
+#   - `cli_flags` (list[str]):
+#     If any of these strings is present verbatim as a positional
+#     argument, the `GlobalProfiler` is `.enable()`-ed
+cli_flags = ["--line-profile", "--line_profile"]
+
+[tool.line_profiler.write]
+
+# - `GlobalProfiler` attributes
+#   - `output_prefix` (str):
+#     Common base-name prefix to the output files specified in this
+#     subtable
+output_prefix = 'profile_output'
+
+# - `GlobalProfiler.write_config` key-value pairs
+#   - `lprof` (bool):
+#     Whether to `LineProfiler.dump_stats()` to an `.lprof` file
+lprof = true
+#   - `text` (bool):
+#     Whether to `LineProfiler.print_stats()` to a `.txt` file
+text = true
+#   - `timestamped_text` (bool):
+#     Whether to `LineProfiler.print_stats()` to a `.txt` file with a
+#     timestamp in the filename
+timestamped_text = true
+#   - `stdout` (bool):
+#     Whether to `LineProfiler.print_stats()` to the stdout
+stdout = true 
+
+[tool.line_profiler.show]
+
+# - `GlobalProfiler.show_config` key-value pairs
+#   (booleans; refer to the synonymous arguments of
+#   `LineProfiler.print_stats()`)
+#   (Note: doesn't include the `column_widths` subtable below)
+sort = true
+stripzeros = true
+rich = true
+details = false
+summarize = true
+
+# `line_profiler.line_profiler.show_text()` column widths
+# (Note: the values below are also the minima; it is only possible to
+# supply bigger widths, not smaller ones)
+
+[tool.line_profiler.show.column_widths]
+
+# (See the file header for their meanings)
+line = 6
+hits = 9
+time = 12
+perhit = 8
+percent = 8
