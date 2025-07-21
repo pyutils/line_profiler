@@ -29,47 +29,47 @@ Next, we are going to setup a small package for this demonstration.
    }
 
    codeblock "
-   import time
-   from demo_pkg.utils import leq
-   from demo_pkg import utils
+       import time
+       from demo_pkg.utils import leq
+       from demo_pkg import utils
 
-   def fib(n):
-       if leq(n, 1):
-           return n
-       part1 = fib(n - 1)
-       part2 = fib(n - 2)
-       result = utils.add(part1, part2)
-       return result
+       def fib(n):
+           if leq(n, 1):
+               return n
+           part1 = fib(n - 1)
+           part2 = fib(n - 2)
+           result = utils.add(part1, part2)
+           return result
 
-   def sleep_loop(n):
-       for _ in range(n):
-           time.sleep(0.01)
+       def sleep_loop(n):
+           for _ in range(n):
+               time.sleep(0.01)
    " > src/demo_pkg/core.py
 
    codeblock "
-   def leq(a, b):
-       return a <= b
+       def leq(a, b):
+           return a <= b
 
-   def add(a, b):
-       return a + b
+       def add(a, b):
+           return a + b
    " > src/demo_pkg/utils.py
 
    codeblock "
-   from demo_pkg import core
-   import uuid
+       from demo_pkg import core
+       import uuid
 
-   def main():
-       run_uuid = uuid.uuid4()
-       print('The UUID of this run is', run_uuid)
-       print('compute fib 10')
-       result = core.fib(10)
-       print('result', result)
-       print('sleeping 5')
-       core.sleep_loop(5)
-       print('done')
+       def main():
+           run_uuid = uuid.uuid4()
+           print('The UUID of this run is', run_uuid)
+           print('compute fib 10')
+           result = core.fib(10)
+           print('result', result)
+           print('sleeping 5')
+           core.sleep_loop(5)
+           print('done')
 
-   if __name__ == '__main__':
-       main()
+       if __name__ == '__main__':
+           main()
    " > src/demo_pkg/__main__.py
 
    # Run `uv pip install -e .` to install the project locally:
@@ -92,7 +92,7 @@ Running kernprof with a main script that uses your package behaves as in 4.x in 
 
 However, you can modify pyproject.toml to specify new defaults. After doing
 this, running kernprof will use defaults specified in your pyproject.toml (You
-may also pass `--config` to tell kernprof to use a different file to load the
+may also pass ``--config`` to tell kernprof to use a different file to load the
 default config).
 
 .. code:: bash
@@ -207,15 +207,15 @@ The output is:
 
 .. code::
 
-    Line #      Hits         Time  Per Hit   % Time  Line Contents
-    ==============================================================
-         5                                           def fib(n):
-         6       177        145.1      0.8     42.5      if leq(n, 1):
-         7        89         29.7      0.3      8.7          return n
-         8        88         29.1      0.3      8.5      part1 = fib(n - 1)
-         9        88         27.7      0.3      8.1      part2 = fib(n - 2)
-        10        88         78.0      0.9     22.8      result = utils.add(part1, part2)
-        11        88         32.2      0.4      9.4      return result
+   Line #      Hits         Time  Per Hit   % Time  Line Contents
+   ==============================================================
+        5                                           def fib(n):
+        6       177        145.1      0.8     42.5      if leq(n, 1):
+        7        89         29.7      0.3      8.7          return n
+        8        88         29.1      0.3      8.5      part1 = fib(n - 1)
+        9        88         27.7      0.3      8.1      part2 = fib(n - 2)
+       10        88         78.0      0.9     22.8      result = utils.add(part1, part2)
+       11        88         32.2      0.4      9.4      return result
 
 
-      0.00 seconds - /tmp/tmp.vKpODQr6wndemo_pkg/src/demo_pkg/core.py:5 - fib
+     0.00 seconds - /tmp/tmp.vKpODQr6wndemo_pkg/src/demo_pkg/core.py:5 - fib
