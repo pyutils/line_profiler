@@ -1,7 +1,7 @@
 Changes
 =======
 
-4.3.0
+5.0.0
 ~~~~~
 * FIX: win32 encoding issues
 * ENH: Add support for ``sys.monitoring`` (Python >= 3.12)
@@ -44,7 +44,7 @@ Changes
   * Now allowing switching back to the "legacy" trace system on Python 3.12+,
     controlled by an environment variable
 * ENH: Added capability to parse TOML config files for defaults (#335):
-  
+
   * ``kernprof`` and ``python -m line_profiler`` CLI options
   * ``GlobalProfiler`` configurations, and
   * profiler output (e.g. ``LineProfiler.print_stats()``) formatting
