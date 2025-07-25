@@ -1,6 +1,9 @@
 Changes
 =======
 
+5.0.1
+~~~~~
+
 5.0.0
 ~~~~~
 * FIX: win32 encoding issues
