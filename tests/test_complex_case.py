@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+from contextlib import ExitStack
 import ubelt as ub
 LINUX = sys.platform.startswith('linux')
 
@@ -90,8 +91,9 @@ def test_varied_complex_invocations():
     results = []
 
     for case in cases:
-        temp_dpath = tempfile.mkdtemp()
-        with ub.ChDir(temp_dpath):
+        with ExitStack() as stack:
+            temp_dpath = stack.enter_context(tempfile.TemporaryDirectory())
+            stack.enter_context(ub.ChDir(temp_dpath))
             env = {}
 
             outpath = case['outpath']

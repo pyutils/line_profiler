@@ -141,24 +141,24 @@ def test_cli():
         if __name__ == '__main__':
             my_inefficient_function()
         ''')
-    tmp_dpath = tempfile.mkdtemp()
-    tmp_src_fpath = join(tmp_dpath, 'foo.py')
-    with open(tmp_src_fpath, 'w') as file:
-        file.write(code)
+    with tempfile.TemporaryDirectory() as tmp_dpath:
+        tmp_src_fpath = join(tmp_dpath, 'foo.py')
+        with open(tmp_src_fpath, 'w') as file:
+            file.write(code)
 
-    # Run kernprof on it
-    info = ub.cmd(f'kernprof -l {tmp_src_fpath}', verbose=3, cwd=tmp_dpath)
-    assert info['ret'] == 0
+        # Run kernprof on it
+        info = ub.cmd(f'kernprof -l {tmp_src_fpath}', verbose=3, cwd=tmp_dpath)
+        assert info['ret'] == 0
 
-    tmp_lprof_fpath = join(tmp_dpath, 'foo.py.lprof')
-    tmp_lprof_fpath
+        tmp_lprof_fpath = join(tmp_dpath, 'foo.py.lprof')
+        tmp_lprof_fpath
 
-    info = ub.cmd(f'{executable} -m line_profiler {tmp_lprof_fpath}',
-                  cwd=tmp_dpath, verbose=3)
-    assert info['ret'] == 0
-    # Check for some patterns that should be in the output
-    assert '% Time' in info['out']
-    assert '7       100' in info['out']
+        info = ub.cmd(f'{executable} -m line_profiler {tmp_lprof_fpath}',
+                      cwd=tmp_dpath, verbose=3)
+        assert info['ret'] == 0
+        # Check for some patterns that should be in the output
+        assert '% Time' in info['out']
+        assert '7       100' in info['out']
 
 
 def test_version_agreement():
