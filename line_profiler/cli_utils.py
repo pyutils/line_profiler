@@ -219,7 +219,7 @@ def boolean(value, *, fallback=None, invert=False):
     Arguments:
         value (str)
             Value to be parsed into a boolean (case insensitive)
-        fallback (Union[bool, None])
+        fallback (bool | None)
             Optional value to fall back to in case ``value`` doesn't
             match any of the specified
         invert (bool)
@@ -278,12 +278,12 @@ def boolean(value, *, fallback=None, invert=False):
 def short_string_path(path):
     """
     Arguments:
-        path (Union[str, PurePath]):
+        path (str | os.PathLike[str]):
             Path-like
 
     Returns:
         str: short_path
-            The shortest formatted ``path`` among the provided path, the
+            The shortest formatted path among the provided ``path``, the
             corresponding absolute path, and its relative path to the
             current directory.
     """

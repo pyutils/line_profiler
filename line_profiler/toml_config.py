@@ -123,38 +123,57 @@ class ConfigSource:
         Create an instance by loading from a config file.
 
         Arguments:
-            config (Union[str, PurePath, bool, None]):
+            config (str | os.PathLike[str] | bool | None):
                 Optional path to a specific TOML file;
-                if a (string) path, skip lookup and just try to read
-                from that file;
-                if :py:data:`None` or :py:data:`True`, use lookup to
+                if a (string) path, try to read from that file;
+                if :py:data:`None` or :py:data:`True`, look up and
                 resolve to the correct file;
-                if :py:data:`False`, skip lookup and just use the
-                default configs
+                if :py:data:`False`, just return a copy of the default
+                config (see :py:meth:`~.ConfigSource.from_default`).
             read_env (bool):
-                Whether to read the environment variable
-                :envvar:`!LINE_PROFILER_RC` for a config file (instead
-                of moving straight onto environment-based lookup) if
-                ``config`` is not provided.
+                How to look up the config file if not provided (i.e.
+                ``config = None`` or equivalently :py:data:`True`):
+
+                :py:data:`True`
+                    Try to read the environment variable
+                    :envvar:`!LINE_PROFILER_RC` as the path to a config
+                    file;
+                    if that fails, fall back to the default configuation
+                    (see :py:meth:`~.ConfigSource.from_default`).
+
+                :py:data:`False`
+                    Use path-based lookup (see Note) to resolve to a
+                    config file.
 
         Returns:
             New instance
 
         Note:
-            For the config TOML file, it is required that each of the
-            following keys either is absent or maps to a table:
+            * For the config TOML file, it is required that each of the
+              following keys either is absent or maps to a table:
 
-            * ``tool`` and ``tool.line_profiler``
-            * ``tool.line_profiler.kernprof``, ``.cli``, ``.setup``,
-              ``.write``, and ``.show``
-            * ``tool.line_profiler.show.column_widths``
+              * ``tool`` and ``tool.line_profiler``
+              * ``tool.line_profiler.kernprof``, ``.cli``, ``.setup``,
+                ``.write``, and ``.show``
+              * ``tool.line_profiler.show.column_widths``
 
-            If this is not the case:
+              If this is not the case:
 
-            * If ``config`` is provided, a :py:class:`ValueError` is
-              raised.
-            * Otherwise, the looked-up file is considered invalid and
-              ignored.
+              * If ``config`` is provided, a :py:class:`ValueError` is
+                raised.
+              * Otherwise, the looked-up file is considered invalid and
+                ignored.
+            * When performing path-based lookup:
+
+              * The current directory is checked first to see if it has
+                a valid, readable TOML file named ``line_profiler.toml``.
+              * If not, check if there is a valid, readable TOML file
+                named ``pyproject.toml``.
+              * If not, check the parent directory, and so on.
+              * If we reached the file-system root without finding a
+                valid, readable TOML file, fall back to the default
+                configuration (see
+                :py:meth:`~.ConfigSource.from_default`).
         """
         def merge(template, supplied):
             if not (isinstance(template, dict) and isinstance(supplied, dict)):
@@ -230,15 +249,15 @@ def find_and_read_config_file(
         *, config=None, env_var=ENV_VAR, targets=TARGETS):
     """
     Arguments:
-        config (Union[str, PurePath, None]):
+        config (str | os.PathLike[str] | None):
             Optional path to a specific TOML file;
             if provided, skip lookup and just try to read from that file
-        env_var (Union[str, None]):
+        env_var (str | None):
             Name of the of the environment variable containing the path
             to a TOML file;
             if true-y and if ``config`` isn't provided, skip lookup and
             just try to read from that file
-        targets (Sequence[str | PurePath]):
+        targets (Sequence[str | os.PathLike[str]]):
             Filenames among which TOML files are looked up (if neither
             ``config`` or ``env_var`` is given)
 
