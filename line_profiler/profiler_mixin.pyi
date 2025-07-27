@@ -3,8 +3,8 @@ from types import (CodeType, FunctionType, MethodType,
                    BuiltinFunctionType, BuiltinMethodType,
                    ClassMethodDescriptorType, MethodDescriptorType,
                    MethodWrapperType, WrapperDescriptorType)
-from typing import (TYPE_CHECKING,
-                    Any, Callable, Dict, List, Mapping, Protocol, TypeVar)
+from typing import (TYPE_CHECKING, overload,
+                    Any, Callable, Mapping, Protocol, TypeVar)
 try:
     from typing import (  # type: ignore[attr-defined]  # noqa: F401
         ParamSpec)
@@ -23,9 +23,10 @@ except ImportError:  # Python < 3.13
 from ._line_profiler import label
 
 
-T = TypeVar('T', bound=type)
+UnparametrizedCallableLike = TypeVar('UnparametrizedCallableLike',
+                                     FunctionType, property, MethodType)
+T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
-R = TypeVar('R')
 PS = ParamSpec('PS')
 
 if TYPE_CHECKING:
@@ -66,31 +67,31 @@ if TYPE_CHECKING:
             ...
 
         @property
-        def __globals__(self) -> Dict[str, Any]:
+        def __globals__(self) -> dict[str, Any]:
             ...
 
         @property
-        def func_globals(self) -> Dict[str, Any]:
+        def func_globals(self) -> dict[str, Any]:
             ...
 
         @property
-        def __dict__(self) -> Dict[str, Any]:
+        def __dict__(self) -> dict[str, Any]:
             ...
 
         @__dict__.setter
-        def __dict__(self, dict: Dict[str, Any]) -> None:
+        def __dict__(self, dict: dict[str, Any]) -> None:
             ...
 
         @property
-        def func_dict(self) -> Dict[str, Any]:
+        def func_dict(self) -> dict[str, Any]:
             ...
 
         @property
-        def __annotations__(self) -> Dict[str, Any]:
+        def __annotations__(self) -> dict[str, Any]:
             ...
 
         @__annotations__.setter
-        def __annotations__(self, annotations: Dict[str, Any]) -> None:
+        def __annotations__(self, annotations: dict[str, Any]) -> None:
             ...
 
         @property
@@ -160,31 +161,79 @@ def is_cached_property(f: Any) -> TypeIs[cached_property]:
 
 
 class ByCountProfilerMixin:
-    def get_underlying_functions(self, func) -> List[FunctionType]:
+    def get_underlying_functions(self, func) -> list[FunctionType]:
         ...
 
-    def wrap_callable(self, func):
+    @overload
+    def wrap_callable(self,  # type: ignore[overload-overlap]
+                      func: CLevelCallable) -> CLevelCallable:
         ...
 
-    def wrap_classmethod(self, func: classmethod) -> classmethod:
+    @overload
+    def wrap_callable(  # type: ignore[overload-overlap]
+        self, func: UnparametrizedCallableLike,
+    ) -> UnparametrizedCallableLike:
         ...
 
-    def wrap_staticmethod(self, func: staticmethod) -> staticmethod:
+    @overload
+    def wrap_callable(self,  # type: ignore[overload-overlap]
+                      func: type[T]) -> type[T]:
+        ...
+
+    @overload
+    def wrap_callable(self,  # type: ignore[overload-overlap]
+                      func: partial[T]) -> partial[T]:
+        ...
+
+    @overload
+    def wrap_callable(self, func: partialmethod[T]) -> partialmethod[T]:
+        ...
+
+    @overload
+    def wrap_callable(self,
+                      func: cached_property[T_co]) -> cached_property[T_co]:
+        ...
+
+    @overload
+    def wrap_callable(self,  # type: ignore[overload-overlap]
+                      func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
+        ...
+
+    @overload
+    def wrap_callable(
+        self, func: classmethod[type[T], PS, T_co],
+    ) -> classmethod[type[T], PS, T_co]:
+        ...
+
+    # Fallback: just return a wrapper function around a generic callable
+
+    @overload
+    def wrap_callable(self, func: Callable) -> FunctionType:
+        ...
+
+    def wrap_classmethod(
+        self, func: classmethod[type[T], PS, T_co],
+    ) -> classmethod[type[T], PS, T_co]:
+        ...
+
+    def wrap_staticmethod(
+            self, func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
         ...
 
     def wrap_boundmethod(self, func: MethodType) -> MethodType:
         ...
 
-    def wrap_partialmethod(self, func: partialmethod) -> partialmethod:
+    def wrap_partialmethod(self, func: partialmethod[T]) -> partialmethod[T]:
         ...
 
-    def wrap_partial(self, func: partial) -> partial:
+    def wrap_partial(self, func: partial[T]) -> partial[T]:
         ...
 
     def wrap_property(self, func: property) -> property:
         ...
 
-    def wrap_cached_property(self, func: cached_property) -> cached_property:
+    def wrap_cached_property(
+            self, func: cached_property[T_co]) -> cached_property[T_co]:
         ...
 
     def wrap_async_generator(self, func: FunctionType) -> FunctionType:
@@ -199,7 +248,7 @@ class ByCountProfilerMixin:
     def wrap_function(self, func: Callable) -> FunctionType:
         ...
 
-    def wrap_class(self, func: T) -> T:
+    def wrap_class(self, func: type[T]) -> type[T]:
         ...
 
     def run(self, cmd: str) -> Self:
@@ -207,12 +256,12 @@ class ByCountProfilerMixin:
 
     def runctx(self,
                cmd: str,
-               globals: Dict[str, Any] | None,
+               globals: dict[str, Any] | None,
                locals: Mapping[str, Any] | None) -> Self:
         ...
 
-    def runcall(self, func: Callable[PS, R], /,
-                *args: PS.args, **kw: PS.kwargs) -> R:
+    def runcall(self, func: Callable[PS, T], /,
+                *args: PS.args, **kw: PS.kwargs) -> T:
         ...
 
     def __enter__(self) -> Self:
