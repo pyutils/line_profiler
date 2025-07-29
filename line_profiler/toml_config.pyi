@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from pathlib import Path, PurePath
-from typing import (List, Dict, Set, Tuple,
-                    Mapping, Sequence,
-                    Any, Self, TypeVar, Union)
+from os import PathLike
+from pathlib import Path
+from typing import Mapping, Sequence, Any, Self, TypeVar
 
 
 TARGETS = 'line_profiler.toml', 'pyproject.toml'
@@ -10,15 +9,15 @@ ENV_VAR = 'LINE_PROFILER_RC'
 
 K = TypeVar('K')
 V = TypeVar('V')
-Config = Tuple[Dict[str, Dict[str, Any]], Path]
-NestedTable = Mapping[K, Union['NestedTable[K, V]', V]]
+Config = tuple[dict[str, dict[str, Any]], Path]
+NestedTable = Mapping[K, 'NestedTable[K, V]' | V]
 
 
 @dataclass
 class ConfigSource:
-    conf_dict: Dict[str, Any]
-    source: Path
-    subtable: List[str]
+    conf_dict: dict[str, Any]
+    path: Path
+    subtable: list[str]
 
     def copy(self) -> Self:
         ...
@@ -32,16 +31,16 @@ class ConfigSource:
         ...
 
     @classmethod
-    def from_config(cls, config: Union[str, PurePath, bool, None] = None, *,
+    def from_config(cls, config: str | PathLike | bool | None = None, *,
                     read_env: bool = True) -> Self:
         ...
 
 
 def find_and_read_config_file(
         *,
-        config: Union[str, PurePath, None] = None,
-        env_var: Union[str, None] = ENV_VAR,
-        targets: Sequence[Union[str, PurePath]] = TARGETS) -> Config:
+        config: str | PathLike | None = None,
+        env_var: str | None = ENV_VAR,
+        targets: Sequence[str | PathLike] = TARGETS) -> Config:
     ...
 
 
@@ -51,5 +50,5 @@ def get_subtable(table: NestedTable[K, V], keys: Sequence[K], *,
 
 
 def get_headers(table: NestedTable[K, Any], *,
-                include_implied: bool = False) -> Set[Tuple[K, ...]]:
+                include_implied: bool = False) -> set[tuple[K, ...]]:
     ...

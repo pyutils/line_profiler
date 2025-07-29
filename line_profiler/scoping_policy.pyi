@@ -5,6 +5,7 @@ from .line_profiler_utils import StringEnum
 
 
 class ScopingPolicy(StringEnum):
+    EXACT = auto()
     CHILDREN = auto()
     DESCENDANTS = auto()
     SIBLINGS = auto()
