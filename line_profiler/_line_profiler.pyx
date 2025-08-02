@@ -53,6 +53,10 @@ _CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
 CANNOT_LINE_TRACE_CYTHON = (
     _CAN_USE_SYS_MONITORING and PY_VERSION_HEX < 0x030d00b1)
 
+# 3.14.0a1 Added `sys.monitoring.clear_tool_id()`, which is
+# automatically invoked by `.free_tool_id()`
+_FREE_TOOL_ID_RESETS_MONITORING = PY_VERSION_HEX >= 0x030e00a1
+
 if not (USE_LEGACY_TRACE or _CAN_USE_SYS_MONITORING):
     # Shouldn't happen since we're already checking the existence of
     # `sys.monitoring` in `line_profiler._diagnostics`, but just to be
@@ -369,25 +373,31 @@ cdef class _SysMonitoringState:
         #   in tests
         mon = sys.monitoring
 
+        # Register tracebacks and remember the existing ones
+        callbacks = [(mon.events.LINE, handle_line),
+                     (mon.events.PY_RETURN, handle_return),
+                     (mon.events.PY_YIELD, handle_yield),
+                     (mon.events.RAISE, handle_raise),
+                     (mon.events.RERAISE, handle_reraise)]
+        for event_id, callback in callbacks:
+            self.callbacks[event_id] = mon.register_callback(
+                self.tool_id, event_id, callback)
+
         # Set prior state
         self.name = mon.get_tool(self.tool_id)
         if self.name is None:
             self.events = mon.events.NO_EVENTS
         else:
             self.events = mon.get_events(self.tool_id)
+            # Note: in 3.14+:
+            # - The existing callbacks have to be cached before this
+            # - The new callbacks have to be re-consolidated after this
             mon.free_tool_id(self.tool_id)
+            if _FREE_TOOL_ID_RESETS_MONITORING:
+                for event_id, callback in callbacks:
+                    mon.register_callback(self.tool_id, event_id, callback)
         mon.use_tool_id(self.tool_id, 'line_profiler')
         mon.set_events(self.tool_id, self.events | self.line_tracing_events)
-
-        # Register tracebacks
-        for event_id, callback in [
-                (mon.events.LINE, handle_line),
-                (mon.events.PY_RETURN, handle_return),
-                (mon.events.PY_YIELD, handle_yield),
-                (mon.events.RAISE, handle_raise),
-                (mon.events.RERAISE, handle_reraise)]:
-            self.callbacks[event_id] = mon.register_callback(
-                self.tool_id, event_id, callback)
 
     cpdef deregister(self):
         mon = sys.monitoring
