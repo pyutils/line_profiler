@@ -6,7 +6,7 @@ from functools import partial
 from io import StringIO
 from itertools import count
 from types import CodeType, ModuleType
-from typing import (Any, Optional, Union,
+from typing import (Any, Optional, Union, Literal,
                     Callable, Generator,
                     Dict, FrozenSet, Tuple,
                     ClassVar)
@@ -754,3 +754,76 @@ def _test_callback_toggle_local_events_helper(
     assert get_loop_hits() == nloop_before_disabling + nloop_after_reenabling
 
     return n
+
+
+@pytest.mark.parametrize('profile_when', ['before', 'after'])
+def test_local_event_preservation(
+        profile_when: Literal['before', 'after']) -> None:
+    """
+    Check that existing :py:mod:`sys.monitoring` code-local events are
+    preserved when a profiler swaps out the callable's code object.
+    """
+    prof = LineProfiler(wrap_trace=True)
+
+    @prof
+    def func0(n: int) -> int:
+        """
+        This function compiles down to the same bytecode as `func()` and
+        ensure that `prof` does bytecode padding with the latter later.
+        """
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+
+    def func(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n  # Loop body
+        return x
+
+    def profile() -> None:
+        nonlocal code
+        nonlocal func
+        orig_code = func.__code__
+        orig_func, func = func, prof(func)
+        code = orig_func.__code__
+        assert code is not orig_code, (
+            '`line_profiler` didn\'t overwrite the function\'s code object')
+
+    lines, first_lineno = inspect.getsourcelines(func)
+    lineno_loop = first_lineno + next(
+        offset for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body'))
+    names = {func.__name__, func.__qualname__}
+    code = func.__code__
+    callback = LineCallback(lambda code, _: code.co_name in names)
+
+    n = 17
+    try:
+        with ExitStack() as stack:
+            stack.enter_context(restore_events())
+            stack.enter_context(restore_events(code=code))
+            # Disable global line events, and enable local line events
+            disable_line_events()
+            if profile_when == 'before':
+                profile()
+            enable_line_events(code)
+            if profile_when != 'before':
+                # If we're here, the code object of `func()` is swapped
+                # out after code-local events have been registered to it
+                profile()
+            assert MON.get_current_callback() is callback
+            assert func(n) == n * (n + 1) // 2
+            assert MON.get_current_callback() is callback
+            print(callback.nhits)
+            assert callback.nhits[_line_profiler.label(code)][lineno_loop] == n
+    finally:
+        with StringIO() as sio:
+            prof.print_stats(sio)
+            output = sio.getvalue()
+        print(output)
+    line = next(line for line in output.splitlines()
+                if line.endswith('# Loop body'))
+    nhits = int(line.split()[1])
+    assert nhits == n
