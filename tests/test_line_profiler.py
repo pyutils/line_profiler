@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import functools
+import gc
 import inspect
 import io
 import sys
@@ -49,24 +50,80 @@ def get_prof_stats(prof, name='prof', **kwargs):
     return output
 
 
-class check_timings:
+class check_timings_and_mem:
     """
-    Verify that the profiler starts without timing data and ends with
-    some.
+    Verify that:
+    - The profiler starts without timing data and ends with some.
+    - We don't leak reference counts for code objects (which are
+      retrieved with a C function in the Cython code).
     """
-    def __init__(self, prof):
+    def __init__(self, prof, *,
+                 check_timings=True, check_ref_counts=True, gc=False):
         self.prof = prof
+        self.check_timings = bool(check_timings)
+        self.check_ref_counts = bool(check_ref_counts)
+        self.ref_counts = None
+        # Sometimes the garbage collector seem to need extra help;
+        # in those cases, explicitly garbage-collect
+        self.gc = gc
 
     def __enter__(self):
-        timings = self.timings
-        assert not any(timings.values()), (
-            f'Expected no timing entries, got {timings!r}')
+        self._check_timings_enter()
+        self._check_ref_counts_enter()
         return self.prof
 
     def __exit__(self, *_, **__):
+        self._check_timings_exit()
+        self._check_ref_counts_exit()
+
+    def _check_timings_enter(self):
+        if not self.check_timings:
+            return
+        timings = self.timings
+        assert not any(timings.values()), (
+            f'Expected no timing entries, got {timings!r}')
+
+    def _check_timings_exit(self):
+        if not self.check_timings:
+            return
         timings = self.timings
         assert any(timings.values()), (
             f'Expected timing entries, got {timings!r}')
+
+    def _check_ref_counts_enter(self):
+        if not self.check_ref_counts:
+            return
+        self.ref_counts = self.get_ref_counts()
+
+    def _check_ref_counts_exit(self):
+        if not self.check_ref_counts:
+            return
+        assert self.ref_counts is not None
+        for key, count in self.get_ref_counts().items():
+            try:
+                referrers = repr(gc.get_referrers(*(
+                    code for code in self.prof.code_hash_map
+                    if code.co_name == key)))
+                msg = (f'{key}(): '
+                       f'ref count {self.ref_counts[key]} -> {count} '
+                       f'(referrers: {referrers})')
+                if self.ref_counts[key] == count:
+                    print(msg)
+                else:
+                    raise AssertionError(msg)
+            except KeyError:
+                pass
+
+    def get_ref_counts(self):
+        if self.gc:
+            gc.collect()
+        results = {}
+        for code in self.prof.code_hash_map:
+            # Note: use the name as the key to avoid messing with the
+            # ref count
+            key = code.co_name
+            results[key] = results.get(key, 0) + sys.getrefcount(code)
+        return results
 
     @property
     def timings(self):
@@ -163,7 +220,7 @@ def test_double_decoration():
     f_double_wrapped = profile(f_wrapped)
     assert f_double_wrapped is f_wrapped
 
-    with check_timings(profile):
+    with check_timings_and_mem(profile):
         assert profile.enable_count == 0
         value = f_wrapped(10)
         assert profile.enable_count == 0
@@ -181,7 +238,7 @@ def test_function_decorator():
     assert f in profile.functions
     assert f_wrapped.__name__ == 'f'
 
-    with check_timings(profile):
+    with check_timings_and_mem(profile):
         assert profile.enable_count == 0
         value = f_wrapped(10)
         assert profile.enable_count == 0
@@ -198,7 +255,7 @@ def test_gen_decorator():
     assert g in profile.functions
     assert g_wrapped.__name__ == 'g'
 
-    with check_timings(profile):
+    with check_timings_and_mem(profile):
         assert profile.enable_count == 0
         i = g_wrapped(10)
         assert profile.enable_count == 0
@@ -223,13 +280,14 @@ def test_coroutine_decorator():
     assert inspect.iscoroutinefunction(coro)
     assert coro in profile.functions
 
-    with check_timings(profile):
+    with check_timings_and_mem(profile):
         assert profile.enable_count == 0
         assert asyncio.run(coro_wrapped()) == 1
         assert profile.enable_count == 0
 
 
-def test_async_gen_decorator():
+@pytest.mark.parametrize('gc', [True, False])
+def test_async_gen_decorator(gc):
     """
     Test for `LineProfiler.wrap_async_generator()`.
     """
@@ -259,16 +317,31 @@ def test_async_gen_decorator():
     assert inspect.isasyncgenfunction(ag_wrapped)
     assert ag in profile.functions
 
-    with check_timings(profile):
+    with check_timings_and_mem(profile):
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_simple()) == [0]
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_simple(1, 2, 3)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
+    # FIXME: why does `use_agen_complex()` need the `gc.collect()` to
+    # not fail in Python 3.12+? Doesn't seem to matter which
+    # ${LINE_PROFILER_CORE} we're using either...
+    with contextlib.ExitStack() as stack:
+        xfail_312 = hasattr(sys, 'monitoring') and not gc
+        if xfail_312:  # Python 3.12+
+            excinfo = stack.enter_context(
+                pytest.raises(AssertionError, match=r'ag\(\): ref count'))
+        stack.enter_context(
+            check_timings_and_mem(profile, check_timings=False, gc=gc))
+        assert profile.enable_count == 0
         assert asyncio.run(use_agen_complex(1, 2, 3)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_complex(1, 2, 3, None, 4)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
+    if xfail_312:
+        pytest.xfail('\nsys.version={!r}..., gc={}:\n{}'
+                     .format(sys.version.strip().split()[0], gc,
+                             excinfo.getrepr(style='no')))
 
 
 def test_classmethod_decorator():
