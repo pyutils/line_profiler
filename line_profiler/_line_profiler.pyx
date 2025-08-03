@@ -393,7 +393,7 @@ cdef class _SysMonitoringState:
         # Set prior state
         # Note: in 3.14.0a1+, calling `sys.monitoring.free_tool_id()`
         # also calls `.clear_tool_id()`, causing existing callbacks and
-        # code-object-local events to be wiped... so don't
+        # code-object-local events to be wiped... so don't call free.
         # this does have the side effect of not overriding the active
         # profiling tool name if one is already in use, but it's
         # probably better this way
