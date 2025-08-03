@@ -419,7 +419,7 @@ cdef class _SysMonitoringState:
             * ``loc_args`` and ``other_args`` should be tuples.
         """
         mon = sys.monitoring
-        cdef PyObject *result
+        cdef PyObject *result = NULL
         cdef object callback  # type: Callable | None
         cdef object callback_after  # type: Callable | None
         cdef object code_location  # type: tuple[code, Unpack[tuple]]
@@ -452,11 +452,8 @@ cdef class _SysMonitoringState:
         arg_tuple = code_location + other_args
         try:
             events_before = mon.get_events(self.tool_id)
-            result = PyObject_Call(
+            result = PyObject_Call(  # Note: DECREF needed below
                 <PyObject *>callback, <PyObject *>arg_tuple, NULL)
-            # We don't actually need the value since we just want to
-            # compare it against `sys.monitoring.DISABLE`
-            Py_XDECREF(result)
         else:
             # Since we can't actually disable the event (or line
             # profiling will be interrupted), just mark the location so
@@ -465,6 +462,7 @@ cdef class _SysMonitoringState:
             if result == <PyObject *>(mon.DISABLE):
                 disabled.add(code_location)
         finally:
+            Py_XDECREF(result)
             # Update the events
             self.events = _patch_events(
                 self.events, events_before, mon.get_events(self.tool_id))
