@@ -285,7 +285,10 @@ cpdef _copy_local_sysmon_events(old_code, new_code):
         mon = sys.monitoring
     except AttributeError:  # Python < 3.12
         return new_code
-    for tool_id in range(6):
+    # Tool ids are integers in the range 0 to 5 inclusive.
+    # https://docs.python.org/3/library/sys.monitoring.html#tool-identifiers
+    NUM_TOOLS = 6  
+    for tool_id in range(NUM_TOOLS):
         try:
             events = mon.get_local_events(tool_id, old_code)
             mon.set_local_events(tool_id, new_code, events)
