@@ -91,6 +91,7 @@ cdef extern from "Python_wrapper.h":
     cdef int PyTrace_C_RETURN
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
+    cdef void Py_XDECREF(PyObject *o)
 
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
@@ -453,6 +454,9 @@ cdef class _SysMonitoringState:
             events_before = mon.get_events(self.tool_id)
             result = PyObject_Call(
                 <PyObject *>callback, <PyObject *>arg_tuple, NULL)
+            # We don't actually need the value since we just want to
+            # compare it against `sys.monitoring.DISABLE`
+            Py_XDECREF(result)
         else:
             # Since we can't actually disable the event (or line
             # profiling will be interrupted), just mark the location so
@@ -1419,6 +1423,7 @@ pystate.h#L16
     cdef _LineProfilerManager manager_ = <_LineProfilerManager>manager
     cdef int result
     cdef int recursion_guard = manager_.recursion_guard
+    cdef PyObject *code
 
     if what == PyTrace_CALL:
         # Any code using the `sys.gettrace()`-`sys.settrace()` paradigm
@@ -1441,12 +1446,12 @@ pystate.h#L16
         if manager_._set_frame_local_trace:
             set_local_trace(<PyObject *>manager_, py_frame)
     elif what == PyTrace_LINE or what == PyTrace_RETURN:
-        # Normally we'd need to DECREF the return from
-        # `PyFrame_GetCode()`, but Cython does that for us
+        code = <PyObject *>PyFrame_GetCode(py_frame)
         inner_trace_callback((what == PyTrace_LINE),
                              manager_.active_instances,
-                             <object>PyFrame_GetCode(py_frame),
+                             <object>code,
                              PyFrame_GetLineNumber(py_frame))
+        Py_XDECREF(code)
 
     # Call the trace callback that we're wrapping around where
     # appropriate
