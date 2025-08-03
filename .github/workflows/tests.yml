@@ -159,6 +159,8 @@ jobs:
         python-version: '3.13'
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
+      env:
+        COVERAGE_CORE: ctrace
       run: |-
         echo '############ PWD'
         pwd
@@ -410,6 +412,8 @@ jobs:
         ls -al
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
+      env:
+        COVERAGE_CORE: ctrace
       run: |-
         echo '############ PWD'
         pwd
