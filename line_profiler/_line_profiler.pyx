@@ -53,10 +53,6 @@ _CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
 CANNOT_LINE_TRACE_CYTHON = (
     _CAN_USE_SYS_MONITORING and PY_VERSION_HEX < 0x030d00b1)
 
-# 3.14.0a1 Added `sys.monitoring.clear_tool_id()`, which is
-# automatically invoked by `.free_tool_id()`
-_FREE_TOOL_ID_RESETS_MONITORING = PY_VERSION_HEX >= 0x030e00a1
-
 if not (USE_LEGACY_TRACE or _CAN_USE_SYS_MONITORING):
     # Shouldn't happen since we're already checking the existence of
     # `sys.monitoring` in `line_profiler._diagnostics`, but just to be
@@ -264,7 +260,7 @@ cpdef _code_replace(func, co_code):
         code = func.__func__.__code__
     if hasattr(code, 'replace'):
         # python 3.8+
-        code = code.replace(co_code=co_code)
+        code = _copy_local_sysmon_events(code, code.replace(co_code=co_code))
     else:
         # python <3.8
         co = code
@@ -275,6 +271,27 @@ cpdef _code_replace(func, co_code):
                         co.co_firstlineno, co.co_lnotab, co.co_freevars,
                         co.co_cellvars)
     return code
+
+
+cpdef _copy_local_sysmon_events(old_code, new_code):
+    """
+    Copy the local events from ``old_code`` over to ``new_code`` where
+    appropriate.
+
+    Returns:
+        code: ``new_code``
+    """
+    try:
+        mon = sys.monitoring
+    except AttributeError:  # Python < 3.12
+        return new_code
+    for tool_id in range(6):
+        try:
+            events = mon.get_local_events(tool_id, old_code)
+            mon.set_local_events(tool_id, new_code, events)
+        except ValueError:  # Tool ID not in use
+            pass
+    return new_code
 
 
 cpdef int _patch_events(int events, int before, int after):
@@ -373,43 +390,40 @@ cdef class _SysMonitoringState:
         #   in tests
         mon = sys.monitoring
 
-        # Register tracebacks and remember the existing ones
-        callbacks = [(mon.events.LINE, handle_line),
-                     (mon.events.PY_RETURN, handle_return),
-                     (mon.events.PY_YIELD, handle_yield),
-                     (mon.events.RAISE, handle_raise),
-                     (mon.events.RERAISE, handle_reraise)]
-        for event_id, callback in callbacks:
-            self.callbacks[event_id] = mon.register_callback(
-                self.tool_id, event_id, callback)
-
         # Set prior state
+        # Note: in 3.14.0a1+, calling `sys.monitoring.free_tool_id()`
+        # also calls `.clear_tool_id()`, causing existing callbacks and
+        # code-object-local events to be wiped... so don't
+        # this does have the side effect of not overriding the active
+        # profiling tool name if one is already in use, but it's
+        # probably better this way
         self.name = mon.get_tool(self.tool_id)
         if self.name is None:
             self.events = mon.events.NO_EVENTS
+            mon.use_tool_id(self.tool_id, 'line_profiler')
         else:
             self.events = mon.get_events(self.tool_id)
-            # Note: in 3.14+:
-            # - The existing callbacks have to be cached before this
-            # - The new callbacks have to be re-consolidated after this
-            mon.free_tool_id(self.tool_id)
-            if _FREE_TOOL_ID_RESETS_MONITORING:
-                for event_id, callback in callbacks:
-                    mon.register_callback(self.tool_id, event_id, callback)
-        mon.use_tool_id(self.tool_id, 'line_profiler')
         mon.set_events(self.tool_id, self.events | self.line_tracing_events)
+
+        # Register tracebacks and remember the existing ones
+        for event_id, callback in [(mon.events.LINE, handle_line),
+                                   (mon.events.PY_RETURN, handle_return),
+                                   (mon.events.PY_YIELD, handle_yield),
+                                   (mon.events.RAISE, handle_raise),
+                                   (mon.events.RERAISE, handle_reraise)]:
+            self.callbacks[event_id] = mon.register_callback(
+                self.tool_id, event_id, callback)
 
     cpdef deregister(self):
         mon = sys.monitoring
         cdef dict wrapped_callbacks = self.callbacks
 
         # Restore prior state
-        mon.free_tool_id(self.tool_id)
-        if self.name is not None:
-            mon.use_tool_id(self.tool_id, self.name)
-            mon.set_events(self.tool_id, self.events)
-            self.name = None
-            self.events = mon.events.NO_EVENTS
+        mon.set_events(self.tool_id, self.events)
+        if self.name is None:
+            mon.free_tool_id(self.tool_id)
+        self.name = None
+        self.events = mon.events.NO_EVENTS
 
         # Reset tracebacks
         while wrapped_callbacks:
@@ -1128,7 +1142,7 @@ datamodel.html#user-defined-functions
                 # function (on some instance);
                 # (re-)pad with no-op
                 co_code = base_co_code + NOP_BYTES * npad
-                code = _code_replace(func, co_code=co_code)
+                code = _code_replace(func, co_code)
                 try:
                     func.__code__ = code
                 except AttributeError as e:
@@ -1165,6 +1179,9 @@ datamodel.html#user-defined-functions
                 code_hashes.append(code_hash)
             # We can't replace the code object on Cython functions, but
             # we can *store* a copy with the correct metadata
+            # Note: we don't use `_copy_local_sysmon_events()` here
+            # because Cython shim code objects don't support local
+            # events
             code = code.replace(co_filename=cython_source)
             profilers_to_update = {self}
         # Update `._c_code_map` and `.code_hash_map` with the new line
