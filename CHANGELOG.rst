@@ -3,6 +3,7 @@ Changes
 
 5.0.1
 ~~~~~
+* FIX: ref-count leaks #372
 
 5.0.0
 ~~~~~
