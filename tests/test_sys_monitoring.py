@@ -1,3 +1,4 @@
+import gc
 import inspect
 import sys
 from collections import Counter
@@ -300,6 +301,8 @@ def test_wrapping_trace(wrap_trace: bool) -> None:
     """
     Check that existing :py:mod:`sys.monitoring` callbacks behave as
     expected depending on `LineProfiler.wrap_trace`.
+    Also check that we aren't leaking ref counts of the return value of
+    the wrapped callback.
     """
     prof = LineProfiler(wrap_trace=wrap_trace)
     try:
@@ -337,6 +340,46 @@ def _test_callback_helper(
             callback.nhits[_line_profiler.label(code)][lineno_loop])
         return cumulative_nhits
 
+    def test_running_func(n: int) -> int:
+        """
+        Check that (1) the result is as expected, (2) the existing
+        callback is restored, and (3) we don't leak ref counts for the
+        return value of the callback.
+        """
+        old_ref_count = callback.get_return_ref_count()
+        assert MON.get_current_callback() is callback
+        assert func(n) == n * (n + 1) // 2
+        assert MON.get_current_callback() is callback
+        new_ref_count = callback.get_return_ref_count()
+        referrers = repr(gc.get_referrers(callback.return_value))
+        msg = (f'ReturnObjectCallback.return_value: '
+               f'ref count {old_ref_count} -> {new_ref_count} '
+               f'(referrers: {referrers})')
+        if new_ref_count == old_ref_count:
+            print(msg)
+        else:
+            raise AssertionError(msg)
+        return n
+
+    class ReturnObjectCallback(LineCallback):
+        """
+        Callback which returns an arbitrary object in place of
+        :py:data:`None` for reference-count-tracking purposes.
+        """
+        return_value: ClassVar[Any] = object()
+
+        def __call__(self, *args, **kwargs) -> Any:
+            result = super().__call__(*args, **kwargs)
+            if result is not None:
+                return result
+            return self.return_value
+
+        @classmethod
+        def get_return_ref_count(cls, use_gc: bool = False) -> int:
+            if use_gc:
+                gc.collect()
+            return sys.getrefcount(cls.return_value)
+
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
         offset for offset, line in enumerate(lines)
@@ -346,25 +389,19 @@ def _test_callback_helper(
     if prof is not None:
         orig_func, func = func, prof(func)
         code = orig_func.__code__
-    callback = LineCallback(lambda code, _: code.co_name in names)
+    callback = ReturnObjectCallback(lambda code, _: code.co_name in names)
 
     # When line events are suppressed, nothing should happen
     with restore_events():
         disable_line_events()
-        n = nloop_no_trace
-        assert MON.get_current_callback() is callback
-        assert func(n) == n * (n + 1) // 2
-        assert MON.get_current_callback() is callback
+        test_running_func(nloop_no_trace)
         assert not callback.nhits
 
     # When line events are activated, the callback should see line
     # events
     with restore_events():  # Global events
         enable_line_events()
-        n = nloop_trace_global
-        assert MON.get_current_callback() is callback
-        assert func(n) == n * (n + 1) // 2
-        assert MON.get_current_callback() is callback
+        n = test_running_func(nloop_trace_global)
         print(callback.nhits)
         if callback_called:
             expected = cumulative_nhits + n
@@ -377,10 +414,7 @@ def _test_callback_helper(
         # Disable global line events, and enable local line events
         disable_line_events()
         enable_line_events(code)
-        n = nloop_trace_local
-        assert MON.get_current_callback() is callback
-        assert func(n) == n * (n + 1) // 2
-        assert MON.get_current_callback() is callback
+        n = test_running_func(nloop_trace_local)
         print(callback.nhits)
         if callback_called:
             expected = cumulative_nhits + n
@@ -404,10 +438,7 @@ def _test_callback_helper(
             enable_line_events(code)
             # We still get 1 more hit because that's the call we
             # return `sys.monitoring.DISABLE` from
-            n = nloop_disabled
-            assert MON.get_current_callback() is callback
-            assert func(n) == n * (n + 1) // 2
-            assert MON.get_current_callback() is callback
+            test_running_func(nloop_disabled)
             print(callback.nhits)
             if callback_called:
                 expected = cumulative_nhits + 1
