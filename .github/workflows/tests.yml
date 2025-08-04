@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - name: Set up Python 3.13 for linting
-      uses: actions/setup-python@v5.1.1
+      uses: actions/setup-python@v5.6.0
       with:
         python-version: '3.13'
     - name: Install dependencies
@@ -49,9 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - name: Set up Python 3.13
-      uses: actions/setup-python@v5.1.1
+      uses: actions/setup-python@v5.6.0
       with:
         python-version: '3.13'
     - name: Upgrade pip
@@ -71,6 +71,11 @@ jobs:
         ls -al wheelhouse
         python -m uv pip install wheelhouse/line_profiler*.tar.gz -v
     - name: Test minimal loose sdist
+      env:
+        # So far not needed, but once we bump to 3.14 this needs to be
+        # set whenever `pytest` is run with `coverage`
+        # (see the `test_binpy_wheels` jobs)
+        COVERAGE_CORE: ctrace
       run: |-
         pwd
         ls -al
@@ -85,6 +90,8 @@ jobs:
         python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
     - name: Test full loose sdist
+      env:
+        COVERAGE_CORE: ctrace
       run: |-
         pwd
         ls -al
@@ -130,7 +137,7 @@ jobs:
         - auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
@@ -140,7 +147,7 @@ jobs:
       with:
         platforms: all
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v2.21.0
+      uses: pypa/cibuildwheel@v3.1.2
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
@@ -153,7 +160,7 @@ jobs:
       shell: bash
       run: ls -la wheelhouse
     - name: Set up Python 3.13 to combine coverage
-      uses: actions/setup-python@v5.1.1
+      uses: actions/setup-python@v5.6.0
       if: runner.os == 'Linux'
       with:
         python-version: '3.13'
@@ -172,7 +179,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v4.5.0
+    - uses: codecov/codecov-action@v5.4.3
       name: Codecov Upload
       env:
         HAVE_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -181,7 +188,7 @@ jobs:
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
-    - uses: codecov/codecov-action@v4.5.0
+    - uses: codecov/codecov-action@v5.4.3
       name: Codecov Upload
       with:
         file: ./coverage.xml
@@ -264,6 +271,10 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
           os: macOS-latest
@@ -288,6 +299,10 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
           os: windows-latest
@@ -309,12 +324,16 @@ jobs:
           os: windows-latest
           arch: auto
         - python-version: '3.13'
+          install-extras: tests,optional
+          os: windows-latest
+          arch: auto
+        - python-version: 3.14.0-rc.1
           install-extras: tests,optional
           os: windows-latest
           arch: auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: matrix.os == 'windows-latest'
@@ -324,7 +343,7 @@ jobs:
       with:
         platforms: all
     - name: Setup Python
-      uses: actions/setup-python@v5.1.1
+      uses: actions/setup-python@v5.6.0
       with:
         python-version: ${{ matrix.python-version }}
     - uses: actions/download-artifact@v4.1.8
@@ -354,9 +373,11 @@ jobs:
         ")
         export MOD_VERSION=$(python -c "if 1:
             from pkginfo import Wheel, SDist
+            import pathlib
             fpath = '$WHEEL_FPATH'
             cls = Wheel if fpath.endswith('.whl') else SDist
-            print(cls(fpath).version)
+            item = cls(fpath)
+            print(item.version)
         ")
         echo "WHEEL_FPATH=$WHEEL_FPATH"
         echo "INSTALL_EXTRAS=$INSTALL_EXTRAS"
@@ -367,6 +388,7 @@ jobs:
       shell: bash
       env:
         CI_PYTHON_VERSION: py${{ matrix.python-version }}
+        COVERAGE_CORE: ctrace
       run: |-
         echo "Creating test sandbox directory"
         export WORKSPACE_DNAME="testdir_${CI_PYTHON_VERSION}_${GITHUB_RUN_ID}_${RUNNER_OS}"
@@ -409,7 +431,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v4.5.0
+    - uses: codecov/codecov-action@v5.4.3
       name: Codecov Upload
       with:
         file: ./coverage.xml
@@ -423,7 +445,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - uses: actions/download-artifact@v4.1.8
       name: Download wheels
       with:
@@ -499,7 +521,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - uses: actions/download-artifact@v4.1.8
       name: Download wheels
       with:
@@ -576,7 +598,7 @@ jobs:
     - live_deploy
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - uses: actions/download-artifact@v4.1.8
       name: Download artifacts
       with:
