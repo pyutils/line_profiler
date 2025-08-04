@@ -72,9 +72,6 @@ jobs:
         python -m uv pip install wheelhouse/line_profiler*.tar.gz -v
     - name: Test minimal loose sdist
       env:
-        # So far not needed, but once we bump to 3.14 this needs to be
-        # set whenever `pytest` is run with `coverage`
-        # (see the `test_binpy_wheels` jobs)
         COVERAGE_CORE: ctrace
       run: |-
         pwd
@@ -146,6 +143,18 @@ jobs:
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
+    - name: Build binary wheels
+      uses: pypa/cibuildwheel@v3.1.2
+      with:
+        output-dir: wheelhouse
+        config-file: pyproject.toml
+      env:
+        CIBW_SKIP: ${{ matrix.cibw_skip }}
+        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+        CIBW_ENVIRONMENT: PYTHONUTF8=1
+        PYTHONUTF8: '1'
+        CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
+        CIBW_BUILD: cp38-*
     - name: Build binary wheels
       uses: pypa/cibuildwheel@v3.1.2
       with:
