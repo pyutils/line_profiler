@@ -71,6 +71,11 @@ jobs:
         ls -al wheelhouse
         python -m uv pip install wheelhouse/line_profiler*.tar.gz -v
     - name: Test minimal loose sdist
+      env:
+        # So far not needed, but once we bump to 3.14 this needs to be
+        # set whenever `pytest` is run with `coverage`
+        # (see the `test_binpy_wheels` jobs)
+        COVERAGE_CORE: ctrace
       run: |-
         pwd
         ls -al
@@ -85,6 +90,8 @@ jobs:
         python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
     - name: Test full loose sdist
+      env:
+        COVERAGE_CORE: ctrace
       run: |-
         pwd
         ls -al
@@ -159,8 +166,6 @@ jobs:
         python-version: '3.13'
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
-      env:
-        COVERAGE_CORE: ctrace
       run: |-
         echo '############ PWD'
         pwd
@@ -383,6 +388,7 @@ jobs:
       shell: bash
       env:
         CI_PYTHON_VERSION: py${{ matrix.python-version }}
+        COVERAGE_CORE: ctrace
       run: |-
         echo "Creating test sandbox directory"
         export WORKSPACE_DNAME="testdir_${CI_PYTHON_VERSION}_${GITHUB_RUN_ID}_${RUNNER_OS}"
@@ -412,8 +418,6 @@ jobs:
         ls -al
     - name: Combine coverage Linux
       if: runner.os == 'Linux'
-      env:
-        COVERAGE_CORE: ctrace
       run: |-
         echo '############ PWD'
         pwd
