@@ -95,6 +95,8 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
+    
+    cdef unsigned long PyThread_get_thread_ident()
 
 ctypedef PyCodeObject *PyCodeObjectPtr
 
@@ -1414,8 +1416,10 @@ cdef inline inner_trace_callback(
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
     # Cython functions have empty/zero bytecodes
     cdef bint any_nonzero = False
+    cdef unsigned long ident
     cdef Py_hash_t block_hash
     cdef unordered_map[int64, LineTime] line_entries
+    cdef unordered_map[int64, LastTime] last_map
 
     if _bh_cache.count(ccode):
         block_hash = _bh_cache[ccode]
@@ -1445,9 +1449,10 @@ cdef inline inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = 1
-        ident = threading.get_ident()
-        if prof._c_last_time[ident].count(block_hash):
-            old = prof._c_last_time[ident][block_hash]
+        ident = PyThread_get_thread_ident()
+        last_map = prof._c_last_time[ident]
+        if last_map.count(block_hash):
+            old = last_map[block_hash]
             line_entries = prof._c_code_map[code_hash]
             key = old.f_lineno
             if not line_entries.count(key):
@@ -1459,7 +1464,7 @@ cdef inline inner_trace_callback(
             # Get the time again. This way, we don't record much time
             # wasted in this function.
             prof._c_last_time[ident][block_hash] = LastTime(lineno, hpTimer())
-        elif prof._c_last_time[ident].count(block_hash):
+        elif last_map.count(block_hash):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
