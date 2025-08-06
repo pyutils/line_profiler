@@ -18,6 +18,8 @@ from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
+from cpython.object cimport PyObject_Hash
+from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
@@ -68,6 +70,7 @@ ctypedef long long int int64
 cdef extern from "Python_wrapper.h":
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
+    ctypedef long Py_hash_t
     ctypedef struct PyFrameObject
     ctypedef long long PY_LONG_LONG
     ctypedef int (*Py_tracefunc)(
@@ -92,6 +95,11 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
+
+ctypedef PyCodeObject *PyCodeObjectPtr
+
+cdef extern from "pyhash.h":
+    Py_hash_t _Py_HashBytes(const void *src, Py_ssize_t len)
 
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
@@ -550,7 +558,7 @@ sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
-    cdef public object active_instances  # type: set[LineProfiler]
+    cdef public set active_instances  # type: set[LineProfiler]
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
     cdef int recursion_guard
@@ -1384,32 +1392,53 @@ datamodel.html#user-defined-functions
             for key, entries_by_lineno in all_entries.items()}
         return LineStats(stats, self.timer_unit)
 
+cdef unordered_map[PyCodeObjectPtr, Py_hash_t] _bh_cache
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef inline inner_trace_callback(
-        int is_line_event, object instances, object code, int lineno):
+        int is_line_event, set instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
     """
-    cdef object prof_
-    cdef object bytecode = code.co_code
+    cdef PyCodeObject* ccode = <PyCodeObject*> code
+    cdef LineProfiler prof_
     cdef LineProfiler prof
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
     cdef int has_time = 0
     cdef int64 code_hash
-    cdef int64 block_hash
+    cdef object py_bytes_obj = code.co_code
+    cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
+    cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
+    # Cython functions have empty/zero bytecodes
+    cdef bint any_nonzero = False
+    cdef Py_hash_t block_hash
     cdef unordered_map[int64, LineTime] line_entries
 
-    if any(bytecode):
-        block_hash = hash(bytecode)
-    else:  # Cython functions have empty/zero bytecodes
-        block_hash = hash(code)
+    if _bh_cache.count(ccode):
+        block_hash = _bh_cache[ccode]
+    else:
+        # scan for any non-zero bytes which indicate python functions being profiled
+        for i in range(size):
+            if data[i] != 0:
+                any_nonzero = True
+                break
+
+        if any_nonzero:
+            # fast-path, staying in C as much as possible
+            block_hash = _Py_HashBytes(data, size)
+        else:
+            # fallback for Cython functions
+            block_hash = PyObject_Hash(code)
+        _bh_cache[ccode] = block_hash
+
     code_hash = compute_line_hash(block_hash, lineno)
 
     for prof_ in instances:
+        # for some reason, doing this is much faster than just combining it into the above
+        # like doing "for prof in instances:" is far slower
         prof = <LineProfiler>prof_
         if not prof._c_code_map.count(code_hash):
             continue
