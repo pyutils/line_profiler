@@ -100,9 +100,6 @@ cdef extern from "Python_wrapper.h":
 
 ctypedef PyCodeObject *PyCodeObjectPtr
 
-cdef extern from "pyhash.h":
-    Py_hash_t _Py_HashBytes(const void *src, Py_ssize_t len)
-
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
 
@@ -1432,7 +1429,7 @@ cdef inline inner_trace_callback(
 
         if any_nonzero:
             # fast-path, staying in C as much as possible
-            block_hash = _Py_HashBytes(data, size)
+            block_hash = PyObject_Hash(code.co_code)
         else:
             # fallback for Cython functions
             block_hash = PyObject_Hash(code)
@@ -1449,6 +1446,10 @@ cdef inline inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = 1
+        else:
+            # this should never matter because time isn't used when this is hit
+            # but gcc doesn't know that, so we include it to avoid a compiler warning
+            time = 0
         ident = PyThread_get_thread_ident()
         last_map = prof._c_last_time[ident]
         if last_map.count(block_hash):
