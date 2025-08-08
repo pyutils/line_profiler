@@ -144,7 +144,7 @@ jobs:
       with:
         platforms: all
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
+      uses: pypa/cibuildwheel@v3.1.3
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
@@ -156,7 +156,7 @@ jobs:
         CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
         CIBW_BUILD: cp38-*
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
+      uses: pypa/cibuildwheel@v3.1.3
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
