@@ -1391,7 +1391,6 @@ datamodel.html#user-defined-functions
             for key, entries_by_lineno in all_entries.items()}
         return LineStats(stats, self.timer_unit)
 
-cdef unordered_map[PyCodeObjectPtr, Py_hash_t] _bh_cache
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -1400,7 +1399,6 @@ cdef inline inner_trace_callback(
     """
     The basic building block for the trace callbacks.
     """
-    cdef PyCodeObject* ccode = <PyCodeObject*> code
     cdef LineProfiler prof_
     cdef LineProfiler prof
     cdef LastTime old
@@ -1418,22 +1416,18 @@ cdef inline inner_trace_callback(
     cdef unordered_map[int64, LineTime] line_entries
     cdef unordered_map[int64, LastTime] last_map
 
-    if _bh_cache.count(ccode):
-        block_hash = _bh_cache[ccode]
-    else:
-        # scan for any non-zero bytes which indicate python functions being profiled
-        for i in range(size):
-            if data[i] != 0:
-                any_nonzero = True
-                break
+    for i in range(size):
+        if data[i] != 0:
+            any_nonzero = True
+            break
 
-        if any_nonzero:
-            # fast-path, staying in C as much as possible
-            block_hash = PyObject_Hash(code.co_code)
-        else:
-            # fallback for Cython functions
-            block_hash = PyObject_Hash(code)
-        _bh_cache[ccode] = block_hash
+    if any_nonzero:
+        # TODO: make this a fast-path by using Py_HashBytes, while staying in C
+        # as much as possible
+        block_hash = PyObject_Hash(code.co_code)
+    else:
+        # fallback for Cython functions
+        block_hash = PyObject_Hash(code)
 
     code_hash = compute_line_hash(block_hash, lineno)
 
@@ -1446,10 +1440,6 @@ cdef inline inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = 1
-        else:
-            # this should never matter because time isn't used when this is hit
-            # but gcc doesn't know that, so we include it to avoid a compiler warning
-            time = 0
         ident = PyThread_get_thread_ident()
         last_map = prof._c_last_time[ident]
         if last_map.count(block_hash):
