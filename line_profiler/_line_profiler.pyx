@@ -18,6 +18,7 @@ from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
+from cython.operator cimport dereference
 from cpython.object cimport PyObject_Hash
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
@@ -68,6 +69,22 @@ ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
 cdef extern from "Python_wrapper.h":
+    """
+    #if PY_VERSION_HEX >= 0x030d00a1 && PY_VERSION_HEX < 0x030e00a1
+    /*      Unfortunately, _Py_HashBytes() is not exposed in Python
+     *      3.13, so just fall back to the slower Py_ObjectHash()
+     */
+    #   define hash_bytecode(bytestring, bytes, len) PyObject_Hash(bytestring)
+    #else
+    #   if PY_VERSION_HEX >= 0x030e00a1  // 3.14.0.a1
+    #       define hash_bytes(b, n) Py_HashBuffer(b, n)
+    #   else
+    #       include "pyhash.h"
+    #       define hash_bytes(b, n) _Py_HashBytes(b, n)
+    #   endif
+    #   define hash_bytecode(bytestring, bytes, len) hash_bytes(bytes, len)
+    #endif
+    """
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
     ctypedef long Py_hash_t
@@ -97,6 +114,8 @@ cdef extern from "Python_wrapper.h":
     cdef void Py_XDECREF(PyObject *o)
     
     cdef unsigned long PyThread_get_thread_ident()
+    cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
+                                 Py_ssize_t len)
 
 ctypedef PyCodeObject *PyCodeObjectPtr
 
@@ -1414,7 +1433,7 @@ cdef inline inner_trace_callback(
     cdef unsigned long ident
     cdef Py_hash_t block_hash
     cdef unordered_map[int64, LineTime] line_entries
-    cdef unordered_map[int64, LastTime] last_map
+    cdef unordered_map[int64, LastTime] *last_map
 
     for i in range(size):
         if data[i] != 0:
@@ -1422,9 +1441,11 @@ cdef inline inner_trace_callback(
             break
 
     if any_nonzero:
-        # TODO: make this a fast-path by using Py_HashBytes, while staying in C
-        # as much as possible
-        block_hash = PyObject_Hash(code.co_code)
+        # FIXME: `hash_bytecode()` is supposed to switch to
+        # `Py_HashBuffer()` or `_Py_HashBytes()` where available, but
+        # in tests it only seems to add overhead...
+        # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
+        block_hash = PyObject_Hash(py_bytes_obj)
     else:
         # fallback for Cython functions
         block_hash = PyObject_Hash(code)
@@ -1441,9 +1462,9 @@ cdef inline inner_trace_callback(
             time = hpTimer()
             has_time = 1
         ident = PyThread_get_thread_ident()
-        last_map = prof._c_last_time[ident]
-        if last_map.count(block_hash):
-            old = last_map[block_hash]
+        last_map = &(prof._c_last_time[ident])
+        if dereference(last_map).count(block_hash):
+            old = dereference(last_map)[block_hash]
             line_entries = prof._c_code_map[code_hash]
             key = old.f_lineno
             if not line_entries.count(key):
@@ -1454,14 +1475,13 @@ cdef inline inner_trace_callback(
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
-            prof._c_last_time[ident][block_hash] = LastTime(lineno, hpTimer())
-        elif last_map.count(block_hash):
+            dereference(last_map)[block_hash] = LastTime(lineno, hpTimer())
+        elif dereference(last_map).count(block_hash):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            prof._c_last_time[ident].erase(
-                prof._c_last_time[ident].find(block_hash))
+            dereference(last_map).erase(dereference(last_map).find(block_hash))
 
 
 cdef extern int legacy_trace_callback(
