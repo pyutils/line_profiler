@@ -18,7 +18,7 @@ from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
-from cython.operator cimport dereference
+from cython.operator cimport dereference as deref
 from cpython.object cimport PyObject_Hash
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
@@ -1422,32 +1422,28 @@ cdef inline inner_trace_callback(
     cdef LineProfiler prof
     cdef LastTime old
     cdef int key
-    cdef PY_LONG_LONG time
-    cdef int has_time = 0
+    cdef PY_LONG_LONG time = 0
+    cdef bint has_time = False
     cdef int64 code_hash
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
-    # Cython functions have empty/zero bytecodes
-    cdef bint any_nonzero = False
     cdef unsigned long ident
     cdef Py_hash_t block_hash
-    cdef unordered_map[int64, LineTime] line_entries
+    cdef LineTime *entry
+    cdef unordered_map[int64, LineTime] *line_entries
     cdef unordered_map[int64, LastTime] *last_map
 
+    # Cython functions have empty/zero bytecodes
+    # FIXME: `hash_bytecode()` is supposed to switch to
+    # `Py_HashBuffer()` or `_Py_HashBytes()` where available, but
+    # in tests it only seems to add overhead...
     for i in range(size):
-        if data[i] != 0:
-            any_nonzero = True
+        if data[i]:
+            # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
+            block_hash = PyObject_Hash(py_bytes_obj)
             break
-
-    if any_nonzero:
-        # FIXME: `hash_bytecode()` is supposed to switch to
-        # `Py_HashBuffer()` or `_Py_HashBytes()` where available, but
-        # in tests it only seems to add overhead...
-        # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
-        block_hash = PyObject_Hash(py_bytes_obj)
-    else:
-        # fallback for Cython functions
+    else:  # fallback for Cython functions
         block_hash = PyObject_Hash(code)
 
     code_hash = compute_line_hash(block_hash, lineno)
@@ -1460,28 +1456,32 @@ cdef inline inner_trace_callback(
             continue
         if not has_time:
             time = hpTimer()
-            has_time = 1
+            has_time = True
         ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
-        if dereference(last_map).count(block_hash):
-            old = dereference(last_map)[block_hash]
-            line_entries = prof._c_code_map[code_hash]
+        if deref(last_map).count(block_hash):
+            old = deref(last_map)[block_hash]
+            line_entries = &(prof._c_code_map[code_hash])
             key = old.f_lineno
-            if not line_entries.count(key):
-                prof._c_code_map[code_hash][key] = LineTime(
-                    code_hash, key, 0, 0)
-            prof._c_code_map[code_hash][key].nhits += 1
-            prof._c_code_map[code_hash][key].total_time += time - old.time
+            if not deref(line_entries).count(key):
+                deref(line_entries)[key] = LineTime(code_hash, key, 0, 0)
+            entry = &(deref(line_entries)[key])
+            # Note: explicitly `deref()`-ing here causes the new values
+            # to be assigned to a temp var;
+            # meanwhile, directly dot-accessing a pointer causes Cython
+            # to correctly write `ptr->attr = (ptr->attr + incr)`
+            entry.nhits += 1
+            entry.total_time += time - old.time
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
-            dereference(last_map)[block_hash] = LastTime(lineno, hpTimer())
-        elif dereference(last_map).count(block_hash):
+            deref(last_map)[block_hash] = LastTime(lineno, hpTimer())
+        elif deref(last_map).count(block_hash):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            dereference(last_map).erase(dereference(last_map).find(block_hash))
+            deref(last_map).erase(deref(last_map).find(block_hash))
 
 
 cdef extern int legacy_trace_callback(
