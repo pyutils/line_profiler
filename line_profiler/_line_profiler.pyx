@@ -18,6 +18,8 @@ from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
+from cpython.object cimport PyObject_Hash
+from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
@@ -68,6 +70,7 @@ ctypedef long long int int64
 cdef extern from "Python_wrapper.h":
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
+    ctypedef long Py_hash_t
     ctypedef struct PyFrameObject
     ctypedef long long PY_LONG_LONG
     ctypedef int (*Py_tracefunc)(
@@ -92,6 +95,10 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
+    
+    cdef unsigned long PyThread_get_thread_ident()
+
+ctypedef PyCodeObject *PyCodeObjectPtr
 
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
@@ -550,7 +557,7 @@ sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
-    cdef public object active_instances  # type: set[LineProfiler]
+    cdef public set active_instances  # type: set[LineProfiler]
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
     cdef int recursion_guard
@@ -1388,37 +1395,55 @@ datamodel.html#user-defined-functions
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef inline inner_trace_callback(
-        int is_line_event, object instances, object code, int lineno):
+        int is_line_event, set instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
     """
-    cdef object prof_
-    cdef object bytecode = code.co_code
+    cdef LineProfiler prof_
     cdef LineProfiler prof
     cdef LastTime old
     cdef int key
     cdef PY_LONG_LONG time
     cdef int has_time = 0
     cdef int64 code_hash
-    cdef int64 block_hash
+    cdef object py_bytes_obj = code.co_code
+    cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
+    cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
+    # Cython functions have empty/zero bytecodes
+    cdef bint any_nonzero = False
+    cdef unsigned long ident
+    cdef Py_hash_t block_hash
     cdef unordered_map[int64, LineTime] line_entries
+    cdef unordered_map[int64, LastTime] last_map
 
-    if any(bytecode):
-        block_hash = hash(bytecode)
-    else:  # Cython functions have empty/zero bytecodes
-        block_hash = hash(code)
+    for i in range(size):
+        if data[i] != 0:
+            any_nonzero = True
+            break
+
+    if any_nonzero:
+        # TODO: make this a fast-path by using Py_HashBytes, while staying in C
+        # as much as possible
+        block_hash = PyObject_Hash(code.co_code)
+    else:
+        # fallback for Cython functions
+        block_hash = PyObject_Hash(code)
+
     code_hash = compute_line_hash(block_hash, lineno)
 
     for prof_ in instances:
+        # for some reason, doing this is much faster than just combining it into the above
+        # like doing "for prof in instances:" is far slower
         prof = <LineProfiler>prof_
         if not prof._c_code_map.count(code_hash):
             continue
         if not has_time:
             time = hpTimer()
             has_time = 1
-        ident = threading.get_ident()
-        if prof._c_last_time[ident].count(block_hash):
-            old = prof._c_last_time[ident][block_hash]
+        ident = PyThread_get_thread_ident()
+        last_map = prof._c_last_time[ident]
+        if last_map.count(block_hash):
+            old = last_map[block_hash]
             line_entries = prof._c_code_map[code_hash]
             key = old.f_lineno
             if not line_entries.count(key):
@@ -1430,7 +1455,7 @@ cdef inline inner_trace_callback(
             # Get the time again. This way, we don't record much time
             # wasted in this function.
             prof._c_last_time[ident][block_hash] = LastTime(lineno, hpTimer())
-        elif prof._c_last_time[ident].count(block_hash):
+        elif last_map.count(block_hash):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
