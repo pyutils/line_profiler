@@ -18,6 +18,9 @@ from functools import wraps
 from sys import byteorder
 import sys
 cimport cython
+from cython.operator cimport dereference as deref
+from cpython.object cimport PyObject_Hash
+from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
 
@@ -66,9 +69,26 @@ ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
 cdef extern from "Python_wrapper.h":
+    """
+    #if PY_VERSION_HEX >= 0x030d00a1 && PY_VERSION_HEX < 0x030e00a1
+    /*      Unfortunately, _Py_HashBytes() is not exposed in Python
+     *      3.13, so just fall back to the slower Py_ObjectHash()
+     */
+    #   define hash_bytecode(bytestring, bytes, len) PyObject_Hash(bytestring)
+    #else
+    #   if PY_VERSION_HEX >= 0x030e00a1  // 3.14.0.a1
+    #       define hash_bytes(b, n) Py_HashBuffer(b, n)
+    #   else
+    #       include "pyhash.h"
+    #       define hash_bytes(b, n) _Py_HashBytes(b, n)
+    #   endif
+    #   define hash_bytecode(bytestring, bytes, len) hash_bytes(bytes, len)
+    #endif
+    """
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
     ctypedef struct PyFrameObject
+    ctypedef Py_ssize_t Py_hash_t
     ctypedef long long PY_LONG_LONG
     ctypedef int (*Py_tracefunc)(
         object self, PyFrameObject *py_frame, int what, PyObject *arg)
@@ -92,6 +112,13 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
+    
+    # it's actually an unsigned long, but we want to avoid truncation on windows
+    cdef unsigned long long PyThread_get_thread_ident()
+    cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
+                                 Py_ssize_t len)
+
+ctypedef PyCodeObject *PyCodeObjectPtr
 
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
@@ -550,7 +577,7 @@ sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
-    cdef public object active_instances  # type: set[LineProfiler]
+    cdef public set active_instances  # type: set[LineProfiler]
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
     cdef int recursion_guard
@@ -1239,7 +1266,7 @@ datamodel.html#user-defined-functions
 
     property _manager:
         def __get__(self):
-            thread_id = threading.get_ident()
+            thread_id = PyThread_get_thread_ident()
             try:
                 return self._managers[thread_id]
             except KeyError:
@@ -1303,7 +1330,7 @@ datamodel.html#user-defined-functions
                 If no profiling data is available on the current thread.
         """
         try:
-            return (<dict>self._c_last_time)[threading.get_ident()]
+            return (<dict>self._c_last_time)[PyThread_get_thread_ident()]
         except KeyError as e:
             # We haven't actually profiled anything yet
             raise (KeyError('No profiling data on the current thread '
@@ -1349,7 +1376,7 @@ datamodel.html#user-defined-functions
         return py_last_time
 
     cpdef disable(self):
-        self._c_last_time[threading.get_ident()].clear()
+        self._c_last_time[PyThread_get_thread_ident()].clear()
         self._manager._handle_disable_event(self)
 
     def get_stats(self):
@@ -1388,55 +1415,74 @@ datamodel.html#user-defined-functions
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef inline inner_trace_callback(
-        int is_line_event, object instances, object code, int lineno):
+        int is_line_event, set instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
     """
-    cdef object prof_
-    cdef object bytecode = code.co_code
+    cdef LineProfiler prof_
     cdef LineProfiler prof
     cdef LastTime old
     cdef int key
-    cdef PY_LONG_LONG time
-    cdef int has_time = 0
+    cdef PY_LONG_LONG time = 0
+    cdef bint has_time = False
     cdef int64 code_hash
-    cdef int64 block_hash
-    cdef unordered_map[int64, LineTime] line_entries
+    cdef object py_bytes_obj = code.co_code
+    cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
+    cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
+    cdef unsigned long ident
+    cdef Py_hash_t block_hash
+    cdef LineTime *entry
+    cdef unordered_map[int64, LineTime] *line_entries
+    cdef unordered_map[int64, LastTime] *last_map
 
-    if any(bytecode):
-        block_hash = hash(bytecode)
-    else:  # Cython functions have empty/zero bytecodes
+    # Cython functions have empty/zero bytecodes
+    # FIXME: `hash_bytecode()` is supposed to switch to
+    # `Py_HashBuffer()` or `_Py_HashBytes()` where available, but
+    # in tests it only seems to add overhead...
+    for i in range(size):
+        if data[i]:
+            # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
+            block_hash = hash(py_bytes_obj)
+            break
+    else:  # fallback for Cython functions
         block_hash = hash(code)
+
     code_hash = compute_line_hash(block_hash, lineno)
 
     for prof_ in instances:
+        # for some reason, doing this is much faster than just combining it into the above
+        # like doing "for prof in instances:" is far slower
         prof = <LineProfiler>prof_
         if not prof._c_code_map.count(code_hash):
             continue
         if not has_time:
             time = hpTimer()
-            has_time = 1
-        ident = threading.get_ident()
-        if prof._c_last_time[ident].count(block_hash):
-            old = prof._c_last_time[ident][block_hash]
-            line_entries = prof._c_code_map[code_hash]
+            has_time = True
+        ident = PyThread_get_thread_ident()
+        last_map = &(prof._c_last_time[ident])
+        if deref(last_map).count(block_hash):
+            old = deref(last_map)[block_hash]
+            line_entries = &(prof._c_code_map[code_hash])
             key = old.f_lineno
-            if not line_entries.count(key):
-                prof._c_code_map[code_hash][key] = LineTime(
-                    code_hash, key, 0, 0)
-            prof._c_code_map[code_hash][key].nhits += 1
-            prof._c_code_map[code_hash][key].total_time += time - old.time
+            if not deref(line_entries).count(key):
+                deref(line_entries)[key] = LineTime(code_hash, key, 0, 0)
+            entry = &(deref(line_entries)[key])
+            # Note: explicitly `deref()`-ing here causes the new values
+            # to be assigned to a temp var;
+            # meanwhile, directly dot-accessing a pointer causes Cython
+            # to correctly write `ptr->attr = (ptr->attr + incr)`
+            entry.nhits += 1
+            entry.total_time += time - old.time
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
-            prof._c_last_time[ident][block_hash] = LastTime(lineno, hpTimer())
-        elif prof._c_last_time[ident].count(block_hash):
+            deref(last_map)[block_hash] = LastTime(lineno, hpTimer())
+        elif deref(last_map).count(block_hash):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            prof._c_last_time[ident].erase(
-                prof._c_last_time[ident].find(block_hash))
+            deref(last_map).erase(deref(last_map).find(block_hash))
 
 
 cdef extern int legacy_trace_callback(
