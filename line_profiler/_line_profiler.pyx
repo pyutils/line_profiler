@@ -114,7 +114,7 @@ cdef extern from "Python_wrapper.h":
     cdef void Py_XDECREF(PyObject *o)
     
     # it's actually an unsigned long, but we want to avoid truncation on windows
-    cdef uint64_t PyThread_get_thread_ident()
+    cdef unsigned long long PyThread_get_thread_ident()
     cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
                                  Py_ssize_t len)
 
@@ -1442,10 +1442,10 @@ cdef inline inner_trace_callback(
     for i in range(size):
         if data[i]:
             # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
-            block_hash = PyObject_Hash(py_bytes_obj)
+            block_hash = hash(py_bytes_obj)
             break
     else:  # fallback for Cython functions
-        block_hash = PyObject_Hash(code)
+        block_hash = hash(code)
 
     code_hash = compute_line_hash(block_hash, lineno)
 
