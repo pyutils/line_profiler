@@ -87,7 +87,6 @@ cdef extern from "Python_wrapper.h":
     """
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
-    ctypedef long Py_hash_t
     ctypedef struct PyFrameObject
     ctypedef long long PY_LONG_LONG
     ctypedef int (*Py_tracefunc)(
@@ -1428,7 +1427,6 @@ cdef inline inner_trace_callback(
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
-    cdef unsigned long ident
     cdef Py_hash_t block_hash
     cdef LineTime *entry
     cdef unordered_map[int64, LineTime] *line_entries
