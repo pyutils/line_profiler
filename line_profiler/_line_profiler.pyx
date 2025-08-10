@@ -19,7 +19,7 @@ from sys import byteorder
 import sys
 cimport cython
 from cython.operator cimport dereference as deref
-from cpython.object cimport PyObject_Hash
+from cpython.object cimport PyObject_Hash, Py_hash_t
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
@@ -1264,7 +1264,7 @@ datamodel.html#user-defined-functions
 
     property _manager:
         def __get__(self):
-            thread_id = threading.get_ident()
+            thread_id = PyThread_get_thread_ident()
             try:
                 return self._managers[thread_id]
             except KeyError:
@@ -1328,7 +1328,7 @@ datamodel.html#user-defined-functions
                 If no profiling data is available on the current thread.
         """
         try:
-            return (<dict>self._c_last_time)[threading.get_ident()]
+            return (<dict>self._c_last_time)[PyThread_get_thread_ident()]
         except KeyError as e:
             # We haven't actually profiled anything yet
             raise (KeyError('No profiling data on the current thread '
@@ -1374,7 +1374,7 @@ datamodel.html#user-defined-functions
         return py_last_time
 
     cpdef disable(self):
-        self._c_last_time[threading.get_ident()].clear()
+        self._c_last_time[PyThread_get_thread_ident()].clear()
         self._manager._handle_disable_event(self)
 
     def get_stats(self):
@@ -1427,6 +1427,7 @@ cdef inline inner_trace_callback(
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
+    cdef unsigned long ident
     cdef Py_hash_t block_hash
     cdef LineTime *entry
     cdef unordered_map[int64, LineTime] *line_entries
