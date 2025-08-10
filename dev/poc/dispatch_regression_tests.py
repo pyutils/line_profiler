@@ -10,6 +10,16 @@ python_versions = [
     '3.13',
 ]
 
+USE_LOCAL = False
+NUM = 3
+
+line_profiler_versions = [
+    '4.0.0',
+    # '4.1.2',
+    # '4.2.0',
+    # '5.0.0',
+]
+
 for python_version in python_versions:
     current_pyver = 'cp' + python_version.replace('.', '')
     image = 'python:' + python_version
@@ -24,30 +34,24 @@ for python_version in python_versions:
     container.call(['pip', 'install', 'uv'])
     container.call(['uv', 'pip', 'install', '--system', 'kwutil', 'ubelt', 'scriptconfig', 'psutil', 'ruamel.yaml', 'py-cpuinfo'])
 
-    line_profiler_versions = [
-        # '4.0.0',
-        '4.1.2',
-        '4.2.0',
-        '5.0.0',
-    ]
-
     for line_profiler_version in line_profiler_versions:
         container.call(['uv', 'pip', 'uninstall', '--system', 'line_profiler'])
         container.call(['uv', 'pip', 'install', '--system', f'line_profiler=={line_profiler_version}'])
-        for _ in range(5):
+        for _ in range(NUM):
             container.call(['python', container_script_path])
 
-    # Test the latest wheels (requires these are built beforehand)
-    local_wheels = ub.Path('/home/joncrall/code/line_profiler/wheelhouse')
-    container.copy_into(local_wheels, ub.Path('wheelhouse'))
-    line_profiler_version = '5.0.1'
-    found = list(local_wheels.glob('*' + current_pyver + '-manylinux*'))
-    assert len(found) == 1
-    wheel_name = found[0].name
-    container.call(['uv', 'pip', 'uninstall', '--system', 'line_profiler'])
-    container.call(['uv', 'pip', 'install', '--system', 'wheelhouse/' + str(wheel_name)])
-    for _ in range(5):
-        container.call(['python', container_script_path])
+    if USE_LOCAL:
+        # Test the latest wheels (requires these are built beforehand)
+        local_wheels = ub.Path('/home/joncrall/code/line_profiler/wheelhouse')
+        container.copy_into(local_wheels, ub.Path('wheelhouse'))
+        line_profiler_version = '5.0.1'
+        found = list(local_wheels.glob('*' + current_pyver + '-manylinux*'))
+        assert len(found) == 1
+        wheel_name = found[0].name
+        container.call(['uv', 'pip', 'uninstall', '--system', 'line_profiler'])
+        container.call(['uv', 'pip', 'install', '--system', 'wheelhouse/' + str(wheel_name)])
+        for _ in range(NUM):
+            container.call(['python', container_script_path])
 
     container.copy_out(ub.Path('/root/.cache/line_profiler/benchmarks/'), ub.Path('bench_results'))
 
@@ -61,7 +65,6 @@ sys.path.append(ubelt.expandpath('~/code/line_profiler/dev/poc'))
 from gather_regression_tests import accumulate_results
 from gather_regression_tests import plot_results
 
-df['context.machine.py_version_simple'] = df['context.machine.py_version'].apply(lambda x: x.split(' ')[0])
 
 df = accumulate_results(result_paths)
 df = df.sort_values('params.line_profiler_version')
