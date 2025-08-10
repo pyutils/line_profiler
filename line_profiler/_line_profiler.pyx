@@ -1457,7 +1457,7 @@ cdef inline inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = True
-        ident = PyThread_get_thread_ident()
+        ident = threading.get_ident() # PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
         if deref(last_map).count(block_hash):
             old = deref(last_map)[block_hash]
