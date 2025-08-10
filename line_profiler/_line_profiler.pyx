@@ -112,9 +112,8 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
-    
-    # it's actually an unsigned long, but we want to avoid truncation on windows
-    cdef unsigned long long PyThread_get_thread_ident()
+
+    cdef unsigned long PyThread_get_thread_ident()
     cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
                                  Py_ssize_t len)
 
@@ -1442,6 +1441,7 @@ cdef inline inner_trace_callback(
     for i in range(size):
         if data[i]:
             # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
+            # because we use Python functions like hash, we CANNOT mark this function as nogil
             block_hash = hash(py_bytes_obj)
             break
     else:  # fallback for Cython functions
