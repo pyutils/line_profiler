@@ -4,6 +4,8 @@ import sys
 import scriptconfig as scfg
 
 
+# TODO: more than one type of benchmark would be a good idea
+
 BENCHMARK_CODE = ub.codeblock(
     '''
     if 'profile' not in globals():
@@ -57,6 +59,9 @@ class RegressionTestCLI(scfg.DataConfig):
         code_id = ub.hash_data(code)[0:16]
         fpath = dpath / f'{code_id}.py'
         fpath.write_text(code)
+
+        # TODO: can we tag the hash of the wheel we used to install?
+        # We need to be able to differentiate dev versions.
 
         results = {
             'context': context.obj,
