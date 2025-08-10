@@ -3,6 +3,7 @@ from cibuildwheel.oci_container import OCIPlatform
 import ubelt as ub
 
 python_versions = [
+    '3.8',
     '3.9',
     '3.10',
     '3.11',
@@ -15,6 +16,9 @@ NUM = 3
 
 line_profiler_versions = [
     '4.0.0',
+    '4.0.1',
+    '4.0.3',
+    '4.1.0',
     # '4.1.2',
     # '4.2.0',
     # '5.0.0',
