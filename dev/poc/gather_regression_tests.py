@@ -103,8 +103,13 @@ def plot_results(df):
     fig = figman.figure()
     fig.clf()
     ax = fig.gca()
-    sns.lineplot(data=df, x='params.line_profiler_version', y='record.duration', hue='record.line_profiler.enabled', ax=ax)
+    sns.lineplot(data=df, x='params.line_profiler_version', y='record.duration', style='record.line_profiler.enabled', ax=ax)
     figman.finalize('regression_plot.png')
+
+    fig.clf()
+    ax = fig.gca()
+    sns.lineplot(data=df, x='params.line_profiler_version', y='record.duration', style='record.line_profiler.enabled', ax=ax, hue='context.machine.py_version_simple')
+    figman.finalize('regression_plot_pyversions.png')
 
 
 def accumulate_results(result_paths):
@@ -126,6 +131,7 @@ def accumulate_results(result_paths):
             flat_record.update(flat_params)
             records_accum.append(flat_record)
     df = pd.DataFrame(records_accum)
+    df['context.machine.py_version_simple'] = df['context.machine.py_version'].apply(lambda x: x.split(' ')[0])
     return df
 
 __cli__ = GatherRegressionTestsCLI

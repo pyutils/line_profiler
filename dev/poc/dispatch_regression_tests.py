@@ -61,6 +61,8 @@ sys.path.append(ubelt.expandpath('~/code/line_profiler/dev/poc'))
 from gather_regression_tests import accumulate_results
 from gather_regression_tests import plot_results
 
+df['context.machine.py_version_simple'] = df['context.machine.py_version'].apply(lambda x: x.split(' ')[0])
+
 df = accumulate_results(result_paths)
 df = df.sort_values('params.line_profiler_version')
 plot_results(df)
