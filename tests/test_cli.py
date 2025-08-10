@@ -6,7 +6,9 @@ from io import StringIO
 from os.path import join
 from shlex import split
 from sys import executable
+from tempfile import TemporaryDirectory
 import pytest
+import ubelt as ub
 from line_profiler.cli_utils import add_argument
 
 
@@ -124,9 +126,6 @@ def test_cli():
     CommandLine:
         xdoctest -m ./tests/test_cli.py test_cli
     """
-    import ubelt as ub
-    import tempfile
-
     # Create a dummy source file
     code = ub.codeblock(
         '''
@@ -141,7 +140,7 @@ def test_cli():
         if __name__ == '__main__':
             my_inefficient_function()
         ''')
-    with tempfile.TemporaryDirectory() as tmp_dpath:
+    with TemporaryDirectory() as tmp_dpath:
         tmp_src_fpath = join(tmp_dpath, 'foo.py')
         with open(tmp_src_fpath, 'w') as file:
             file.write(code)
@@ -161,11 +160,85 @@ def test_cli():
         assert '7       100' in info['out']
 
 
+def test_multiple_lprof_files():
+    """
+    Test that we can aggregate profiling results.
+    """
+    code = ub.codeblock("""
+    from argparse import ArgumentParser
+    from typing import Sequence, Optional
+
+    def sum_n(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n  # Loop: sum_n
+        return x
+
+
+    def sum_nsq(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n * n  # Loop: sum_nsq
+        return x
+
+
+    def positive_int(x: str) -> int:
+        result = int(x)
+        if result > 0:
+            return result
+        raise ValueError
+
+
+    def main(args: Optional[Sequence[str]] = None) -> None:
+        parser = ArgumentParser()
+        parser.add_argument('--pow',
+                            choices=[1, 2], default=1, type=int)
+        parser.add_argument('n', type=positive_int)
+        options = parser.parse_args()
+        func, pattern = {1: (sum_n, '1 + ... + {} = {}'),
+                         2: (sum_nsq, '1 + ... + {}^2 = {}')}[options.pow]
+        print(pattern.format(options.n, func(options.n)))
+
+
+    if __name__ == '__main__':
+        main()
+    """)
+    with TemporaryDirectory() as tmp_dpath:
+        tmp_src_fpath = join(tmp_dpath, 'foo.py')
+        with open(tmp_src_fpath, 'w') as file:
+            file.write(code)
+
+        # Run kernprof on it
+        stats_files = []
+        nloops = {}
+        for i, (pow, n, expected) in enumerate([
+                (1, 10, '1 + ... + 10 = 55'),
+                (2, 20, '1 + ... + 20^2 = 2870'),
+                (1, 30, '1 + ... + 30 = 465')]):
+            stats = f'{i}.lprof'
+            kcmd = ['kernprof',
+                    '-l', '-o', stats, '-p', tmp_src_fpath, tmp_src_fpath, '--',
+                    '--pow', str(pow), str(n)]
+            stats_files.append(stats)
+            nloops[pow] = nloops.get(pow, 0) + n
+            kinfo = ub.cmd(kcmd, verbose=3, cwd=tmp_dpath)
+            kinfo.check_returncode()
+            assert expected in kinfo.stdout
+
+        # Check the output
+        lcmd = [executable, '-m', 'line_profiler', *stats_files]
+        linfo = ub.cmd(lcmd, cwd=tmp_dpath, verbose=3)
+        linfo.check_returncode()
+        for func, nhits in ('sum_n', nloops[1]), ('sum_nsq', nloops[2]):
+            line, = (line for line in linfo.stdout.splitlines()
+                     if line.endswith('# Loop: ' + func))
+            assert int(line.split()[1]) == nhits
+
+
 def test_version_agreement():
     """
     Ensure that line_profiler and kernprof have the same version info
     """
-    import ubelt as ub
     info1 = ub.cmd(f'{executable} -m line_profiler --version')
     info2 = ub.cmd(f'{executable} -m kernprof --version')
 
