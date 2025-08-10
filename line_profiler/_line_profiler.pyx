@@ -114,7 +114,7 @@ cdef extern from "Python_wrapper.h":
     cdef void Py_XDECREF(PyObject *o)
     
     # it's actually an unsigned long, but we want to avoid truncation on windows
-    cdef unsigned long long PyThread_get_thread_ident()
+    cdef uint64_t PyThread_get_thread_ident()
     cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
                                  Py_ssize_t len)
 
@@ -577,7 +577,7 @@ sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
-    cdef public set active_instances  # type: set[LineProfiler]
+    cdef public object active_instances  # type: set[LineProfiler]
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
     cdef int recursion_guard
@@ -1415,11 +1415,11 @@ datamodel.html#user-defined-functions
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef inline inner_trace_callback(
-        int is_line_event, set instances, object code, int lineno):
+        int is_line_event, object instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
     """
-    cdef LineProfiler prof_
+    cdef object prof_
     cdef LineProfiler prof
     cdef LastTime old
     cdef int key
