@@ -53,6 +53,7 @@ Changes
   * ``kernprof`` and ``python -m line_profiler`` CLI options
   * ``GlobalProfiler`` configurations, and
   * profiler output (e.g. ``LineProfiler.print_stats()``) formatting
+* ENH: Added capability to combine profiling data both programmatically (``LineStats.__add__()``) and via the CLI (``python -m line_profiler``) (#380, originally proposed in #219)
 
 4.2.0
 ~~~~~
