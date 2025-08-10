@@ -19,7 +19,7 @@ from sys import byteorder
 import sys
 cimport cython
 from cython.operator cimport dereference as deref
-from cpython.object cimport PyObject_Hash, Py_hash_t
+from cpython.object cimport PyObject_Hash
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t
@@ -88,6 +88,7 @@ cdef extern from "Python_wrapper.h":
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
     ctypedef struct PyFrameObject
+    ctypedef Py_ssize_t Py_hash_t
     ctypedef long long PY_LONG_LONG
     ctypedef int (*Py_tracefunc)(
         object self, PyFrameObject *py_frame, int what, PyObject *arg)
@@ -112,7 +113,8 @@ cdef extern from "Python_wrapper.h":
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
     
-    cdef unsigned long PyThread_get_thread_ident()
+    # it's actually an unsigned long, but we want to avoid truncation on windows
+    cdef unsigned long long PyThread_get_thread_ident()
     cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
                                  Py_ssize_t len)
 
