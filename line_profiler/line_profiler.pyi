@@ -63,7 +63,7 @@ class LineStats(CLineStats):
     def __repr__(self) -> str:
         ...
 
-    def __eq__(self, other: _StatsLike) -> bool:
+    def __eq__(self, other) -> bool:
         ...
 
     def __add__(self, other: _StatsLike) -> Self:
