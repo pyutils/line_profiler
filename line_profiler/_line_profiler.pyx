@@ -1440,7 +1440,10 @@ cdef inline inner_trace_callback(
     # in tests it only seems to add overhead...
     for i in range(size):
         if data[i]:
+            # hash_bytecode is currently unused due to test issues on Windows with PyObject_Hash
+            # but we plan to fix those and enable it shortly
             # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
+
             # because we use Python functions like hash, we CANNOT mark this function as nogil
             block_hash = hash(py_bytes_obj)
             break
@@ -1460,6 +1463,9 @@ cdef inline inner_trace_callback(
             has_time = True
         ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
+        # deref() is Cython's version of the -> accessor in C++. if we don't use deref then
+        # Cython thinks that when we index last_map,
+        # we want pointer indexing (which is not the case)
         if deref(last_map).count(block_hash):
             old = deref(last_map)[block_hash]
             line_entries = &(prof._c_code_map[code_hash])
