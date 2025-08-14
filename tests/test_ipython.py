@@ -76,6 +76,44 @@ class TestIPython(unittest.TestCase):
         self.assertEqual(lines_2_data[1][0], 6)  # lineno
         self.assertEqual(lines_2_data[1][1], loops - 1)  # hits
     
+    def test_lprun_all_autoprofile_toplevel(self):
+        try:
+            from IPython.testing.globalipapp import get_ipython
+        except ImportError:
+            import pytest
+            pytest.skip()
+        
+        loops = 20000
+        # use an example with 2 scopes even though we only profile the top level
+        # so that we ensure that the inner level isn't run
+        cell_body = f"""
+        class Test1:
+            def test2(self):
+                loops = {loops}
+                for x in range(loops):
+                    y = x
+                    if x == (loops - 2):
+                        break
+        Test1().test2()
+        """
+
+        ip = get_ipython()
+        ip.run_line_magic('load_ext', 'line_profiler')
+        lprof = ip.run_cell_magic('lprun_all', line='-r -p', cell=cell_body)
+        timings = lprof.get_stats().timings
+        
+        # 1 scope: the class scope (Test1)
+        self.assertEqual(len(timings), 1)
+
+        timings_iter = iter(timings.items())
+        func_data, lines_data = next(timings_iter)
+        print(f'func_data={func_data}')
+        print(f'lines_data={lines_data}')
+        self.assertEqual(func_data[1], 1)  # lineno of the outer function
+        self.assertEqual(len(lines_data), 2)  # only 2 lines were executed in this outer scope
+        self.assertEqual(lines_data[0][0], 3)  # lineno
+        self.assertEqual(lines_data[0][1], 1)  # hits
+    
     def test_lprun_all_timetaken(self):
         try:
             from IPython.testing.globalipapp import get_ipython

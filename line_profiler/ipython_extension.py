@@ -41,7 +41,7 @@ from IPython.core.page import page
 from IPython.utils.ipstruct import Struct
 from IPython.core.error import UsageError
 
-from .line_profiler import LineProfiler
+from line_profiler import LineProfiler
 from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
 from line_profiler.autoprofile.ast_profile_transformer import AstProfileTransformer
 
@@ -403,6 +403,9 @@ class LineProfilerMagics(Magics):
                 message = (
                     "*** KeyboardInterrupt exception caught in code being profiled."
                 )
+            finally:
+                # Clean up temp file.
+                os.unlink(tf.name)
 
             total_time = time.perf_counter() - start_time
             profile.disable_by_count()
@@ -455,6 +458,7 @@ class LineProfilerMagics(Magics):
                         "*** KeyboardInterrupt exception caught in code being profiled."
                     )
             finally:
+                os.unlink(tf.name)
                 # Restore any previous @profile.
                 if had_profile:
                     builtins.__dict__["profile"] = old_profile
@@ -475,9 +479,6 @@ class LineProfilerMagics(Magics):
 
             page(output)
             print(message, end="")
-
-        # Clean up temp file.
-        os.unlink(tf.name)
 
         dump_file = opts.D[0]
         if dump_file:
