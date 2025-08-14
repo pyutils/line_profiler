@@ -182,6 +182,9 @@ class LineProfilerMagics(Magics):
         -r: return the LineProfiler object after it has completed profiling.
 
         -s: strip out all entries from the print-out that have zeros.
+        This is an old alias for -z.
+        
+        -z: strip out all entries from the print-out that have zeros.
 
         -u: specify time unit for the print-out in seconds.
         """
@@ -189,7 +192,7 @@ class LineProfilerMagics(Magics):
         # Escape quote markers.
         opts_def = Struct(D=[""], T=[""], f=[], m=[], u=None)
         parameter_s = parameter_s.replace('"', r"\"").replace("'", r"\'")
-        opts, arg_str = self.parse_options(parameter_s, "rsf:m:D:T:u:", list_all=True)
+        opts, arg_str = self.parse_options(parameter_s, "rszf:m:D:T:u:", list_all=True)
         opts.merge(opts_def)
 
         global_ns = self.shell.user_global_ns
@@ -253,7 +256,7 @@ class LineProfilerMagics(Magics):
         # Trap text output.
         stdout_trap = StringIO()
         profile.print_stats(
-            stdout_trap, output_unit=output_unit, stripzeros="s" in opts
+            stdout_trap, output_unit=output_unit, stripzeros=("s" in opts or "z" in opts)
         )
         output = stdout_trap.getvalue()
         output = output.rstrip()
