@@ -5,6 +5,7 @@ Changes
 ~~~~~
 * FIX: ref-count leaks #372
 * ENH: Add support for building ABI3 wheels
+* FIX: mitigate speed regressions introduced in 5.0.0
 
 5.0.0
 ~~~~~

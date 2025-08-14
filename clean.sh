@@ -5,6 +5,8 @@ rm -rf _skbuild
 rm -rf _line_profiler.c
 rm -rf *.so
 rm -rf line_profiler/_line_profiler.c
+rm -rf line_profiler/_line_profiler.cpp
+rm -rf line_profiler/*.html
 rm -rf line_profiler/*.so
 rm -rf build
 rm -rf line_profiler.egg-info
