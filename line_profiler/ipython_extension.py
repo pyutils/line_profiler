@@ -147,6 +147,12 @@ class SkipWrapper(AstProfileTransformer):
 
 @magics_class
 class LineProfilerMagics(Magics):
+    def parse_parameters(self, parameter_s):
+        # FIXME: There is a chance that this handling will need to be updated
+        # to handle single-quoted characters better (#382)
+        parameter_s = parameter_s.replace('"', r"\"").replace("'", r"\"")
+        return parameter_s
+
     @line_magic
     def lprun(self, parameter_s=""):
         """Execute a statement under the line-by-line profiler from the
@@ -191,8 +197,8 @@ class LineProfilerMagics(Magics):
         """
 
         # Escape quote markers.
+        parameter_s = self.parse_parameters(parameter_s)
         opts_def = Struct(D=[""], T=[""], f=[], m=[], u=None)
-        parameter_s = parameter_s.replace('"', r"\"").replace("'", r"\'")
         opts, arg_str = self.parse_options(parameter_s, "rszf:m:D:T:u:", list_all=True)
         opts.merge(opts_def)
 
@@ -322,7 +328,7 @@ class LineProfilerMagics(Magics):
         -p: Profile only top-level code (ignore nested functions). Using this can bypass
         any issues with ast transformation.
         """
-        parameter_s = parameter_s.replace('"', r"\"").replace("'", r"\'")
+        parameter_s = self.parse_parameters(parameter_s)
         opts_def = Struct(D=[""], T=[""], u=None)
         opts, arg_str = self.parse_options(parameter_s, "rzptD:T:u:", list_all=True)
         opts.merge(opts_def)
