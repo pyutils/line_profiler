@@ -4,9 +4,13 @@ from contextlib import nullcontext
 from functools import partial
 from io import StringIO
 from os.path import join
+from runpy import run_module
 from shlex import split
-from sys import executable
+from sys import argv, executable, stderr
+from tempfile import TemporaryDirectory
 import pytest
+import ubelt as ub
+from line_profiler import LineProfiler
 from line_profiler.cli_utils import add_argument
 
 
@@ -124,9 +128,6 @@ def test_cli():
     CommandLine:
         xdoctest -m ./tests/test_cli.py test_cli
     """
-    import ubelt as ub
-    import tempfile
-
     # Create a dummy source file
     code = ub.codeblock(
         '''
@@ -141,7 +142,7 @@ def test_cli():
         if __name__ == '__main__':
             my_inefficient_function()
         ''')
-    with tempfile.TemporaryDirectory() as tmp_dpath:
+    with TemporaryDirectory() as tmp_dpath:
         tmp_src_fpath = join(tmp_dpath, 'foo.py')
         with open(tmp_src_fpath, 'w') as file:
             file.write(code)
@@ -161,11 +162,72 @@ def test_cli():
         assert '7       100' in info['out']
 
 
+def test_multiple_lprof_files(capsys):
+    """
+    Test that we can aggregate profiling results with
+    ``python -m line_profiler``.
+    """
+    def sum_n(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n  # Loop: sum_n
+        return x  # Return: sum_n
+
+    def sum_nsq(n: int) -> int:
+        x = 0
+        for n in range(1, n + 1):
+            x += n * n  # Loop: sum_nsq
+        return x  # Return: sum_nsq
+
+    profs = {0: LineProfiler(sum_n),
+             1: LineProfiler(sum_nsq),
+             2: LineProfiler(sum_n, sum_nsq)}
+
+    with TemporaryDirectory() as tmp_dpath:
+        # Write several profiling output files
+        stats_files = []
+        nhits = {}
+        for i, (func, n, expected) in enumerate([
+                (sum_n, 10, 10 * 11 // 2),
+                (sum_nsq, 20, 20 * 21 * 41 // 6),
+                (sum_n, 30, 30 * 31 // 2)]):
+            prof = profs[i]
+            with prof:
+                assert func(n) == expected
+            stats = join(tmp_dpath, f'{i}.lprof')
+            stats_files.append(stats)
+            prev_loop, prev_return = nhits.get(func, (0, 0))
+            nhits[func] = prev_loop + n, prev_return + 1
+            prof.dump_stats(stats)
+
+        old_argv = argv.copy()
+        argv[:] = ['line_profiler', *stats_files]
+        try:
+            run_module('line_profiler', run_name='__main__', alter_sys=True)
+        finally:
+            argv[:] = old_argv
+
+    # View them and check the output
+    checks = {}
+    out, err = capsys.readouterr()
+    with capsys.disabled():
+        print(out, end='')
+        print(err, end='', file=stderr)
+    for func in sum_n, sum_nsq:
+        for comment, n in zip(['Loop', 'Return'], nhits[func]):
+            checks[f'  # {comment}: {func.__name__}'] = n
+    for line in out.splitlines():
+        try:
+            suffix, = (suffix for suffix in checks if line.endswith(suffix))
+        except ValueError:  # No match
+            continue
+        assert int(line.split()[1]) == checks.pop(suffix)
+
+
 def test_version_agreement():
     """
     Ensure that line_profiler and kernprof have the same version info
     """
-    import ubelt as ub
     info1 = ub.cmd(f'{executable} -m line_profiler --version')
     info2 = ub.cmd(f'{executable} -m kernprof --version')
 

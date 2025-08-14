@@ -7,6 +7,7 @@ Cython backend.
 import functools
 import inspect
 import linecache
+import operator
 import os
 import pickle
 import sys
@@ -17,7 +18,8 @@ from argparse import ArgumentParser
 from datetime import datetime
 
 try:
-    from ._line_profiler import LineProfiler as CLineProfiler
+    from ._line_profiler import (LineProfiler as CLineProfiler,
+                                 LineStats as CLineStats)
 except ImportError as ex:
     raise ImportError(
         'The line_profiler._line_profiler c-extension is not importable. '
@@ -186,6 +188,169 @@ class _WrapperInfo:
         self.profiler_id = profiler_id
 
 
+class LineStats(CLineStats):
+    def __repr__(self):
+        return '{}({}, {:.2G})'.format(
+            type(self).__name__, self.timings, self.unit)
+
+    def __eq__(self, other):
+        """
+        Example:
+            >>> from copy import deepcopy
+            >>>
+            >>>
+            >>> stats1 = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 2, 1000), (12, 1, 500)]},
+            ...     1E-6)
+            >>> stats2 = deepcopy(stats1)
+            >>> assert stats1 == stats2 is not stats1
+            >>> stats2.timings = 1E-7
+            >>> assert stats2 != stats1
+            >>> stats3 = deepcopy(stats1)
+            >>> assert stats1 == stats3 is not stats1
+            >>> stats3.timings['foo', 1, 'spam.py'][:] = [(2, 11, 330)]
+            >>> assert stats3 != stats1
+        """
+        for attr in 'timings', 'unit':
+            getter = operator.attrgetter(attr)
+            try:
+                if getter(self) != getter(other):
+                    return False
+            except (AttributeError, TypeError):
+                return NotImplemented
+        return True
+
+    def __add__(self, other):
+        """
+        Example:
+            >>> stats1 = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 2, 1000), (12, 1, 500)]},
+            ...     1E-6)
+            >>> stats2 = LineStats(
+            ...     {('bar', 10, 'spam.py'):
+            ...      [(11, 10, 20000), (12, 5, 1000)],
+            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...     1E-7)
+            >>> stats_sum = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 12, 3000), (12, 6, 600)],
+            ...      ('baz', 5, 'eggs.py'): [(5, 2, 500)]},
+            ...     1E-6)
+            >>> assert stats1 + stats2 == stats2 + stats1 == stats_sum
+        """
+        timings, unit = self._get_aggregated_timings([self, other])
+        return type(self)(timings, unit)
+
+    def __iadd__(self, other):
+        """
+        Example:
+            >>> stats1 = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 2, 1000), (12, 1, 500)]},
+            ...     1E-6)
+            >>> stats2 = LineStats(
+            ...     {('bar', 10, 'spam.py'):
+            ...      [(11, 10, 20000), (12, 5, 1000)],
+            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...     1E-7)
+            >>> stats_sum = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 12, 3000), (12, 6, 600)],
+            ...      ('baz', 5, 'eggs.py'): [(5, 2, 500)]},
+            ...     1E-6)
+            >>> address = id(stats2)
+            >>> stats2 += stats1
+            >>> assert id(stats2) == address
+            >>> assert stats2 == stats_sum
+        """
+        self.timings, self.unit = self._get_aggregated_timings([self, other])
+        return self
+
+    def print(self, stream=None, **kwargs):
+        show_text(self.timings, self.unit, stream=stream, **kwargs)
+
+    def to_file(self, filename):
+        """ Pickle the instance to the given filename.
+        """
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
+
+    @classmethod
+    def from_files(cls, file, /, *files):
+        """
+        Utility function to load an instance from the given filenames.
+        """
+        stats_objs = []
+        for file in [file, *files]:
+            with open(file, 'rb') as f:
+                stats_objs.append(pickle.load(f))
+        return cls.from_stats_objects(*stats_objs)
+
+    @classmethod
+    def from_stats_objects(cls, stats, /, *more_stats):
+        """
+        Example:
+            >>> stats1 = LineStats(
+            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...      ('bar', 10, 'spam.py'):
+            ...      [(11, 2, 1000), (12, 1, 500)]},
+            ...     1E-6)
+            >>> stats2 = LineStats(
+            ...     {('bar', 10, 'spam.py'):
+            ...      [(11, 10, 20000), (12, 5, 1000)],
+            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...     1E-7)
+            >>> stats_combined = LineStats.from_stats_objects(
+            ...     stats1, stats2)
+            >>> assert stats_combined.unit == 1E-6
+            >>> assert stats_combined.timings == {
+            ...     ('foo', 1, 'spam.py'): [(2, 10, 300)],
+            ...     ('bar', 10, 'spam.py'):
+            ...     [(11, 12, 3000), (12, 6, 600)],
+            ...     ('baz', 5, 'eggs.py'): [(5, 2, 500)]}
+        """
+        timings, unit = cls._get_aggregated_timings([stats, *more_stats])
+        return cls(timings, unit)
+
+    @staticmethod
+    def _get_aggregated_timings(stats_objs):
+        if not stats_objs:
+            raise ValueError(f'stats_objs = {stats_objs!r}: empty')
+        try:
+            stats, = stats_objs
+        except ValueError:  # > 1 obj
+            # Add from small scaling factors to large to minimize
+            # rounding errors
+            stats_objs = sorted(stats_objs, key=operator.attrgetter('unit'))
+            unit = stats_objs[-1].unit
+            # type: dict[tuple[str, int, int], dict[int, tuple[int, float]]
+            timing_dict = {}
+            for stats in stats_objs:
+                factor = stats.unit / unit
+                for key, entries in stats.timings.items():
+                    entry_dict = timing_dict.setdefault(key, {})
+                    for lineno, nhits, time in entries:
+                        prev_nhits, prev_time = entry_dict.get(lineno, (0, 0))
+                        entry_dict[lineno] = (prev_nhits + nhits,
+                                              prev_time + factor * time)
+            timings = {
+                key: [(lineno, nhits, int(round(time, 0)))
+                      for lineno, (nhits, time) in sorted(entry_dict.items())]
+                for key, entry_dict in timing_dict.items()}
+        else:
+            timings = {key: entries.copy()
+                       for key, entries in stats.timings.items()}
+            unit = stats.unit
+        return timings, unit
+
+
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     """
     A profiler that records the execution times of individual lines.
@@ -296,24 +461,24 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             msg = f'{self_repr}: {msg}'
         logger.debug(msg)
 
+    def get_stats(self):
+        return LineStats.from_stats_objects(super().get_stats())
+
     def dump_stats(self, filename):
         """ Dump a representation of the data to a file as a pickled
         :py:class:`~.LineStats` object from :py:meth:`~.get_stats()`.
         """
-        lstats = self.get_stats()
-        with open(filename, 'wb') as f:
-            pickle.dump(lstats, f, pickle.HIGHEST_PROTOCOL)
+        self.get_stats().to_file(filename)
 
     def print_stats(self, stream=None, output_unit=None, stripzeros=False,
                     details=True, summarize=False, sort=False, rich=False, *,
                     config=None):
         """ Show the gathered statistics.
         """
-        lstats = self.get_stats()
-        show_text(lstats.timings, lstats.unit, output_unit=output_unit,
-                  stream=stream, stripzeros=stripzeros,
-                  details=details, summarize=summarize, sort=sort, rich=rich,
-                  config=config)
+        self.get_stats().print(
+            stream=stream, output_unit=output_unit,
+            stripzeros=stripzeros, details=details, summarize=summarize,
+            sort=sort, rich=rich, config=config)
 
     def _add_namespace(
             self, namespace, *,
@@ -799,12 +964,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
                     stream.write(line + '\n')
 
 
-def load_stats(filename):
-    """ Utility function to load a pickled :py:class:`~.LineStats`
-    object from a given filename.
-    """
-    with open(filename, 'rb') as f:
-        return pickle.load(f)
+load_stats = LineStats.from_files
 
 
 def main():
@@ -846,7 +1006,8 @@ def main():
                  help='Print a summary of total function time. '
                  f'(Default: {default.conf_dict["summarize"]})')
     add_argument(parser, 'profile_output',
-                 help="'*.lprof' file created by `kernprof`")
+                 nargs='+',
+                 help="'*.lprof' file(s) created by `kernprof`")
 
     args = parser.parse_args()
     if args.config:
@@ -856,7 +1017,7 @@ def main():
         if getattr(args, key, None) is None:
             setattr(args, key, default)
 
-    lstats = load_stats(args.profile_output)
+    lstats = LineStats.from_files(*args.profile_output)
     show_text(lstats.timings, lstats.unit,
               output_unit=args.unit,
               stripzeros=args.skip_zero,
