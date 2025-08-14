@@ -418,9 +418,6 @@ class LineProfilerMagics(Magics):
                 # I know it seems redundant to include this because users could just use -r
                 # to get the info, but see the docstring for why -t is included anyway.
                 ip.user_ns["_total_time_taken"] = total_time
-
-            # Clean up temp file.
-            os.unlink(tf.name)
         else:
             # Compile and define the function from that file.
             code = compile(fsrc, tf.name, "exec")
@@ -472,6 +469,9 @@ class LineProfilerMagics(Magics):
 
             page(output)
             print(message, end="")
+
+        # Clean up temp file.
+        os.unlink(tf.name)
 
         dump_file = opts.D[0]
         if dump_file:
