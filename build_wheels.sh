@@ -19,6 +19,8 @@ if ! which cibuildwheel ; then
 fi
 
 
-#pip wheel -w wheelhouse .
-# python -m build --wheel -o wheelhouse  #  line_profiler: +COMMENT_IF(binpy)
-cibuildwheel --config-file pyproject.toml --platform linux --archs x86_64  #  line_profiler: +UNCOMMENT_IF(binpy)
+# Build ABI3 wheels
+CIBW_CONFIG_SETTINGS="--build-option=--py-limited-api=cp38" CIBW_BUILD="cp38-*" cibuildwheel --config-file pyproject.toml --platform linux --archs x86_64
+
+# Build version-pinned wheels
+cibuildwheel --config-file pyproject.toml --platform linux --archs x86_64

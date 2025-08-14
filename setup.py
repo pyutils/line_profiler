@@ -231,6 +231,10 @@ if __name__ == '__main__':
                     sources=["line_profiler/_line_profiler.pyx",
                              "line_profiler/timers.c",
                              "line_profiler/c_trace_callbacks.c"],
+                    # force a recompile if this changes
+                    depends=[
+                        "line_profiler/_map_helpers.pxd",
+                    ],
                     language="c++",
                     define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
                 ),
@@ -240,7 +244,7 @@ if __name__ == '__main__':
                     "legacy_implicit_noexcept": True,
                     "linetrace": (True if os.getenv("DEV") == "true" else False)
                 },
-                include_path=["line_profiler/python25.pxd"],
+                include_path=["line_profiler/python25.pxd", "line_profiler/_map_helpers.pxd"],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),
             )
@@ -294,7 +298,6 @@ if __name__ == '__main__':
     setupkw["classifiers"] = [
         'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: BSD License',
         'Operating System :: OS Independent',
         'Programming Language :: C',
         'Programming Language :: Python',

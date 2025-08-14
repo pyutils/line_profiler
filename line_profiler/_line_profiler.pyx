@@ -34,7 +34,13 @@ from warnings import warn
 from weakref import WeakSet
 
 from line_profiler._diagnostics import (
-    WRAP_TRACE, SET_FRAME_LOCAL_TRACE, USE_LEGACY_TRACE)
+    WRAP_TRACE, SET_FRAME_LOCAL_TRACE, USE_LEGACY_TRACE
+)
+
+from ._map_helpers cimport (
+    last_erase_if_present, line_ensure_entry, LastTime, LastTimeMap,
+    LineTime, LineTimeMap
+)
 
 
 NOP_VALUE: int = opcode.opmap['NOP']
@@ -69,22 +75,6 @@ ctypedef unsigned long long int uint64
 ctypedef long long int int64
 
 cdef extern from "Python_wrapper.h":
-    """
-    #if PY_VERSION_HEX >= 0x030d00a1 && PY_VERSION_HEX < 0x030e00a1
-    /*      Unfortunately, _Py_HashBytes() is not exposed in Python
-     *      3.13, so just fall back to the slower Py_ObjectHash()
-     */
-    #   define hash_bytecode(bytestring, bytes, len) PyObject_Hash(bytestring)
-    #else
-    #   if PY_VERSION_HEX >= 0x030e00a1  // 3.14.0.a1
-    #       define hash_bytes(b, n) Py_HashBuffer(b, n)
-    #   else
-    #       include "pyhash.h"
-    #       define hash_bytes(b, n) _Py_HashBytes(b, n)
-    #   endif
-    #   define hash_bytecode(bytestring, bytes, len) hash_bytes(bytes, len)
-    #endif
-    """
     ctypedef struct PyObject
     ctypedef struct PyCodeObject
     ctypedef struct PyFrameObject
@@ -114,10 +104,10 @@ cdef extern from "Python_wrapper.h":
     cdef void Py_XDECREF(PyObject *o)
 
     cdef unsigned long PyThread_get_thread_ident()
-    cdef Py_hash_t hash_bytecode(PyObject *bytestring, const char* bytes,
-                                 Py_ssize_t len)
 
 ctypedef PyCodeObject *PyCodeObjectPtr
+#ctypedef unordered_map[int64, LastTime] LastTimeMap
+#ctypedef unordered_map[int64, LineTime] LineTimeMap
 
 cdef extern from "c_trace_callbacks.c":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
@@ -140,18 +130,18 @@ cdef extern from "timers.c":
     PY_LONG_LONG hpTimer()
     double hpTimerUnit()
 
-cdef struct LineTime:
-    int64 code
-    int lineno
-    PY_LONG_LONG total_time
-    long nhits
+#cdef struct LineTime:
+#    int64 code
+#    int lineno
+#    PY_LONG_LONG total_time
+#    long nhits
 
-cdef struct LastTime:
-    int f_lineno
-    PY_LONG_LONG time
+#cdef struct LastTime:
+#    int f_lineno
+#    PY_LONG_LONG time
 
 
-cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum):
+cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum) noexcept:
     """
     Compute the hash used to store each line timing in an unordered_map.
     This is fairly simple, and could use some improvement since linenum
@@ -324,7 +314,7 @@ cpdef _copy_local_sysmon_events(old_code, new_code):
     return new_code
 
 
-cpdef int _patch_events(int events, int before, int after):
+cpdef int _patch_events(int events, int before, int after) noexcept:
     """
     Patch ``events`` based on the differences between ``before`` and
     ``after``.
@@ -460,7 +450,7 @@ cdef class _SysMonitoringState:
             mon.register_callback(self.tool_id, *wrapped_callbacks.popitem())
 
     cdef void call_callback(self, int event_id, object code,
-                            object loc_args, object other_args):
+                            object loc_args, object other_args) noexcept:
         """
         Call the appropriate stored callback.  Also take care of the
         restoration of :py:mod:`sys.monitoring` callbacks, tool-ID lock,
@@ -758,7 +748,7 @@ sys.monitoring.html#monitoring-event-RERAISE
             sys.monitoring.events.RERAISE, code, instruction_offset, exception)
 
     cdef void _handle_exit_event(
-            self, int event_id, object code, int offset, object obj):
+            self, int event_id, object code, int offset, object obj) noexcept:
         """
         Base for the frame-exit-event (e.g. via returning or yielding)
         callbacks passed to :py:func:`sys.monitoring.register_callback`.
@@ -772,7 +762,7 @@ sys.monitoring.html#monitoring-event-RERAISE
 
     cdef void _base_callback(
             self, int is_line_event, int event_id, object code, int lineno,
-            object loc_args, object other_args):
+            object loc_args, object other_args) noexcept:
         """
         Base for the various callbacks passed to
         :py:func:`sys.monitoring.register_callback`.
@@ -1056,9 +1046,9 @@ cdef class LineProfiler:
     .. _"legacy" trace system: https://github.com/python/cpython/blob/\
 3.13/Python/legacy_tracing.c
     """
-    cdef unordered_map[int64, unordered_map[int64, LineTime]] _c_code_map
+    cdef unordered_map[int64, LineTimeMap] _c_code_map
     # Mapping between thread-id and map of LastTime
-    cdef unordered_map[int64, unordered_map[int64, LastTime]] _c_last_time
+    cdef unordered_map[int64, LastTimeMap] _c_last_time
     cdef public list functions
     cdef public dict code_hash_map, dupes_map
     cdef public double timer_unit
@@ -1413,7 +1403,7 @@ datamodel.html#user-defined-functions
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef inline inner_trace_callback(
+cdef inline void inner_trace_callback(
         int is_line_event, set instances, object code, int lineno):
     """
     The basic building block for the trace callbacks.
@@ -1424,30 +1414,26 @@ cdef inline inner_trace_callback(
     cdef int key
     cdef PY_LONG_LONG time = 0
     cdef bint has_time = False
+    cdef bint has_last
     cdef int64 code_hash
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
     cdef unsigned long ident
     cdef Py_hash_t block_hash
-    cdef LineTime *entry
-    cdef unordered_map[int64, LineTime] *line_entries
-    cdef unordered_map[int64, LastTime] *last_map
+    cdef LineTime* entry
+    cdef LineTimeMap* line_entries
+    cdef LastTimeMap* last_map
 
-    # Cython functions have empty/zero bytecodes
-    # FIXME: `hash_bytecode()` is supposed to switch to
-    # `Py_HashBuffer()` or `_Py_HashBytes()` where available, but
-    # in tests it only seems to add overhead...
+    # Loop over every byte to check if any are not NULL
+    # if there are any non-NULL, that indicates we're profiling Python code
     for i in range(size):
         if data[i]:
-            # hash_bytecode is currently unused due to test issues on Windows with PyObject_Hash
-            # but we plan to fix those and enable it shortly
-            # block_hash = hash_bytecode(<PyObject *>py_bytes_obj, data, size)
-
             # because we use Python functions like hash, we CANNOT mark this function as nogil
             block_hash = hash(py_bytes_obj)
             break
-    else:  # fallback for Cython functions
+    else:
+        # fallback for Cython functions
         block_hash = hash(code)
 
     code_hash = compute_line_hash(block_hash, lineno)
@@ -1469,16 +1455,17 @@ cdef inline inner_trace_callback(
         if deref(last_map).count(block_hash):
             old = deref(last_map)[block_hash]
             line_entries = &(prof._c_code_map[code_hash])
-            key = old.f_lineno
-            if not deref(line_entries).count(key):
-                deref(line_entries)[key] = LineTime(code_hash, key, 0, 0)
-            entry = &(deref(line_entries)[key])
+            # Ensure that an entry exists in line_entries before accessing it
+            entry = line_ensure_entry(line_entries, old.f_lineno, code_hash)
             # Note: explicitly `deref()`-ing here causes the new values
             # to be assigned to a temp var;
             # meanwhile, directly dot-accessing a pointer causes Cython
             # to correctly write `ptr->attr = (ptr->attr + incr)`
             entry.nhits += 1
             entry.total_time += time - old.time
+            has_last = True
+        else:
+            has_last = False
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
@@ -1488,7 +1475,7 @@ cdef inline inner_trace_callback(
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            deref(last_map).erase(deref(last_map).find(block_hash))
+            last_erase_if_present(last_map, block_hash)
 
 
 cdef extern int legacy_trace_callback(
