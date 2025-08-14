@@ -4,11 +4,14 @@ import functools
 import gc
 import inspect
 import io
+import os
+import pickle
 import sys
 import textwrap
 import types
+from tempfile import TemporaryDirectory
 import pytest
-from line_profiler import _line_profiler, LineProfiler
+from line_profiler import _line_profiler, LineProfiler, LineStats
 
 
 def f(x):
@@ -1162,3 +1165,42 @@ def test_profiling_exception():
             line = next(line for line in result.splitlines()
                         if line.endswith(comment))
             assert line.split()[1] == str(nhits)
+
+
+@pytest.mark.parametrize('n', [1, 2])
+@pytest.mark.parametrize('legacy', [True, False])
+def test_load_stats_files(legacy, n):
+    """
+    Test the loading of stats files. If ``legacy`` is true, the
+    tempfiles are written from
+    :py:class:`line_profiler._line_profiler.LineStats` objects instead
+    of  :py:class:`line_profiler.line_profiler.LineStats` objects, so
+    that we ensure that ``'.lprof'`` files written by old versions of
+    :py:mod:`line_profiler` is still properly handled.
+    """
+    def write(stats, filename):
+        if legacy:
+            legacy_stats = type(stats).__base__(stats.timings, stats.unit)
+            assert not isinstance(legacy_stats, LineStats)
+            with open(filename, mode='wb') as fobj:
+                pickle.dump(legacy_stats, fobj)
+        else:
+            stats.to_file(filename)
+        return filename
+
+    stats1 = LineStats({('foo', 1, 'spam.py'): [(2, 3, 3600)]}, .015625)
+    stats2 = LineStats({('foo', 1, 'spam.py'): [(2, 4, 700)],
+                        ('bar', 10, 'spam.py'): [(10, 20, 1000)]},
+                       .0625)
+    with TemporaryDirectory() as tmpdir:
+        fname1 = write(stats1, os.path.join(tmpdir, '1.lprof'))
+        if n == 1:
+            stats_combined = stats1
+            files = [fname1]
+        else:
+            fname2 = write(stats2, os.path.join(tmpdir, '2.lprof'))
+            stats_combined = stats1 + stats2
+            files = [fname1, fname2]
+        stats_read = LineStats.from_files(*files)
+    assert isinstance(stats_read, LineStats)
+    assert stats_read == stats_combined

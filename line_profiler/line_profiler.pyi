@@ -1,16 +1,20 @@
 import io
-import pathlib
 from functools import cached_property, partial, partialmethod
 from os import PathLike
 from types import FunctionType, ModuleType
-from typing import TYPE_CHECKING, overload, Callable, Literal, Mapping, TypeVar
+from typing import (TYPE_CHECKING,
+                    overload,
+                    Callable, Mapping,
+                    Literal, Self,
+                    Protocol, TypeVar)
 try:
     from typing import (  # type: ignore[attr-defined]  # noqa: F401
         ParamSpec)
 except ImportError:
     from typing_extensions import ParamSpec  # noqa: F401
 from _typeshed import Incomplete
-from ._line_profiler import LineProfiler as CLineProfiler
+from ._line_profiler import (LineProfiler as CLineProfiler,
+                             LineStats as CLineStats)
 from .profiler_mixin import ByCountProfilerMixin, CLevelCallable
 from .scoping_policy import ScopingPolicy, ScopingPolicyDict
 
@@ -31,6 +35,42 @@ def get_column_widths(
 
 def load_ipython_extension(ip) -> None:
     ...
+
+
+class _StatsLike(Protocol):
+    timings: Mapping[tuple[str, int, str],  # funcname, lineno, filename
+                     list[tuple[int, int, int]]]  # lineno, nhits, time
+    unit: float
+
+
+class LineStats(CLineStats):
+    def to_file(self, filename: PathLike[str] | str) -> None:
+        ...
+
+    def print(self, stream: Incomplete | None = None, **kwargs) -> None:
+        ...
+
+    @classmethod
+    def from_files(cls, file: PathLike[str] | str, /,
+                   *files: PathLike[str] | str) -> Self:
+        ...
+
+    @classmethod
+    def from_stats_objects(cls, stats: _StatsLike, /,
+                           *more_stats: _StatsLike) -> Self:
+        ...
+
+    def __repr__(self) -> str:
+        ...
+
+    def __eq__(self, other) -> bool:
+        ...
+
+    def __add__(self, other: _StatsLike) -> Self:
+        ...
+
+    def __iadd__(self, other: _StatsLike) -> Self:
+        ...
 
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
@@ -84,6 +124,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             self, func,
             guard: Callable[[FunctionType], bool] | None = None,
             name: str | None = None) -> Literal[0, 1]:
+        ...
+
+    def get_stats(self) -> LineStats:
         ...
 
     def dump_stats(self, filename) -> None:
@@ -148,8 +191,7 @@ def show_text(stats,
     ...
 
 
-def load_stats(filename):
-    ...
+load_stats = LineStats.from_files
 
 
 def main():
