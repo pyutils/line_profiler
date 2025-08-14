@@ -35,6 +35,7 @@ import time
 
 from io import StringIO
 
+from IPython.core.getipython import get_ipython
 from IPython.core.magic import Magics, magics_class, line_magic, cell_magic
 from IPython.core.page import page
 from IPython.utils.ipstruct import Struct
@@ -326,7 +327,12 @@ class LineProfilerMagics(Magics):
         opts, arg_str = self.parse_options(parameter_s, "rzptD:T:u:", list_all=True)
         opts.merge(opts_def)
 
-        ip = get_ipython()
+        try:
+            # This function is injected into the namespace by IPython,
+            # so linting doesn't pick it up. We use noqa to ignore the linting error.
+            ip = get_ipython() # noqa: F821
+        except NameError:
+            raise NameError("This function needs to be run inside an IPython instance!")
         fname = "_lprof_cell"
 
         # We have to encase the cell being profiled in an outer function if we want this to work.
