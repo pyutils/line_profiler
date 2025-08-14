@@ -3,9 +3,10 @@ Changes
 
 5.0.1
 ~~~~~
-* FIX: ref-count leaks #372
 * ENH: Add support for building ABI3 wheels
-* FIX: mitigate speed regressions introduced in 5.0.0
+* ENH: Add %%lprun_all for more beginner-friendly profiling in IPython/Jupyter #383
+* FIX: ref-count leaks #372
+* FIX: mitigate speed regressions introduced in 5.0.0 #376
 
 5.0.0
 ~~~~~
