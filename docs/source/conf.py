@@ -173,6 +173,7 @@ extensions = [
     'sphinx.ext.imgconverter',  # For building latexpdf
     'sphinx.ext.githubpages',
     # 'sphinxcontrib.redirects',
+    'sphinxcontrib.jquery',  # Fix for search
     'sphinx_reredirects',
 ]
 
