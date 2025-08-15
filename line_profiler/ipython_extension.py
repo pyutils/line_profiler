@@ -536,7 +536,8 @@ class LineProfilerMagics(Magics):
                 with prof:
                     run = self._run_and_profile(
                         prof, parsed, tf.name, exec, code,
-                        globals=ip.user_global_ns, locals=ip.user_ns)
+                        # `globals` and `locals`
+                        ip.user_global_ns, ip.user_ns)
         finally:
             os.unlink(tf.name)
         if "t" in parsed.opts:

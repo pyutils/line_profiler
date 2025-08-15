@@ -62,7 +62,7 @@ class TestLPRun(_TestIPython):
     """
     @pytest.mark.parametrize('modules', [None, 'calendar'])
     def test_lprun_profiling_targets(self, request, modules):
-        """ Test ``%%lprun`` with the ``-m`` flag.
+        """ Test ``%lprun`` with the ``-m`` flag.
         """
         mods = shlex.split(modules or '')
         if mods:
@@ -89,19 +89,18 @@ class TestLPRun(_TestIPython):
         ('output', 'text'),
         [(None, None), ('myprof.txt', True), ('myprof.lprof', False)])
     def test_lprun_file_io(self, request, output, text):
-        """ Test ``%%lprun`` with the ``-D`` and ``-T`` flags.
+        """ Test ``%lprun`` with the ``-D`` and ``-T`` flags.
         """
         with tempdir() as tmpdir:
             if output:
-                out_path = tmpdir / output
-                more_flags = shlex.join(['-' + ('T' if text else 'D'),
-                                         str(out_path)])
+                more_flags = shlex.join(['-' + ('T' if text else 'D'), output])
             else:
                 more_flags = None
             self._test_lprun(request, more_flags)
 
             # Check the output files (`-D` or `-T`)
             if output:
+                out_path = tmpdir / output
                 assert out_path.exists()
                 assert out_path.stat().st_size
                 if not text:  # Test roundtripping
@@ -111,7 +110,7 @@ class TestLPRun(_TestIPython):
 
     @pytest.mark.parametrize('bad', [True, False])
     def test_lprun_timer_unit(self, request, bad):
-        """ Test ``%%lprun`` with the ``-u`` flag.
+        """ Test ``%lprun`` with the ``-u`` flag.
         """
         capsys = request.getfixturevalue('capsys')
         if bad:  # Test invalid value
@@ -132,7 +131,7 @@ class TestLPRun(_TestIPython):
 
     @pytest.mark.parametrize('skip_zero', [None, '-s', '-z'])
     def test_lprun_skip_zero(self, request, skip_zero):
-        """ Test ``%%lprun`` with the ``-s`` and ``-z`` flags.
+        """ Test ``%lprun`` with the ``-s`` and ``-z`` flags.
         """
         capsys = request.getfixturevalue('capsys')
         # Throw in an unrelated module, whose timings are always zero
@@ -154,6 +153,8 @@ class TestLPRun(_TestIPython):
                              [(SystemExit(0), False),
                               (ValueError('foo'), True)])
     def test_lprun_exception_handling(self, capsys, xc, raised):
+        """ Test ``%lprun``-ing a function which raises exceptions.
+        """
         ip = self._get_ipython_instance()
         ip.run_line_magic('load_ext', 'line_profiler')
         xc_repr = '{}({})'.format(
@@ -203,6 +204,10 @@ class TestLPRun(_TestIPython):
 
 
 class TestLPRunAll(_TestIPython):
+    """
+    CommandLine:
+        pytest -k TestLPRunAll -s -v
+    """
     def test_lprun_all_autoprofile(self):
         """ Test ``%%lprun_all`` without the ``-p`` flag.
         """
