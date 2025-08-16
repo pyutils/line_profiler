@@ -17,7 +17,5 @@ formats: all
 python:
   install:
   - requirements: requirements/docs.txt
-  # Make sure we build the docs for `line_profiler.ipython_extension`
-  - requirements: requirements/ipython.txt
   - method: pip
     path: .
