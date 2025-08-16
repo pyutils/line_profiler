@@ -20,6 +20,7 @@ MANIFEST
 pypi-site-docs.zip
 index.html
 line_profiler/_line_profiler.html
+*.lprof
 
 .coverage
 tests/coverage.xml
