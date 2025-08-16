@@ -28,7 +28,7 @@ help mechanism::
 
     In [1]: %lprun?
 
-.. |lprun| replace:: :py:data:`%%lprun <LineProfilerMagics.lprun>`
+.. |lprun| replace:: :py:data:`%lprun <LineProfilerMagics.lprun>`
 .. |lprun_all| replace:: :py:data:`%%lprun_all <LineProfilerMagics.lprun_all>`
 .. |builtins| replace:: :py:mod:`__builtins__ <builtins>`
 """
@@ -209,6 +209,7 @@ class _RunAndProfileResult:
 class _PatchProfilerIntoBuiltins:
     """
     Example:
+        >>> # xdoctest: +REQUIRES(module:IPython)
         >>> import builtins
         >>> from line_profiler import LineProfiler
         >>>
@@ -221,6 +222,12 @@ class _PatchProfilerIntoBuiltins:
         Traceback (most recent call last):
           ...
         AttributeError: ...
+
+    Note:
+        This class doesn't itself need :py:mod:`IPython`, but it
+        resides in a module that does. To reduce complications, we just
+        skip this doctest if :py:mod:`IPython` (and hence this module)
+        can't be imported.
     """
     def __init__(self, prof=None):
         # type: (LineProfiler | None) -> None
