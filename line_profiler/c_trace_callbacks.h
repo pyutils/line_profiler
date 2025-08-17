@@ -24,17 +24,17 @@
 #   ifndef Py_BUILD_CORE
 #       define Py_BUILD_CORE 1
 #   endif
-#   ifdef _PyGC_FINALIZED
-#       undef _PyGC_FINALIZED
+#   if PY_VERSION_HEX < 0x030d0000  // 3.13
+#       ifdef _PyGC_FINALIZED
+#           undef _PyGC_FINALIZED
+#       endif
+#       ifdef __linux__
+#           ifdef HAVE_STD_ATOMIC
+#               undef HAVE_STD_ATOMIC
+#           endif
+#       endif
 #   endif
-#   ifdef HAVE_STD_ATOMIC
-#       undef HAVE_STD_ATOMIC
-#   endif
-#   if PY_VERSION_HEX >= 0x030900a6  // 3.9.0a6
-#      include "internal/pycore_interp.h"
-#   else
-#      include "internal/pycore_pystate.h"
-#   endif
+#   include "internal/pycore_interp.h"
 #endif
 
 typedef struct TraceCallback
