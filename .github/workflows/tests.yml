@@ -137,7 +137,7 @@ jobs:
       uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
+      if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -155,6 +155,12 @@ jobs:
         PYTHONUTF8: '1'
         CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
         CIBW_BUILD: cp38-*
+        # Note: apparently something (probably msvc-dev-cmd) sets the
+        # envvar, which prevents cibuildwheel from targeting non-native
+        # architecture on some versions...
+        # we can't unset envvars yet though (see actions/runner#1126),
+        # but let's see if this helps
+        VSCMD_ARG_TGT_ARCH: ''
     - name: Build binary wheels
       uses: pypa/cibuildwheel@v3.1.2
       with:
@@ -165,6 +171,7 @@ jobs:
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
+        VSCMD_ARG_TGT_ARCH: ''
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
@@ -379,7 +386,7 @@ jobs:
       uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: startsWith(matrix.os, 'windows-')
+      if: ${{ startsWith(matrix.os, 'windows-') }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
