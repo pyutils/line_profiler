@@ -312,6 +312,7 @@ def find_module_script(module_name, *, static=True, exit_on_error=True):
     from line_profiler.autoprofile.util_static import modname_to_modpath
     from importlib.util import find_spec
 
+    @_restore.mapping(sys.modules)
     def resolve_module_path(mod_name):  # type: (str) -> str | None
         try:
             mod_spec = find_spec(mod_name)

@@ -222,13 +222,18 @@ def test_kernprof_sys_restoration(capsys, error, args):
             ctx = pytest.raises(BaseException)
         else:
             ctx = contextlib.nullcontext()
-        old_main = sys.modules.get('__main__')
-        with ctx:
-            main(['-l', *shlex.split(args), '-m', 'mymod'])
-        out, _ = capsys.readouterr()
-        assert out.startswith('1')
-        assert tmpdir not in sys.path
-        assert sys.modules.get('__main__') is old_main
+        old_modules = sys.modules.copy()
+        try:
+            old_main = sys.modules.get('__main__')
+            with ctx:
+                main(['-l', *shlex.split(args), '-m', 'mymod'])
+            out, _ = capsys.readouterr()
+            assert out.startswith('1')
+            assert tmpdir not in sys.path
+            assert sys.modules.get('__main__') is old_main
+        finally:
+            sys.modules.clear()
+            sys.modules.update(old_modules)
 
 
 @pytest.mark.parametrize(
