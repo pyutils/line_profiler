@@ -6,3 +6,5 @@ sphinx-autoapi >= 1.8.4
 Pygments >= 2.9.0
 myst_parser >= 0.18.0
 sphinx-reredirects >= 0.0.1
+# Make sure we build the docs for `line_profiler.ipython_extension`
+-r ipython.txt
