@@ -236,6 +236,7 @@ jobs:
           install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
+        # Note: cibuildwheel can't target 3.8 on Window ARM64
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
@@ -247,6 +248,10 @@ jobs:
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
+          os: windows-11-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests
@@ -256,6 +261,10 @@ jobs:
           install-extras: tests
           os: windows-latest
           arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: windows-11-arm
+          arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -339,13 +348,38 @@ jobs:
         - python-version: 3.14.0-rc.1
           install-extras: tests,optional
           os: windows-latest
+          arch: auto
+        # Note: again, cibuildwheel can't target 3.8 on Window ARM64
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: windows-11-arm
           arch: auto
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: matrix.os == 'windows-latest'
+      if: startsWith(matrix.os, 'windows-')
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
