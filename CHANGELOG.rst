@@ -9,6 +9,7 @@ Changes
 * FIX: search function in online documentation
 * FIX: ref-count leaks #372
 * FIX: mitigate speed regressions introduced in 5.0.0 #376
+* FIX: Use import system to locate module file run by ``kernprof -m`` #389
 
 5.0.0
 ~~~~~
