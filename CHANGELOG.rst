@@ -8,6 +8,7 @@ Changes
 * FIX: mitigate speed regressions introduced in 5.0.0
 * ENH: Added capability to combine profiling data both programmatically (``LineStats.__add__()``) and via the CLI (``python -m line_profiler``) (#380, originally proposed in #219)
 * FIX: search function in online documentation
+* FIX: Use import system to locate module file run by ``kernprof -m`` #389
 
 5.0.0
 ~~~~~
