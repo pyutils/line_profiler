@@ -44,7 +44,9 @@ test-extras = ["tests-strict", "runtime-strict"]
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]
 [tool.cibuildwheel.windows]
-archs = ['AMD64', 'ARM64']
+# FIXME START
+archs = ['ARM64']
+# FIXME END
 
 
 [tool.mypy]

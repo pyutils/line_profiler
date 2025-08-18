@@ -146,24 +146,26 @@ jobs:
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
-    - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
-      with:
-        output-dir: wheelhouse
-        config-file: pyproject.toml
-      env:
-        CIBW_SKIP: ${{ matrix.cibw_skip }}
-        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
-        CIBW_ENVIRONMENT: PYTHONUTF8=1
-        PYTHONUTF8: '1'
-        CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
-        CIBW_BUILD: cp38-*
-        # Note: apparently something (probably msvc-dev-cmd) sets the
-        # envvar, which prevents cibuildwheel from targeting non-native
-        # architecture on some versions...
-        # we can't unset envvars yet though (see actions/runner#1126),
-        # but let's see if this helps
-        VSCMD_ARG_TGT_ARCH: ''
+    # FIXME START
+    # - name: Build binary wheels
+    #   uses: pypa/cibuildwheel@v3.1.2
+    #   with:
+    #     output-dir: wheelhouse
+    #     config-file: pyproject.toml
+    #   env:
+    #     CIBW_SKIP: ${{ matrix.cibw_skip }}
+    #     CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+    #     CIBW_ENVIRONMENT: PYTHONUTF8=1
+    #     PYTHONUTF8: '1'
+    #     CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
+    #     CIBW_BUILD: cp38-*
+    #     # Note: apparently something (probably msvc-dev-cmd) sets the
+    #     # envvar, which prevents cibuildwheel from targeting non-native
+    #     # architecture on some versions...
+    #     # we can't unset envvars yet though (see actions/runner#1126),
+    #     # but let's see if this helps
+    #     VSCMD_ARG_TGT_ARCH: ''
+    # FIXME END
     - name: Build binary wheels
       uses: pypa/cibuildwheel@v3.1.2
       with:
