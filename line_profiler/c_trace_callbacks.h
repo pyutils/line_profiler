@@ -14,6 +14,11 @@
  *   and causes problems in 3.12 (see CPython #105268, #105350, #107348)
  * - Undefine the `HAVE_STD_ATOMIC` macro, which causes problems on
  *   Linux in 3.12 (see CPython #108216)
+ * - Temporarily replace `_M_ARM64` with `_M_ARM` and pre-include
+ *   `include/pycore_atomic.h` (which is indirectly
+ *   included in `include/pycore_interp.h`), so that problematic
+ *   function definitions therein are replaced with dummy ones (see
+ *   #390)
  * Note in any case that we don't actually use `PyInterpreterState`
  * directly -- we just need its memory layout so that we can refer to
  * its `.last_restart_version` member
@@ -25,13 +30,16 @@
 #       define Py_BUILD_CORE 1
 #   endif
 #   if PY_VERSION_HEX < 0x030d0000  // 3.13
-#       ifdef _PyGC_FINALIZED
-#           undef _PyGC_FINALIZED
-#       endif
+#       undef _PyGC_FINALIZED
 #       ifdef __linux__
-#           ifdef HAVE_STD_ATOMIC
-#               undef HAVE_STD_ATOMIC
-#           endif
+#           undef HAVE_STD_ATOMIC
+#       endif
+#       ifdef _M_ARM64
+#           undef _M_ARM64
+#           define _M_ARM
+#           include "internal/pycore_atomic.h"
+#           undef _M_ARM
+#           define _M_ARM64
 #       endif
 #   endif
 #   include "internal/pycore_interp.h"
