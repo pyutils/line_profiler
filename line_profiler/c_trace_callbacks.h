@@ -36,6 +36,7 @@
 #           undef HAVE_STD_ATOMIC
 #       endif
 #       if (defined(_M_ARM) || defined(_M_ARM64)) && (! defined(Py_ATOMIC_H))
+#           define Py_ATOMIC_H
             typedef struct _Py_atomic_address {
                 volatile uintptr_t _value;
             } _Py_atomic_address;
