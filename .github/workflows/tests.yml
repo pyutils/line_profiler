@@ -125,8 +125,11 @@ jobs:
         # the standard [tool.cibuildwheel] section in pyproject.toml and set
         # explicitly here.
         os:
-        - ubuntu-latest
-        - macOS-latest
+        # FIXME START: temporarily truncate pipeline to focus on
+        # 3.12 on Windows
+        # - ubuntu-latest
+        # - macOS-latest
+        # FIXME END
         - windows-latest
         cibw_skip:
         - '*-win32 *-win32 cp313-musllinux_i686'
@@ -137,12 +140,32 @@ jobs:
       uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: matrix.os == 'windows-latest' && ${{ contains(matrix.cibw_skip, '*-win32') }}
+      if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
+    # FIXME START
+    # - name: Build binary wheels
+    #   uses: pypa/cibuildwheel@v3.1.2
+    #   with:
+    #     output-dir: wheelhouse
+    #     config-file: pyproject.toml
+    #   env:
+    #     CIBW_SKIP: ${{ matrix.cibw_skip }}
+    #     CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+    #     CIBW_ENVIRONMENT: PYTHONUTF8=1
+    #     PYTHONUTF8: '1'
+    #     CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
+    #     CIBW_BUILD: cp38-*
+    #     # Note: apparently something (probably msvc-dev-cmd) sets the
+    #     # envvar, which prevents cibuildwheel from targeting non-native
+    #     # architecture on some versions...
+    #     # we can't unset envvars yet though (see actions/runner#1126),
+    #     # but let's see if this helps
+    #     VSCMD_ARG_TGT_ARCH: ''
+    # FIXME END
     - name: Build binary wheels
       uses: pypa/cibuildwheel@v3.1.2
       with:
@@ -153,18 +176,7 @@ jobs:
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
-        CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
-        CIBW_BUILD: cp38-*
-    - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
-      with:
-        output-dir: wheelhouse
-        config-file: pyproject.toml
-      env:
-        CIBW_SKIP: ${{ matrix.cibw_skip }}
-        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
-        CIBW_ENVIRONMENT: PYTHONUTF8=1
-        PYTHONUTF8: '1'
+        VSCMD_ARG_TGT_ARCH: ''
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
@@ -224,128 +236,168 @@ jobs:
         # Xcookie generates an explicit list of environments that will be used
         # for testing instead of using the more concise matrix notation.
         include:
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: windows-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: windows-latest
+        #   arch: auto
+        # # Note: cibuildwheel can't target 3.8 on Window ARM64
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: windows-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.13'
+        #   install-extras: tests
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
         - python-version: '3.13'
           install-extras: tests
-          os: macOS-latest
+          os: windows-11-arm
           arch: auto
-        - python-version: '3.13'
-          install-extras: tests
-          os: windows-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
+        # Note: again, cibuildwheel can't target 3.8 on Window ARM64
         - python-version: '3.9'
           install-extras: tests,optional
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
         - python-version: '3.10'
           install-extras: tests,optional
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
         - python-version: '3.11'
           install-extras: tests,optional
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
         - python-version: '3.12'
           install-extras: tests,optional
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests,optional
-          os: ubuntu-latest
+          os: windows-11-arm
           arch: auto
         - python-version: 3.14.0-rc.1
           install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: 3.14.0-rc.1
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: 3.14.0-rc.1
-          install-extras: tests,optional
-          os: windows-latest
+          os: windows-11-arm
           arch: auto
     steps:
     - name: Checkout source
       uses: actions/checkout@v4.2.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
-      if: matrix.os == 'windows-latest'
+      if: ${{ startsWith(matrix.os, 'windows-') }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
