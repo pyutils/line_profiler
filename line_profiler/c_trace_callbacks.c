@@ -26,17 +26,11 @@
 #   ifndef Py_BUILD_CORE
 #       define Py_BUILD_CORE 1
 #   endif
-#   ifdef _PyGC_FINALIZED
-#       undef _PyGC_FINALIZED
-#   endif
+#   undef _PyGC_FINALIZED
 #   if defined(__linux__) && defined(HAVE_STD_ATOMIC)
 #       undef HAVE_STD_ATOMIC
 #   endif
-#   if PY_VERSION_HEX >= 0x030900a6  // 3.9.0a6
-#      include "internal/pycore_interp.h"
-#   else
-#      include "internal/pycore_pystate.h"
-#   endif
+#   include "internal/pycore_interp.h"
 #endif
 
 #define CYTHON_MODULE "line_profiler._line_profiler"
