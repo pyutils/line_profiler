@@ -4,7 +4,6 @@ Changes
 5.0.1
 ~~~~~
 * FIX: ref-count leaks #372
-* ENH: Add support for building ABI3 wheels
 * FIX: mitigate speed regressions introduced in 5.0.0
 * ENH: Added capability to combine profiling data both programmatically (``LineStats.__add__()``) and via the CLI (``python -m line_profiler``) (#380, originally proposed in #219)
 * FIX: search function in online documentation

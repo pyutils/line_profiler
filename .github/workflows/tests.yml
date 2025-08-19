@@ -153,18 +153,6 @@ jobs:
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
-        CIBW_CONFIG_SETTINGS: --build-option=--py-limited-api=cp38
-        CIBW_BUILD: cp38-*
-    - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
-      with:
-        output-dir: wheelhouse
-        config-file: pyproject.toml
-      env:
-        CIBW_SKIP: ${{ matrix.cibw_skip }}
-        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
-        CIBW_ENVIRONMENT: PYTHONUTF8=1
-        PYTHONUTF8: '1'
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
