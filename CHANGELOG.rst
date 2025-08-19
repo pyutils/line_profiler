@@ -3,8 +3,8 @@ Changes
 
 5.0.1
 ~~~~~
-* ENH: Add support for building ABI3 wheels
 * ENH: Add %%lprun_all for more beginner-friendly profiling in IPython/Jupyter #383
+* FIX: mitigate speed regressions introduced in 5.0.0
 * ENH: Added capability to combine profiling data both programmatically (``LineStats.__add__()``) and via the CLI (``python -m line_profiler``) (#380, originally proposed in #219)
 * FIX: search function in online documentation
 * FIX: ref-count leaks #372
