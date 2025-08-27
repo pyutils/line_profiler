@@ -18,8 +18,8 @@
  *   `include/pycore_atomic.h` (in `include/pycore_interp.h`, so that
  *   problematic function definitions therein are replaced with dummy
  *   ones (see #390); note that we still need to vendor in parts
- *   therefrom which are used by `pycore_interp.h` (or at least mock
- *   them)
+ *   therefrom which are used by `pycore_interp.h`, and its dependencies
+ *   `pycore_ceval_state.h` and `pycore_gil.h` (or at least mock them)
  * Note in any case that we don't actually use `PyInterpreterState`
  * directly -- we just need its memory layout so that we can refer to
  * its `.last_restart_version` member
@@ -37,9 +37,14 @@
 #       endif
 #       if (defined(_M_ARM) || defined(_M_ARM64)) && (! defined(Py_ATOMIC_H))
 #           define Py_ATOMIC_H
+            // Used in `pycore_interp.h`
             typedef struct _Py_atomic_address {
                 volatile uintptr_t _value;
             } _Py_atomic_address;
+            // Used in `pycore_gil.h` and `pycore_ceval_state.h`
+            typedef struct _Py_atomic_int {
+                volatile int _value;
+            } _Py_atomic_int;
 #           define _Py_atomic_load_relaxed(foo) (0)
 #           define _Py_atomic_store_relaxed(foo, bar) (0)
 #           include "internal/pycore_interp.h"
