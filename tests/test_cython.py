@@ -10,15 +10,17 @@ from importlib.util import find_spec
 from io import StringIO
 from operator import methodcaller
 from pathlib import Path
+from platform import machine, system
 from types import ModuleType
-from typing import Generator, Tuple
+from typing import Generator, Tuple, Union
 from uuid import uuid4
 
 import pytest
 
 from line_profiler._line_profiler import (
     CANNOT_LINE_TRACE_CYTHON, find_cython_source_file)
-from line_profiler.line_profiler import get_code_block, LineProfiler
+from line_profiler.line_profiler import (  # type:ignore[attr-defined]
+    get_code_block, LineProfiler)
 
 
 def propose_name(prefix: str) -> Generator[str, None, None]:
@@ -27,8 +29,8 @@ def propose_name(prefix: str) -> Generator[str, None, None]:
 
 
 def _install_cython_example(
-        tmp_path_factory: pytest.TempPathFactory,
-        editable: bool) -> Generator[Tuple[Path, str], None, None]:
+    tmp_path_factory: pytest.TempPathFactory, editable: bool,
+) -> Generator[Tuple[Path, str, Union[Exception, None]], None, None]:
     """
     Install the example Cython module in a name-clash-free manner.
     """
@@ -61,35 +63,64 @@ def _install_cython_example(
     else:
         pip_install.append(str(tmp_path))
     try:
-        subprocess.run(pip_install).check_returncode()
+        xc: Union[Exception, None] = None
+        try:
+            subprocess.run(pip_install).check_returncode()
+        except Exception as e:
+            xc = e
         subprocess.run(pip + ['list']).check_returncode()
-        yield cython_source, module
+        yield cython_source, module, xc
     finally:
         pip_uninstall = pip + ['uninstall', '--verbose', '--yes', module]
         subprocess.run(pip_uninstall).check_returncode()
 
 
+def _handle_not_installed(xc: Exception):
+    # FIXME: installation of the Cython package doesn't seem to work on
+    # Windows-ARM64. Not sure if it's the editable install that is
+    # problematic, or the package setup, or Cython itself.
+    # For now we just XFAIL if:
+    # - We're on Windows-ARM64, and
+    # - The `pip install` subprocess failed with a
+    #   `subprocess.CalledProcessError`.
+    # Otherwise, re-raise the exception.
+    if (
+            'arm' in machine().lower()
+            and system().lower() == 'windows'
+            and isinstance(xc, subprocess.CalledProcessError)):
+        pytest.xfail('installation of the test Cython package '
+                     'known to be faulty on Windows-ARM64; '
+                     'exact cause unknown')
+    else:
+        raise xc
+
+
 @pytest.fixture(scope='module')
 def cython_example(
-        tmp_path_factory: pytest.TempPathFactory) -> Tuple[Path, ModuleType]:
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Tuple[Path, ModuleType, Union[Exception, None]], None, None]:
     """
     Install the example Cython module, yield the path to the Cython
     source file and the corresponding module, uninstall it at teardown.
     """
     # With editable installs, we need to refresh `sys.meta_path` before
     # the installed module is available
-    for path, mod_name in _install_cython_example(tmp_path_factory, True):
+    for path, mod_name, xc in _install_cython_example(tmp_path_factory, True):
         reload(import_module('site'))
-        yield (path, import_module(mod_name))
+        yield (path, import_module(mod_name), xc)
 
 
-def test_recover_cython_source(cython_example: Tuple[Path, str]) -> None:
+def test_recover_cython_source(
+    cython_example: Tuple[Path, ModuleType, Union[Exception, None]],
+) -> None:
     """
     Check that Cython sources are correctly located by
     `line_profiler._line_profiler.find_cython_source_file()` and
     `line_profiler.line_profiler.get_code_block()`.
     """
-    expected_source, module = cython_example
+    expected_source, module, xc = cython_example
+    if xc is not None:
+        _handle_not_installed(xc)
     for func in module.cos, module.sin:
         source = find_cython_source_file(func)
         assert source
@@ -104,7 +135,9 @@ def test_recover_cython_source(cython_example: Tuple[Path, str]) -> None:
     CANNOT_LINE_TRACE_CYTHON,
     reason='Cannot line-trace Cython code in version '
     + '.'.join(str(v) for v in sys.version_info[:3]))
-def test_profile_cython_source(cython_example: Tuple[Path, str]) -> None:
+def test_profile_cython_source(
+    cython_example: Tuple[Path, ModuleType, Union[Exception, None]],
+) -> None:
     """
     Check that calls to Cython functions (built with the appropriate
     compile-time options) can be profiled.
@@ -112,8 +145,11 @@ def test_profile_cython_source(cython_example: Tuple[Path, str]) -> None:
     prof_cos = LineProfiler()
     prof_sin = LineProfiler()
 
-    cos = prof_cos(cython_example[1].cos)
-    sin = prof_sin(cython_example[1].sin)
+    _, module, xc = cython_example
+    if xc is not None:
+        _handle_not_installed(xc)
+    cos = prof_cos(module.cos)
+    sin = prof_sin(module.sin)
     assert pytest.approx(cos(.125, 10)) == math.cos(.125)
     assert pytest.approx(sin(2.5, 3)) == 2.5 - 2.5 ** 3 / 6 + 2.5 ** 5 / 120
 
