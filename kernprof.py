@@ -307,12 +307,26 @@ class RepeatedTimer:
         self.is_running = False
 
 
-def find_module_script(module_name, *, exit_on_error=True):
+def find_module_script(module_name, *, static=True, exit_on_error=True):
     """Find the path to the executable script for a module or package."""
     from line_profiler.autoprofile.util_static import modname_to_modpath
+    from importlib.util import find_spec
+
+    def resolve_module_path(mod_name):  # type: (str) -> str | None
+        try:
+            mod_spec = find_spec(mod_name)
+        except ImportError:
+            return None
+        if not mod_spec:
+            return None
+        fname = mod_spec.origin  # type: str | None
+        if fname and os.path.exists(fname):
+            return fname
+
+    get_module_path = modname_to_modpath if static else resolve_module_path
 
     for suffix in '.__main__', '':
-        fname = modname_to_modpath(module_name + suffix)
+        fname = get_module_path(module_name + suffix)
         if fname:
             return fname
 
@@ -1160,8 +1174,8 @@ def _pre_profile(options, module, exit_on_error):
         builtins.__dict__['profile'] = prof
 
     if module:
-        script_file = find_module_script(options.script,
-                                         exit_on_error=exit_on_error)
+        script_file = find_module_script(
+            options.script, static=options.static, exit_on_error=exit_on_error)
     else:
         script_file = find_script(options.script, exit_on_error=exit_on_error)
         # Make sure the script's directory is on sys.path instead of

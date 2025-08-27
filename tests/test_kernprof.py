@@ -125,6 +125,59 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
     assert ('Function: main' in proc.stdout) == profiled_main
 
 
+@pytest.mark.parametrize('autoprof', [True, False])
+@pytest.mark.parametrize('static', [True, False])
+def test_kernprof_m_import_resolution(static, autoprof):
+    """
+    Test that `kernprof -m` resolves the module using static and dynamic
+    as is appropriate (toggled by the undocumented environment variable
+    :env:`LINE_PROFILER_STATIC_ANALYSIS`; note that static analysis
+    doesn't handle namespace modules while dynamic resolution does.
+    """
+    code = ub.codeblock('''
+    import enum
+    import os
+    import sys
+
+
+    @profile
+    def main():
+        print('Hello world')
+
+
+    if __name__ == '__main__':
+        main()
+    ''')
+    cmd = [sys.executable, '-m', 'kernprof', '-lv']
+    if autoprof:
+        # Remove the explicit decorator, and use the `--prof-mod` flag
+        code = '\n'.join(line for line in code.splitlines()
+                         if '@profile' not in line)
+        cmd += ['-p', 'my_namesapce_pkg.mysubmod']
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dpath = ub.Path(tmpdir)
+        namespace_mod_path = temp_dpath / 'my_namesapce_pkg' / 'mysubmod.py'
+        namespace_mod_path.parent.mkdir()
+        namespace_mod_path.write_text(code)
+        python_path = tmpdir
+        if 'PYTHONPATH' in os.environ:
+            python_path += ':' + os.environ['PYTHONPATH']
+        env = {**os.environ,
+               # Toggle use of static analysis
+               'LINE_PROFILER_STATIC_ANALYSIS': str(bool(static)),
+               # Add the tempdir to `sys.path`
+               'PYTHONPATH': python_path}
+        cmd += ['-m', 'my_namesapce_pkg.mysubmod']
+        proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2, env=env)
+    if static:
+        assert proc.returncode
+        assert proc.stderr.startswith('Could not find module')
+    else:
+        proc.check_returncode()
+        assert proc.stdout.startswith('Hello world\n')
+        assert 'Function: main' in proc.stdout
+
+
 @pytest.mark.parametrize('error', [True, False])
 @pytest.mark.parametrize(
     'args',
@@ -169,13 +222,18 @@ def test_kernprof_sys_restoration(capsys, error, args):
             ctx = pytest.raises(BaseException)
         else:
             ctx = contextlib.nullcontext()
-        old_main = sys.modules.get('__main__')
-        with ctx:
-            main(['-l', *shlex.split(args), '-m', 'mymod'])
-        out, _ = capsys.readouterr()
-        assert out.startswith('1')
-        assert tmpdir not in sys.path
-        assert sys.modules.get('__main__') is old_main
+        old_modules = sys.modules.copy()
+        try:
+            old_main = sys.modules.get('__main__')
+            with ctx:
+                main(['-l', *shlex.split(args), '-m', 'mymod'])
+            out, _ = capsys.readouterr()
+            assert out.startswith('1')
+            assert tmpdir not in sys.path
+            assert sys.modules.get('__main__') is old_main
+        finally:
+            sys.modules.clear()
+            sys.modules.update(old_modules)
 
 
 @pytest.mark.parametrize(
