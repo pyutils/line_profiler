@@ -131,8 +131,10 @@ jobs:
         # - macOS-latest
         # FIXME END
         - windows-latest
+        # Since the oldest Python available on windows-11-arm on GitHub
+        # is 3.11.0, older wheels cannot be tested... so just skip them
         cibw_skip:
-        - '*-win32 *-win32 cp313-musllinux_i686'
+        - '*-win32 cp39-win_arm64 cp310-win_arm64 cp313-musllinux_i686'
         arch:
         - auto
     steps:
@@ -347,15 +349,9 @@ jobs:
         #   os: windows-latest
         #   arch: auto
         # FIXME END
-        # Note: again, cibuildwheel can't target 3.8 on Window ARM64
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: windows-11-arm
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: windows-11-arm
-          arch: auto
+        # Again, cibuildwheel can't target 3.8 on Window ARM64, and
+        # GitHub doesn't have anything below Python 3.11 on their ARM64
+        # machines
         - python-version: '3.11'
           install-extras: tests,optional
           os: windows-11-arm
