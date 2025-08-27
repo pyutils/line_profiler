@@ -106,8 +106,13 @@ def cython_example(
     # With editable installs, we need to refresh `sys.meta_path` before
     # the installed module is available
     for path, mod_name, xc in _install_cython_example(tmp_path_factory, True):
-        reload(import_module('site'))
-        yield (path, import_module(mod_name), xc)
+        if xc is None:
+            reload(import_module('site'))
+            yield (path, import_module(mod_name), xc)
+        else:
+            # Failure path, but instead of handling it within the
+            # module-wide fixture we defer it to the individual tests
+            yield (Path('.'), ModuleType(mod_name), xc)
 
 
 def test_recover_cython_source(
