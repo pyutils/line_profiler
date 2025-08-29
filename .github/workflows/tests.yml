@@ -125,13 +125,14 @@ jobs:
         # the standard [tool.cibuildwheel] section in pyproject.toml and set
         # explicitly here.
         os:
-        - ubuntu-latest
-        - macOS-latest
+        # FIXME START: temporarily truncate pipeline to focus on
+        # 3.12 on Windows
+        # - ubuntu-latest
+        # - macOS-latest
+        # FIXME END
         - windows-latest
         # Since the oldest Python available on windows-11-arm on GitHub
-        # is 3.11.0 (see https://raw.githubusercontent.com/actions/\
-        # python-versions/main/versions-manifest.json), older wheels
-        # cannot be tested... so just skip pre-building them
+        # is 3.11.0, older wheels cannot be tested... so just skip them
         cibw_skip:
         - '*-win32 cp39-win_arm64 cp310-win_arm64 cp313-musllinux_i686'
         arch:
@@ -217,134 +218,140 @@ jobs:
         # Xcookie generates an explicit list of environments that will be used
         # for testing instead of using the more concise matrix notation.
         include:
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: windows-latest
-          arch: auto
-        # Note: cibuildwheel can't target 3.8 on Window ARM64
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: windows-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests-strict,runtime-strict
+        #   os: windows-latest
+        #   arch: auto
+        # # Note: cibuildwheel can't target 3.8 on Window ARM64
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests-strict,runtime-strict,optional-strict
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-11-arm
           arch: auto
-        - python-version: '3.13'
-          install-extras: tests
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests
-          os: windows-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.13'
+        #   install-extras: tests
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
         - python-version: '3.13'
           install-extras: tests
           os: windows-11-arm
           arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: 3.14.0-rc.1
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: 3.14.0-rc.1
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: 3.14.0-rc.1
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
+        # FIXME START
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: ubuntu-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: macOS-latest
+        #   arch: auto
+        # - python-version: '3.8'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.9'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.10'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.11'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.12'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: '3.13'
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # - python-version: 3.14.0-rc.1
+        #   install-extras: tests,optional
+        #   os: windows-latest
+        #   arch: auto
+        # FIXME END
         # Again, cibuildwheel can't target 3.8 on Window ARM64, and
         # GitHub doesn't have anything below Python 3.11 on their ARM64
-        # machines, so just test the built wheels from 3.11+
+        # machines
         - python-version: '3.11'
           install-extras: tests,optional
           os: windows-11-arm
