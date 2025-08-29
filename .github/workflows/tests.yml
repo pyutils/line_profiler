@@ -133,7 +133,7 @@ jobs:
         # python-versions/main/versions-manifest.json), older wheels
         # cannot be tested... so just skip pre-building them
         cibw_skip:
-        - '*-win32 cp39-win_arm64 cp310-win_arm64 cp313-musllinux_i686'
+        - '*-win32 cp3{9,10}-win_arm64 cp313-musllinux_i686'
         arch:
         - auto
     steps:
@@ -154,9 +154,16 @@ jobs:
         config-file: pyproject.toml
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
+        # We're building on Windows-x64, so ARM64 wheels can't be tested
+        # locally by `cibuildwheel` (don't worry, we're testing them
+        # later though in `test_binpy_wheels`)
+        CIBW_TEST_SKIP: '*-win_arm64'
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
+        # `msvc-dev-cmd` sets this envvar, which intereferes with
+        # cross-architecture building...
+        # just let `cibuildwheel` handle that
         VSCMD_ARG_TGT_ARCH: ''
     - name: Show built files
       shell: bash
@@ -367,9 +374,8 @@ jobs:
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }}
-      # Note: as noted in msvc-dev-cmd #90 (and the Action docs), it
-      # currently assumes `arch=x64`, so we have to manually set it
-      # here...
+      # As noted in msvc-dev-cmd #90 (and the Action docs), it currently
+      # # assumes `arch=x64`, so we have to manually set it here...
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Set up QEMU
