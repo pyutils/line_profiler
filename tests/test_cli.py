@@ -210,9 +210,8 @@ def test_multiple_lprof_files(capsys):
     # View them and check the output
     checks = {}
     out, err = capsys.readouterr()
-    with capsys.disabled():
-        print(out, end='')
-        print(err, end='', file=stderr)
+    print(out, end='')
+    print(err, end='', file=stderr)
     for func in sum_n, sum_nsq:
         for comment, n in zip(['Loop', 'Return'], nhits[func]):
             checks[f'  # {comment}: {func.__name__}'] = n
