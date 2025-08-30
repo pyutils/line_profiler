@@ -235,6 +235,18 @@ def _write_demo_module(temp_dpath):
             return a + b
         '''))
 
+    # Note: this can't be profiled because `test_mod.more-utils` is not
+    # a valid dotted path
+    (temp_dpath / 'test_mod/dev-utils.py').write_text(ub.codeblock(
+        '''
+        """
+        Just imagine that the file contains some dev tools.
+        """
+
+        def publish_pkg():
+            pass
+        '''))
+
     (temp_dpath / 'test_mod/submod1.py').write_text(ub.codeblock(
         '''
         from test_mod.util import add_operator

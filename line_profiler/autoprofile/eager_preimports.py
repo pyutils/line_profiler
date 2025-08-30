@@ -286,7 +286,7 @@ def resolve_profiling_targets(dotted_paths, static=True, recurse=False):
             return
         for subpath in package_modpaths(path, with_pkg=True):
             submod = modpath_to_modname(subpath)
-            if submod:
+            if submod and is_dotted_path(submod):
                 yield submod
 
     def walk_packages_import_sys(pkg):
@@ -297,7 +297,8 @@ def resolve_profiling_targets(dotted_paths, static=True, recurse=False):
         if not paths:
             return
         for info in walk_packages(paths, prefix=pkg + '.'):
-            yield info.name
+            if is_dotted_path(info.name):
+                yield info.name
 
     dotted_paths = set(dotted_paths)
     if isinstance(recurse, Collection):
