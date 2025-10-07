@@ -235,6 +235,18 @@ def _write_demo_module(temp_dpath):
             return a + b
         '''))
 
+    # Note: this can't be profiled because `test_mod.more-utils` is not
+    # a valid dotted path
+    (temp_dpath / 'test_mod/dev-utils.py').write_text(ub.codeblock(
+        '''
+        """
+        Just imagine that the file contains some dev tools.
+        """
+
+        def publish_pkg():
+            pass
+        '''))
+
     (temp_dpath / 'test_mod/submod1.py').write_text(ub.codeblock(
         '''
         from test_mod.util import add_operator
@@ -332,7 +344,8 @@ def test_autoprofile_script_with_module():
         assert 'Function: main' in raw_output
 
 
-def test_autoprofile_module():
+@pytest.mark.parametrize('static_resolution', [True, False])
+def test_autoprofile_module(static_resolution):
     """
     Test that every function in a file is profiled when autoprofile is
     enabled.
@@ -342,11 +355,14 @@ def test_autoprofile_module():
 
         script_fpath = _write_demo_module(temp_dpath)
 
-        # args = [sys.executable, '-m', 'kernprof', '--prof-imports',
-        #         '-p', 'script.py', '-l', os.fspath(script_fpath)]
         args = [sys.executable, '-m', 'kernprof', '-p', 'test_mod', '-l',
                 os.fspath(script_fpath)]
-        proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
+        env = dict(os.environ)
+        if static_resolution:
+            env['LINE_PROFILER_STATIC_ANALYSIS'] = '1'
+        else:
+            env.pop('LINE_PROFILER_STATIC_ANALYSIS', None)
+        proc = ub.cmd(args, cwd=temp_dpath, env=env, verbose=2)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
