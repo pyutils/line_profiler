@@ -45,9 +45,27 @@
             typedef struct _Py_atomic_int {
                 volatile int _value;
             } _Py_atomic_int;
-#           define _Py_atomic_load_relaxed(foo) (0)
-#           define _Py_atomic_store_relaxed(foo, bar) (0)
-#           include "internal/pycore_interp.h"
+            /* Stub out macros in `pycore_atomic.h` used in macros in
+             * `pycore_interp.h` (which aren't related to the
+             * `struct _is` we need).
+             * If any stub is referenced, fail the build with an
+             * unresolved external.
+             * This ensures we never ship wheels that "use" these
+             * placeholders. */
+#           ifdef _MSC_VER
+                __declspec(dllimport) void lp_link_error__stubbed_cpython_atomic_LOAD_relaxed_was_used_this_is_a_bug(void);
+                __declspec(dllimport) void lp_link_error__stubbed_cpython_atomic_STORE_relaxed_was_used_this_is_a_bug(void);
+#           else
+                extern void lp_link_error__stubbed_cpython_atomic_LOAD_relaxed_was_used_this_is_a_bug(void);
+                extern void lp_link_error__stubbed_cpython_atomic_STORE_relaxed_was_used_this_is_a_bug(void);
+#           endif
+#           define _LP_ATOMIC_PANIC_LOAD_EXPR()  (lp_link_error__stubbed_cpython_atomic_LOAD_relaxed_was_used_this_is_a_bug(), 0)
+#           define _LP_ATOMIC_PANIC_STORE_STMT() do { lp_link_error__stubbed_cpython_atomic_STORE_relaxed_was_used_this_is_a_bug(); } while (0)
+            // Panic-on-use shims (expression/statement forms)
+#           undef  _Py_atomic_load_relaxed
+#           undef  _Py_atomic_store_relaxed
+#           define _Py_atomic_load_relaxed(obj)       ((void)(obj), _LP_ATOMIC_PANIC_LOAD_EXPR())
+#           define _Py_atomic_store_relaxed(obj, val)  do { (void)(obj); (void)(val); _LP_ATOMIC_PANIC_STORE_STMT(); } while (0)
 #       endif
 #   endif
 #   include "internal/pycore_interp.h"

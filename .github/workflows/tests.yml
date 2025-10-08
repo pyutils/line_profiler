@@ -161,7 +161,7 @@ jobs:
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
-        # `msvc-dev-cmd` sets this envvar, which intereferes with
+        # `msvc-dev-cmd` sets this envvar, which interferes with
         # cross-architecture building...
         # just let `cibuildwheel` handle that
         VSCMD_ARG_TGT_ARCH: ''
