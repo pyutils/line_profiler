@@ -18,7 +18,8 @@ import pytest
 
 from line_profiler._line_profiler import (
     CANNOT_LINE_TRACE_CYTHON, find_cython_source_file)
-from line_profiler.line_profiler import get_code_block, LineProfiler
+from line_profiler.line_profiler import (  # type:ignore[attr-defined]
+    get_code_block, LineProfiler)
 
 
 def propose_name(prefix: str) -> Generator[str, None, None]:
@@ -71,7 +72,8 @@ def _install_cython_example(
 
 @pytest.fixture(scope='module')
 def cython_example(
-        tmp_path_factory: pytest.TempPathFactory) -> Tuple[Path, ModuleType]:
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Tuple[Path, ModuleType], None, None]:
     """
     Install the example Cython module, yield the path to the Cython
     source file and the corresponding module, uninstall it at teardown.
@@ -83,7 +85,7 @@ def cython_example(
         yield (path, import_module(mod_name))
 
 
-def test_recover_cython_source(cython_example: Tuple[Path, str]) -> None:
+def test_recover_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
     """
     Check that Cython sources are correctly located by
     `line_profiler._line_profiler.find_cython_source_file()` and
@@ -104,7 +106,7 @@ def test_recover_cython_source(cython_example: Tuple[Path, str]) -> None:
     CANNOT_LINE_TRACE_CYTHON,
     reason='Cannot line-trace Cython code in version '
     + '.'.join(str(v) for v in sys.version_info[:3]))
-def test_profile_cython_source(cython_example: Tuple[Path, str]) -> None:
+def test_profile_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
     """
     Check that calls to Cython functions (built with the appropriate
     compile-time options) can be profiled.
@@ -112,8 +114,9 @@ def test_profile_cython_source(cython_example: Tuple[Path, str]) -> None:
     prof_cos = LineProfiler()
     prof_sin = LineProfiler()
 
-    cos = prof_cos(cython_example[1].cos)
-    sin = prof_sin(cython_example[1].sin)
+    _, module = cython_example
+    cos = prof_cos(module.cos)
+    sin = prof_sin(module.sin)
     assert pytest.approx(cos(.125, 10)) == math.cos(.125)
     assert pytest.approx(sin(2.5, 3)) == 2.5 - 2.5 ** 3 / 6 + 2.5 ** 5 / 120
 
