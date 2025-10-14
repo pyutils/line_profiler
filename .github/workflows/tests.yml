@@ -125,7 +125,12 @@ jobs:
         # the standard [tool.cibuildwheel] section in pyproject.toml and set
         # explicitly here.
         os:
-        - ubuntu-latest
+        # - ubuntu-latest
+        # Overhead of building ARM images on Intel Linux nodes is
+        # unreasonably high (20s build time per wheel vs 3m);
+        # it's better to just spin another runner up to build them
+        # natively
+        - ubuntu-24.04-arm
         # - macOS-latest
         # - windows-latest
         # Since the oldest Python available on windows-11-arm on GitHub
@@ -142,11 +147,11 @@ jobs:
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
-    # Note: QEMU is needed because we're building for `aarch64` on
-    # `x86_64`
+    # Note: Since we're building Linux wheels on their native
+    # architectures, we don't need QEMU for tests
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
     - name: Build binary wheels
@@ -156,11 +161,11 @@ jobs:
         config-file: pyproject.toml
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
-        # We're building on Windows-/Linux-x64, so ARM64 wheels can't be
-        # tested locally by `cibuildwheel`
+        # We're building on Windows-x64, so ARM64 wheels can't be tested
+        # locally by `cibuildwheel`
         # (don't worry, we're testing them later though in
         # `test_binpy_wheels`)
-        CIBW_TEST_SKIP: '*-win_arm64 *linux_aarch64'
+        CIBW_TEST_SKIP: '*-win_arm64'
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
         # `msvc-dev-cmd` sets this envvar, which interferes with
