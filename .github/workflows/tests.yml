@@ -142,9 +142,11 @@ jobs:
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
+    # Note: QEMU is needed because we're building for `aarch64` on
+    # `x86_64`
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
-      if: runner.os == 'Linux' && matrix.arch != 'auto'
+      if: runner.os == 'Linux'
       with:
         platforms: all
     - name: Build binary wheels
@@ -154,11 +156,11 @@ jobs:
         config-file: pyproject.toml
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
-        # We're building on Windows-x64, so ARM64 wheels can't be tested
-        # locally by `cibuildwheel` (don't worry, we're testing them
-        # later though in `test_binpy_wheels`)
-        CIBW_TEST_SKIP: '*-win_arm64'
-        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+        # We're building on Windows-/Linux-x64, so ARM64 wheels can't be
+        # tested locally by `cibuildwheel`
+        # (don't worry, we're testing them later though in
+        # `test_binpy_wheels`)
+        CIBW_TEST_SKIP: '*-win_arm64 *linux_aarch64'
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
         # `msvc-dev-cmd` sets this envvar, which interferes with
@@ -230,6 +232,10 @@ jobs:
           arch: auto
         - python-version: '3.8'
           install-extras: tests-strict,runtime-strict
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests-strict,runtime-strict
           os: macOS-latest
           arch: auto
         - python-version: '3.8'
@@ -240,6 +246,10 @@ jobs:
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
@@ -256,6 +266,10 @@ jobs:
         - python-version: '3.13'
           install-extras: tests
           os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests
@@ -296,6 +310,34 @@ jobs:
         - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.14'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
@@ -382,6 +424,8 @@ jobs:
       # # assumes `arch=x64`, so we have to manually set it here...
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
+    # Note: Since we're testing Linux wheels on their native
+    # architectures, we don't need QEMU for tests
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
