@@ -289,7 +289,7 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
@@ -317,7 +317,7 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
@@ -345,7 +345,7 @@ jobs:
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-latest
           arch: auto
@@ -364,7 +364,7 @@ jobs:
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
