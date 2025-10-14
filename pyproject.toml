@@ -46,7 +46,8 @@ test-extras = ["tests-strict", "runtime-strict"]
 
 # https://cibuildwheel.readthedocs.io/en/stable/options/#archs
 [tool.cibuildwheel.linux]
-archs = ['x86_64', 'aarch64']
+# archs = ['x86_64', 'aarch64']
+archs = ['aarch64']
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]
 [tool.cibuildwheel.windows]
