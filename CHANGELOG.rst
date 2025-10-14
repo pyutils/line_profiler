@@ -20,6 +20,7 @@ Changes
 * FIX: Fixed build on Windows-ARM64 and now building wheels therefor in CI #391
 * FIX: Move away from older, (temporarily-)deprecated ``importlib.resources`` APIs in ``line_profiler.toml_config`` #406
 * CHANGE: remove default alphabetical sorting of profiled functions
+* FIX: Restored building and testing of Linux-ARM64 wheels #402
 
 5.0.0
 ~~~~~

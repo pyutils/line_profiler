@@ -126,7 +126,7 @@ jobs:
         # explicitly here.
         os:
         - ubuntu-latest
-        # Overhead of building ARM images on Intel Linux nodes is
+        # Overhead of building ARM wheels on Intel Linux nodes is
         # unreasonably high (20s build time per wheel vs 3m);
         # it's better to just spin another runner up to build them
         # natively
@@ -146,7 +146,7 @@ jobs:
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     # Note: Since we're building Linux wheels on their native
-    # architectures, we don't need QEMU for tests
+    # architectures, we don't need QEMU
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -415,7 +415,7 @@ jobs:
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     # Note: Since we're testing Linux wheels on their native
-    # architectures, we don't need QEMU for tests
+    # architectures, we don't need QEMU
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
