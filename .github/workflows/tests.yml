@@ -255,6 +255,10 @@ jobs:
           arch: auto
         - python-version: '3.13'
           install-extras: tests
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
           os: macOS-latest
           arch: auto
         - python-version: '3.13'
