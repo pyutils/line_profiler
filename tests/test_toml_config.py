@@ -226,7 +226,7 @@ def run_command_in_venv(
         script_file = tmpdir / 'script.ps1'
         write_text(script_file, """
         $activate, $remainder = $args
-        Invoke-Expression $activate
+        Invoke-Expression -Command $activate
         python -c @remainder
         """)
         base_cmd = [shell, '-NonInteractive', '-File', script_file,
