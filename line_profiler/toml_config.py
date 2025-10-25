@@ -105,11 +105,26 @@ class ConfigSource:
             New instance if ``copy`` is true, the global default
             instance otherwise.
         """
+        # Note: NORMALLY `importlib.resources.path()` is available on
+        # all targetted Python versions and is not deprecated, so we
+        # could've just used said function directly.
+        # However, there are edge cases in which `importlib.resources`
+        # has been superseded with `importlib_resources`, which may
+        # cause various issues (incl. `DeprecationWarning`s or even
+        # errors) dep. on the latter's version (see GitHub issue #405).
+        ir = importlib.resources
+        try:
+            ir_files, ir_as_file = ir.files, ir.as_file
+        except AttributeError:  # Python < 3.9
+            find_file = ir.path
+        else:
+            def find_file(anc, *chunks):
+                return ir_as_file(ir_files(anc).joinpath(*chunks))
+
         global _DEFAULTS
         if _DEFAULTS is None:
             package = __spec__.name.rpartition('.')[0]
-            with importlib.resources.path(package + '.rc',
-                                          'line_profiler.toml') as path:
+            with find_file(package + '.rc', 'line_profiler.toml') as path:
                 conf_dict, source = find_and_read_config_file(config=path)
             conf_dict = get_subtable(conf_dict, NAMESPACE, allow_absence=False)
             _DEFAULTS = cls(conf_dict, source, list(NAMESPACE))
