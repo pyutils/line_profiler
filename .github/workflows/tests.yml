@@ -125,6 +125,8 @@ jobs:
         # the standard [tool.cibuildwheel] section in pyproject.toml and set
         # explicitly here.
         os:
+        - ubuntu-latest
+        - macOS-latest
         - windows-latest
         # Since the oldest Python available on windows-11-arm on GitHub
         # is 3.11.0 (see https://raw.githubusercontent.com/actions/\
@@ -224,16 +226,100 @@ jobs:
         include:
         - python-version: '3.8'
           install-extras: tests-strict,runtime-strict
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests-strict,runtime-strict
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
         # Note: cibuildwheel can't target 3.8 on Window ARM64
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: macOS-latest
           arch: auto
         - python-version: '3.13'
           install-extras: tests
           os: windows-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: macOS-latest
+          arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: macOS-latest
           arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
@@ -262,6 +348,25 @@ jobs:
         - python-version: 3.14.0-rc.1
           install-extras: tests,optional
           os: windows-latest
+          arch: auto
+        # Again, cibuildwheel can't target 3.8 on Window ARM64, and
+        # GitHub doesn't have anything below Python 3.11 on their ARM64
+        # machines, so just test the built wheels from 3.11+
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: windows-11-arm
+          arch: auto
+        - python-version: 3.14.0-rc.1
+          install-extras: tests,optional
+          os: windows-11-arm
           arch: auto
     steps:
     - name: Checkout source
