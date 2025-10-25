@@ -3,7 +3,6 @@ Test the handling of TOML configs.
 """
 import os
 import pathlib
-import pickle
 import platform
 import re
 import subprocess
@@ -215,19 +214,19 @@ def run_proc(
     return proc
 
 
-def run_command_in_venv(
-        command: Sequence[Union[str, Path]],
+def run_python_in_venv(
+        args: Sequence[Union[str, Path]],
         tmpdir: Path,
         venv: Path) -> subprocess.CompletedProcess:
-    """Run `command` in `venv`."""
+    """Run `$ python *args` in `venv`."""
     if 'windows' in platform.system().lower():  # Use PowerShell
         shell = shutil.which('PowerShell.exe')
         assert shell is not None
         script_file = tmpdir / 'script.ps1'
         write_text(script_file, """
-        $activate, $remainder = $args
-        Invoke-Expression -Command $activate
-        python -c @remainder
+        $Activate, $Remainder = $args
+        Invoke-Expression $Activate
+        python @Remainder
         """)
         base_cmd = [shell, '-NonInteractive', '-File', script_file,
                     venv / 'Scripts' / 'Activate.ps1']
@@ -238,33 +237,11 @@ def run_command_in_venv(
         write_text(script_file, """
         activate="$1"; shift
         source "${activate}"
-        python -c "${@}"
+        python "${@}"
         """)
         base_cmd = [shell, script_file, venv / 'bin' / 'activate']
 
-    python_wrapper_script = textwrap.dedent("""
-    import pickle
-    import subprocess
-    import sys
-
-
-    # Run the command in python and pickle the
-    # `subprocess.CompletedProcess` object
-    _, pkl, *cmd = sys.argv
-    with open(pkl, mode='wb') as fobj:
-        proc = subprocess.run(cmd, text=True, capture_output=True)
-        print(proc.stderr, end='', file=sys.stderr)
-        print(proc.stdout, end='')
-        pickle.dump(proc, fobj)
-    """)
-
-    pkl = tmpdir / 'proc.pkl'
-    run_proc(base_cmd + [python_wrapper_script, pkl, *command])
-    try:
-        with pkl.open(mode='rb') as fobj:
-            return pickle.load(fobj)
-    finally:
-        pkl.unlink(missing_ok=True)
+    return run_proc(base_cmd + list(args))
 
 
 def run_pip_in_venv(
@@ -273,9 +250,8 @@ def run_pip_in_venv(
         /,
         *args,
         **kwargs) -> subprocess.CompletedProcess:
-    cmd = ['python', '-m', 'pip',
-           subcommand, '--require-virtualenv', *(arguments or [])]
-    return run_command_in_venv(cmd, *args, **kwargs)
+    cmd = ['-m', 'pip', subcommand, '--require-virtualenv', *(arguments or [])]
+    return run_python_in_venv(cmd, *args, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -292,7 +268,7 @@ def test_backported_importlib_resources(
     has been replaced by `importlib_resources` during runtime (see
     GitHub issue #405).
     """
-    run = partial(run_command_in_venv, tmpdir=tmp_path, venv=venv)
+    run_python = partial(run_python_in_venv, tmpdir=tmp_path, venv=venv)
     run_pip = partial(run_pip_in_venv, tmpdir=tmp_path, venv=venv)
 
     # Install the required `importlib_resources` version
@@ -324,7 +300,7 @@ def test_backported_importlib_resources(
     print(ConfigSource.from_default())
     """)
     write_text(python_script, f'{preamble}\n{sanity_check}')
-    proc = run(['python', '-W', 'always::DeprecationWarning', python_script])
+    proc = run_python(['-W', 'always::DeprecationWarning', python_script])
     proc.check_returncode()
     assert not re.search('DeprecationWarning.*importlib[-_]?resources',
                          proc.stderr), proc.stderr
