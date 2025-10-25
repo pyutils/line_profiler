@@ -2,16 +2,15 @@
 Test the handling of TOML configs.
 """
 import os
-import pathlib
-import platform
 import re
-import subprocess
-import shutil
 import sys
-import textwrap
 from functools import partial
+from platform import system
 from pathlib import Path
+from shutil import which
+from subprocess import run, CompletedProcess
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from typing import Generator, Sequence, Union
 
 import pytest
@@ -19,14 +18,14 @@ import pytest
 from line_profiler.toml_config import ConfigSource
 
 
-def write_text(path: pathlib.Path, text: str, /, *args, **kwargs) -> int:
-    text = textwrap.dedent(text).strip('\n')
+def write_text(path: Path, text: str, /, *args, **kwargs) -> int:
+    text = dedent(text).strip('\n')
     return path.write_text(text, *args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
 def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
-                 tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+                 tmp_path_factory: pytest.TempPathFactory) -> Path:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
     the environment variable :envvar:`LINE_PROFILER_RC`, nor should the
@@ -72,7 +71,7 @@ def test_default_config_deep_copy() -> None:
     assert column_widths is not default_2['show']['column_widths']
 
 
-def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
+def test_table_normalization(fresh_curdir: Path) -> None:
     """
     Test that even if a config file misses some items (and has so extra
     ones), it is properly normalized to contain the same keys as the
@@ -97,7 +96,7 @@ def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
     assert loaded.conf_dict == default_config
 
 
-def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
+def test_malformed_table(fresh_curdir: Path) -> None:
     """
     Test that we get a `ValueError` when loading a malformed table with a
     non-subtable value taking the place of a supposed subtable.
@@ -114,7 +113,7 @@ def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
 
 
 def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
-                                 fresh_curdir: pathlib.Path) -> None:
+                                 fresh_curdir: Path) -> None:
     """
     Test the hierarchy according to which we load config files.
     """
@@ -194,6 +193,10 @@ def venv(tmp_path: Path, _venv: Path) -> Generator[Path, None, None]:
     A FUNCTION-scoped fixture for a venv in which:
     - `line_profiler` has been separately installed, and
     - `importlib-resources` is uninstalled after each test.
+
+    Yields:
+        venv (pathlib.Path):
+            The temporary venv directory.
     """
     try:
         yield _venv
@@ -202,25 +205,21 @@ def venv(tmp_path: Path, _venv: Path) -> Generator[Path, None, None]:
                         tmp_path, _venv)
 
 
-def run_proc(
-        cmd: Sequence[Union[str, Path]],
-        /,
-        **kwargs) -> subprocess.CompletedProcess:
+def run_proc(cmd: Sequence[Union[str, Path]], /, **kwargs) -> CompletedProcess:
     """Convenience wrapper around `subprocess.run()`."""
     kwargs.update(text=True, capture_output=True)
-    proc = subprocess.run([str(arg) for arg in cmd], **kwargs)
+    proc = run([str(arg) for arg in cmd], **kwargs)
     print(proc.stderr, end='', file=sys.stderr)
     print(proc.stdout, end='')
     return proc
 
 
-def run_python_in_venv(
-        args: Sequence[Union[str, Path]],
-        tmpdir: Path,
-        venv: Path) -> subprocess.CompletedProcess:
+def run_python_in_venv(args: Sequence[Union[str, Path]],
+                       tmpdir: Path,
+                       venv: Path) -> CompletedProcess:
     """Run `$ python *args` in `venv`."""
-    if 'windows' in platform.system().lower():  # Use PowerShell
-        shell = shutil.which('PowerShell.exe')
+    if 'windows' in system().lower():  # Use PowerShell on Windows
+        shell = which('PowerShell.exe')
         assert shell is not None
         script_file = tmpdir / 'script.ps1'
         write_text(script_file, """
@@ -230,8 +229,8 @@ def run_python_in_venv(
         """)
         base_cmd = [shell, '-NonInteractive', '-File', script_file,
                     venv / 'Scripts' / 'Activate.ps1']
-    else:  # Use Bash
-        shell = shutil.which('bash')
+    else:  # Use Bash otherwise (*nix etc.)
+        shell = which('bash')
         assert shell is not None
         script_file = tmpdir / 'script.bsh'
         write_text(script_file, """
@@ -245,13 +244,11 @@ def run_python_in_venv(
 
 
 def run_pip_in_venv(
-        subcommand: str,
-        arguments: Union[Sequence[Union[str, Path]], None] = None,
-        /,
-        *args,
-        **kwargs) -> subprocess.CompletedProcess:
-    cmd = ['-m', 'pip', subcommand, '--require-virtualenv', *(arguments or [])]
-    return run_python_in_venv(cmd, *args, **kwargs)
+        subcmd: str, args: Union[Sequence[Union[str, Path]], None] = None, /,
+        *a, **k) -> CompletedProcess:
+    """Run `$ pip subcmd *args` in `venv`."""
+    cmd = ['-m', 'pip', subcmd, '--require-virtualenv', *(args or [])]
+    return run_python_in_venv(cmd, *a, **k)
 
 
 @pytest.mark.parametrize(
@@ -285,7 +282,7 @@ def test_backported_importlib_resources(
     # what happens
     python_script = tmp_path / 'script.py'
     if version:
-        preamble = textwrap.dedent("""
+        preamble = dedent("""
     import importlib
     import importlib_resources as _ir
     import sys
@@ -295,11 +292,13 @@ def test_backported_importlib_resources(
         """)
     else:
         preamble = ''
-    sanity_check = textwrap.dedent("""
+    sanity_check = dedent("""
     from line_profiler.toml_config import ConfigSource
+
+
     print(ConfigSource.from_default())
     """)
-    write_text(python_script, f'{preamble}\n{sanity_check}')
+    write_text(python_script, f'{preamble}\n\n{sanity_check}')
     proc = run_python(['-W', 'always::DeprecationWarning', python_script])
     proc.check_returncode()
     assert not re.search('DeprecationWarning.*importlib[-_]?resources',
