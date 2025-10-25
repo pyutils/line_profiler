@@ -3,8 +3,8 @@ Test the handling of TOML configs.
 """
 import os
 import pathlib
-import pytest
 import pickle
+import platform
 import re
 import subprocess
 import shutil
@@ -14,6 +14,9 @@ from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Generator, Sequence, Union
+
+import pytest
+
 from line_profiler.toml_config import ConfigSource
 
 
@@ -215,37 +218,48 @@ def run_proc(
 def run_command_in_venv(
         command: Sequence[Union[str, Path]],
         tmpdir: Path,
-        venv: Path,
-        bash: Union[str, Path, None] = None) -> subprocess.CompletedProcess:
-    """Run `command` in `venv`, assuming that we have a bash shell."""
-    bash = shutil.which(bash or 'bash')
-    assert bash is not None
+        venv: Path) -> subprocess.CompletedProcess:
+    """Run `command` in `venv`."""
+    if 'windows' in platform.system().lower():  # Use PowerShell
+        shell = shutil.which('PowerShell.exe')
+        assert shell is not None
+        script_file = tmpdir / 'script.ps1'
+        write_text(script_file, """
+        $activate, $remainder = $args
+        Invoke-Expression $activate
+        python -c @remainder
+        """)
+        base_cmd = [shell, '-NonInteractive', '-File', script_file,
+                    venv / 'Scripts' / 'Activate.ps1']
+    else:  # Use Bash
+        shell = shutil.which('bash')
+        assert shell is not None
+        script_file = tmpdir / 'script.bsh'
+        write_text(script_file, """
+        activate="$1"; shift
+        source "${activate}"
+        python -c "${@}"
+        """)
+        base_cmd = [shell, script_file, venv / 'bin' / 'activate']
 
-    bash_script = tmpdir / 'script.bsh'
-    write_text(bash_script, """
-    # Activate the venv
-    activate="$1"; shift
-    source "${activate}"
-
-    # Run the command in python and pickle the
-    # `subprocess.CompletedProcess` object
-    python - "${@}" <<-'!'
+    python_wrapper_script = textwrap.dedent("""
     import pickle
     import subprocess
     import sys
 
 
+    # Run the command in python and pickle the
+    # `subprocess.CompletedProcess` object
     _, pkl, *cmd = sys.argv
     with open(pkl, mode='wb') as fobj:
         proc = subprocess.run(cmd, text=True, capture_output=True)
         print(proc.stderr, end='', file=sys.stderr)
         print(proc.stdout, end='')
         pickle.dump(proc, fobj)
-    !
     """)
 
     pkl = tmpdir / 'proc.pkl'
-    run_proc([bash, bash_script, venv / 'bin' / 'activate', pkl, *command])
+    run_proc(base_cmd + [python_wrapper_script, pkl, *command])
     try:
         with pkl.open(mode='rb') as fobj:
             return pickle.load(fobj)
@@ -259,7 +273,7 @@ def run_pip_in_venv(
         /,
         *args,
         **kwargs) -> subprocess.CompletedProcess:
-    cmd = ['python3', '-m', 'pip',
+    cmd = ['python', '-m', 'pip',
            subcommand, '--require-virtualenv', *(arguments or [])]
     return run_command_in_venv(cmd, *args, **kwargs)
 
@@ -278,8 +292,6 @@ def test_backported_importlib_resources(
     has been replaced by `importlib_resources` during runtime (see
     GitHub issue #405).
     """
-    if not shutil.which('bash'):
-        pytest.skip('`bash` required for setting up the venv')
     run = partial(run_command_in_venv, tmpdir=tmp_path, venv=venv)
     run_pip = partial(run_pip_in_venv, tmpdir=tmp_path, venv=venv)
 
