@@ -224,8 +224,8 @@ def run_command_in_venv(
     bash_script = tmpdir / 'script.bsh'
     write_text(bash_script, """
     # Activate the venv
-    venv="$1"; shift
-    source "${venv}/bin/activate"
+    activate="$1"; shift
+    source "${activate}"
 
     # Run the command in python and pickle the
     # `subprocess.CompletedProcess` object
@@ -245,7 +245,7 @@ def run_command_in_venv(
     """)
 
     pkl = tmpdir / 'proc.pkl'
-    run_proc([bash, bash_script, venv, pkl, *command])
+    run_proc([bash, bash_script, venv / 'bin' / 'activate', pkl, *command])
     try:
         with pkl.open(mode='rb') as fobj:
             return pickle.load(fobj)
