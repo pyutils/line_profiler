@@ -236,7 +236,6 @@ jobs:
           install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
-        # Note: cibuildwheel can't target 3.8 on Window ARM64
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
@@ -289,7 +288,7 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
@@ -317,7 +316,7 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
@@ -345,7 +344,7 @@ jobs:
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-latest
           arch: auto
@@ -364,7 +363,7 @@ jobs:
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
@@ -400,9 +399,11 @@ jobs:
       run: |-
         echo "Finding the path to the wheel"
         ls wheelhouse || echo "wheelhouse does not exist"
-        echo "Installing helpers"
+        echo "Installing helpers: update pip"
         python -m pip install pip uv -U
+        echo "Installing helpers: setuptools"
         python -m uv pip install setuptools>=0.8 setuptools_scm wheel build -U
+        echo "Installing helpers: tomli and pkginfo"
         python -m uv pip install tomli pkginfo
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
@@ -422,6 +423,7 @@ jobs:
         ")
         echo "WHEEL_FPATH=$WHEEL_FPATH"
         echo "INSTALL_EXTRAS=$INSTALL_EXTRAS"
+        echo "UV_RESOLUTION=$UV_RESOLUTION"
         echo "MOD_VERSION=$MOD_VERSION"
         python -m uv pip install "line_profiler[$INSTALL_EXTRAS]==$MOD_VERSION" -f wheelhouse
         echo "Install finished."
