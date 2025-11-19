@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from subprocess import run
 from textwrap import dedent
+from typing import Generator
 
 import pytest
 
@@ -19,8 +20,9 @@ def write_text(path: Path, text: str, /, *args, **kwargs) -> int:
 
 
 @pytest.fixture(autouse=True)
-def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
-                 tmp_path_factory: pytest.TempPathFactory) -> Path:
+def fresh_curdir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Path, None, None]:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
     the environment variable :envvar:`LINE_PROFILER_RC`, nor should the
