@@ -4,14 +4,9 @@ Test the handling of TOML configs.
 import os
 import re
 import sys
-from functools import partial
-from platform import system
 from pathlib import Path
-from shutil import which
-from subprocess import run, CompletedProcess
-from tempfile import TemporaryDirectory
+from subprocess import run
 from textwrap import dedent
-from typing import Generator, Sequence, Union
 
 import pytest
 
@@ -157,154 +152,21 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     assert ConfigSource.from_config(False).path.samefile(default)
 
 
-########################################################################
-#           START: edge-case test for `importlib_resources`            #
-########################################################################
-
-# XXX: this addresses an edge case where `importlib.resources` have been
-# superseded by `importlib_resources` during runtime.
-# Do we REALLY need such an involved (and slow) test for something we
-# don't otherwise interact with?
-
-
-@pytest.fixture(scope='module')
-def _venv() -> Generator[Path, None, None]:
+def test_importlib_resources_deprecation() -> None:
     """
-    A MODULE-scoped fixture for a venv in which `line_profiler` has been
-    separately installed.
+    Test the edge case where certain `importlib.resources` APIs were
+    deprecated in legacy Python versions and reverted later (see issue
+    #405), and we're not using them where it can be helped.
     """
-    with TemporaryDirectory() as tmpdir_:
-        tmpdir = Path(tmpdir_)
-        # Build the venv
-        venv = tmpdir / 'venv'
-        cmd = [sys.executable, '-m', 'venv', venv]
-        run_proc(cmd).check_returncode()
-        # Install `line_profiler` in the venv
-        # (somehow `--system-site-packages` doesn't work)
-        source = Path(__file__).parent.parent
-        install = run_pip_in_venv('install', [source], tmpdir, venv)
-        install.check_returncode()
-        yield venv
-
-
-@pytest.fixture
-def venv(tmp_path: Path, _venv: Path) -> Generator[Path, None, None]:
-    """
-    A FUNCTION-scoped fixture for a venv in which:
-    - `line_profiler` has been separately installed, and
-    - `importlib-resources` is uninstalled after each test.
-
-    Yields:
-        venv (pathlib.Path):
-            The temporary venv directory.
-    """
-    try:
-        yield _venv
-    finally:
-        run_pip_in_venv('uninstall', ['--yes', 'importlib-resources'],
-                        tmp_path, _venv)
-
-
-def run_proc(cmd: Sequence[Union[str, Path]], /, **kwargs) -> CompletedProcess:
-    """Convenience wrapper around `subprocess.run()`."""
-    kwargs.update(text=True, capture_output=True)
-    proc = run([str(arg) for arg in cmd], **kwargs)
-    print(proc.stderr, end='', file=sys.stderr)
-    print(proc.stdout, end='')
-    return proc
-
-
-def run_python_in_venv(args: Sequence[Union[str, Path]],
-                       tmpdir: Path,
-                       venv: Path) -> CompletedProcess:
-    """Run `$ python *args` in `venv`."""
-    if 'windows' in system().lower():  # Use PowerShell on Windows
-        shell = which('PowerShell.exe')
-        assert shell is not None
-        script_file = tmpdir / 'script.ps1'
-        write_text(script_file, """
-        $Activate, $Remainder = $args
-        Invoke-Expression $Activate
-        python @Remainder
-        """)
-        base_cmd = [shell, '-NonInteractive', '-File', script_file,
-                    venv / 'Scripts' / 'Activate.ps1']
-    else:  # Use Bash otherwise (*nix etc.)
-        shell = which('bash')
-        assert shell is not None
-        script_file = tmpdir / 'script.bsh'
-        write_text(script_file, """
-        activate="$1"; shift
-        source "${activate}"
-        python "${@}"
-        """)
-        base_cmd = [shell, script_file, venv / 'bin' / 'activate']
-
-    return run_proc(base_cmd + list(args))
-
-
-def run_pip_in_venv(
-        subcmd: str, args: Union[Sequence[Union[str, Path]], None] = None, /,
-        *a, **k) -> CompletedProcess:
-    """Run `$ pip subcmd *args` in `venv`."""
-    cmd = ['-m', 'pip', subcmd, '--require-virtualenv', *(args or [])]
-    return run_python_in_venv(cmd, *a, **k)
-
-
-@pytest.mark.parametrize(
-    'version',
-    [False,           # Don't use `importlib_resources`
-     True,            # Newest (`path()` imported from stdlib)
-     '< 6',           # Legacy (defines `path()` but deprecates it)
-     '>= 6, < 6.4'])  # Corner case (`path()` unavailable)
-def test_backported_importlib_resources(
-        tmp_path: Path, venv: Path, version: Union[str, bool]) -> None:
-    """
-    Test that the location of the installed TOML config file by
-    `line_profiler.toml_config` works even when `importlib.resources`
-    has been replaced by `importlib_resources` during runtime (see
-    GitHub issue #405).
-    """
-    run_python = partial(run_python_in_venv, tmpdir=tmp_path, venv=venv)
-    run_pip = partial(run_pip_in_venv, tmpdir=tmp_path, venv=venv)
-
-    # Install the required `importlib_resources` version
-    if version:
-        ir = 'importlib_resources'
-        if isinstance(version, str):
-            ir = f'{ir} {version}'
-
-        run_pip('install', ['--upgrade', ir]).check_returncode()
-    run_pip('list')
-
-    # Run python code which substitutes `importlib.resources` with
-    # `importlib_resources` before importing `line_profiler` and see
-    # what happens
-    python_script = tmp_path / 'script.py'
-    if version:
-        preamble = dedent("""
-    import importlib
-    import importlib_resources as _ir
-    import sys
-
-    importlib.resources = sys.modules['importlib.resources'] = _ir
-    del _ir
-        """)
-    else:
-        preamble = ''
-    sanity_check = dedent("""
+    code = dedent("""
     from line_profiler.toml_config import ConfigSource
 
 
     print(ConfigSource.from_default())
     """)
-    write_text(python_script, f'{preamble}\n\n{sanity_check}')
-    proc = run_python(['-W', 'always::DeprecationWarning', python_script])
-    proc.check_returncode()
+    command = [sys.executable,
+               '-W', 'always::DeprecationWarning',
+               '-c', code]
+    proc = run(command, check=True, capture_output=True, text=True)
     assert not re.search('DeprecationWarning.*importlib[-_]?resources',
                          proc.stderr), proc.stderr
-
-
-########################################################################
-#            END: edge-case test for `importlib_resources`             #
-########################################################################
