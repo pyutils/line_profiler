@@ -105,13 +105,10 @@ class ConfigSource:
             New instance if ``copy`` is true, the global default
             instance otherwise.
         """
-        # Note: NORMALLY `importlib.resources.path()` is available on
-        # all targetted Python versions and is not deprecated, so we
-        # could've just used said function directly.
-        # However, there are edge cases in which `importlib.resources`
-        # has been superseded with `importlib_resources`, which may
-        # cause various issues (incl. `DeprecationWarning`s or even
-        # errors) dep. on the latter's version (see GitHub issue #405).
+        # Note: `importlib.resources.path()` is deprecated on 3.11 and
+        # legacy patch versions of 3.12, and only later un-deprecated
+        # on 3.13 onwards. So we use the newer APIs where available.
+        # (See the discussions on GitHub issue #405)
         ir = importlib.resources
         try:
             ir_files, ir_as_file = ir.files, ir.as_file
