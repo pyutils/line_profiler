@@ -38,6 +38,9 @@ test-command = "python {project}/run_tests.py"
 test-extras = ["tests-strict", "runtime-strict"]
 
 # https://cibuildwheel.readthedocs.io/en/stable/options/#archs
+[tool.cibuildwheel.linux]
+# We'll build X86 and ARM wheels natively on separate runners
+archs = ['auto']
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "universal2", "arm64"]
 [tool.cibuildwheel.windows]
