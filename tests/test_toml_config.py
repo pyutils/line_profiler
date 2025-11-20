@@ -2,20 +2,27 @@
 Test the handling of TOML configs.
 """
 import os
-import pathlib
+import re
+import sys
+from pathlib import Path
+from subprocess import run
+from textwrap import dedent
+from typing import Generator
+
 import pytest
-import textwrap
+
 from line_profiler.toml_config import ConfigSource
 
 
-def write_text(path: pathlib.Path, text: str, /, *args, **kwargs) -> int:
-    text = textwrap.dedent(text).strip('\n')
+def write_text(path: Path, text: str, /, *args, **kwargs) -> int:
+    text = dedent(text).strip('\n')
     return path.write_text(text, *args, **kwargs)
 
 
 @pytest.fixture(autouse=True)
-def fresh_curdir(monkeypatch: pytest.MonkeyPatch,
-                 tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+def fresh_curdir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Path, None, None]:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
     the environment variable :envvar:`LINE_PROFILER_RC`, nor should the
@@ -61,7 +68,7 @@ def test_default_config_deep_copy() -> None:
     assert column_widths is not default_2['show']['column_widths']
 
 
-def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
+def test_table_normalization(fresh_curdir: Path) -> None:
     """
     Test that even if a config file misses some items (and has so extra
     ones), it is properly normalized to contain the same keys as the
@@ -86,7 +93,7 @@ def test_table_normalization(fresh_curdir: pathlib.Path) -> None:
     assert loaded.conf_dict == default_config
 
 
-def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
+def test_malformed_table(fresh_curdir: Path) -> None:
     """
     Test that we get a `ValueError` when loading a malformed table with a
     non-subtable value taking the place of a supposed subtable.
@@ -103,7 +110,7 @@ def test_malformed_table(fresh_curdir: pathlib.Path) -> None:
 
 
 def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
-                                 fresh_curdir: pathlib.Path) -> None:
+                                 fresh_curdir: Path) -> None:
     """
     Test the hierarchy according to which we load config files.
     """
@@ -145,3 +152,23 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     # (`None`), and `False` to disabling all lookup
     assert ConfigSource.from_config(True).path.samefile(high_priority)
     assert ConfigSource.from_config(False).path.samefile(default)
+
+
+def test_importlib_resources_deprecation() -> None:
+    """
+    Test the edge case where certain `importlib.resources` APIs were
+    deprecated in legacy Python versions and reverted later (see issue
+    #405), and we're not using them where it can be helped.
+    """
+    code = dedent("""
+    from line_profiler.toml_config import ConfigSource
+
+
+    print(ConfigSource.from_default())
+    """)
+    command = [sys.executable,
+               '-W', 'always::DeprecationWarning',
+               '-c', code]
+    proc = run(command, check=True, capture_output=True, text=True)
+    assert not re.search('DeprecationWarning.*importlib[-_]?resources',
+                         proc.stderr), proc.stderr
