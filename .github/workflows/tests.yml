@@ -128,10 +128,6 @@ jobs:
         - ubuntu-latest
         - macOS-latest
         - windows-latest
-        # Since the oldest Python available on windows-11-arm on GitHub
-        # is 3.11.0 (see https://raw.githubusercontent.com/actions/\
-        # python-versions/main/versions-manifest.json), older wheels
-        # cannot be tested... so just skip pre-building them
         cibw_skip:
         - '*-win32 cp3{9,10}-win_arm64 cp313-musllinux_i686'
         arch:
@@ -142,6 +138,8 @@ jobs:
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
+      with:
+        arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -154,16 +152,10 @@ jobs:
         config-file: pyproject.toml
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
-        # We're building on Windows-x64, so ARM64 wheels can't be tested
-        # locally by `cibuildwheel` (don't worry, we're testing them
-        # later though in `test_binpy_wheels`)
         CIBW_TEST_SKIP: '*-win_arm64'
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
-        # `msvc-dev-cmd` sets this envvar, which interferes with
-        # cross-architecture building...
-        # just let `cibuildwheel` handle that
         VSCMD_ARG_TGT_ARCH: ''
     - name: Show built files
       shell: bash
@@ -236,7 +228,6 @@ jobs:
           install-extras: tests-strict,runtime-strict
           os: windows-latest
           arch: auto
-        # Note: cibuildwheel can't target 3.8 on Window ARM64
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
@@ -289,7 +280,7 @@ jobs:
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
@@ -317,7 +308,7 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
@@ -345,13 +336,10 @@ jobs:
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-latest
           arch: auto
-        # Again, cibuildwheel can't target 3.8 on Window ARM64, and
-        # GitHub doesn't have anything below Python 3.11 on their ARM64
-        # machines, so just test the built wheels from 3.11+
         - python-version: '3.11'
           install-extras: tests,optional
           os: windows-11-arm
@@ -364,7 +352,7 @@ jobs:
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
-        - python-version: 3.14.0-rc.1
+        - python-version: '3.14'
           install-extras: tests,optional
           os: windows-11-arm
           arch: auto
@@ -374,8 +362,6 @@ jobs:
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }}
-      # As noted in msvc-dev-cmd #90 (and the Action docs), it currently
-      # # assumes `arch=x64`, so we have to manually set it here...
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Set up QEMU
@@ -400,9 +386,11 @@ jobs:
       run: |-
         echo "Finding the path to the wheel"
         ls wheelhouse || echo "wheelhouse does not exist"
-        echo "Installing helpers"
+        echo "Installing helpers: update pip"
         python -m pip install pip uv -U
+        echo "Installing helpers: setuptools"
         python -m uv pip install setuptools>=0.8 setuptools_scm wheel build -U
+        echo "Installing helpers: tomli and pkginfo"
         python -m uv pip install tomli pkginfo
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
@@ -422,6 +410,7 @@ jobs:
         ")
         echo "WHEEL_FPATH=$WHEEL_FPATH"
         echo "INSTALL_EXTRAS=$INSTALL_EXTRAS"
+        echo "UV_RESOLUTION=$UV_RESOLUTION"
         echo "MOD_VERSION=$MOD_VERSION"
         python -m uv pip install "line_profiler[$INSTALL_EXTRAS]==$MOD_VERSION" -f wheelhouse
         echo "Install finished."
