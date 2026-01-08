@@ -136,7 +136,7 @@ void restore_callback(TraceCallback *callback)
     return;
 }
 
-inline int is_null_callback(TraceCallback *callback)
+static inline int is_null_callback(TraceCallback *callback)
 {
     return (
         callback == NULL
@@ -236,7 +236,7 @@ cleanup:
     return result;
 }
 
-inline void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
+void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
 {
     /* Set the frame-local trace callable:
      * - If there isn't one already, set it to `manager`;
@@ -272,7 +272,7 @@ cleanup:
     return;
 }
 
-inline Py_uintptr_t monitoring_restart_version()
+Py_uintptr_t monitoring_restart_version()
 #if PY_VERSION_HEX >= 0x030c00b1  // 3.12.0b1
 {
     /* Get the `.last_restart_version` of the interpretor state.
