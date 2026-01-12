@@ -921,14 +921,17 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 
     if sort:
         # Order by ascending duration
-        stats = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
+        stats_order = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
+    else:
+        # Default ordering
+        stats_order = stats.items()
 
     # Pre-lookup the appropriate config file
     config = ConfigSource.from_config(config).path
 
     if details:
         # Show detailed per-line information for each function.
-        for (fn, lineno, name), timings in stats:
+        for (fn, lineno, name), timings in stats_order:
             show_func(fn, lineno, name, stats[fn, lineno, name], unit,
                       output_unit=output_unit, stream=stream,
                       stripzeros=stripzeros, rich=rich, config=config)
@@ -945,7 +948,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         if rich:
             write_console = Console(file=stream, soft_wrap=True,
                                     color_system='standard')
-            for (fn, lineno, name), timings in stats:
+            for (fn, lineno, name), timings in stats_order:
                 total_time = sum(t[2] for t in timings) * unit
                 if not stripzeros or total_time:
                     # Wrap the filename with link markup to allow the user to
@@ -954,7 +957,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
                     line = line_template % (total_time, fn_link, lineno, escape(name))
                     write_console.print(line)
         else:
-            for (fn, lineno, name), timings in stats:
+            for (fn, lineno, name), timings in stats_order:
                 total_time = sum(t[2] for t in timings) * unit
                 if not stripzeros or total_time:
                     line = line_template % (total_time, fn, lineno, name)
