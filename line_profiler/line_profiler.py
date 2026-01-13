@@ -924,7 +924,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
         stats_order = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
     else:
         # Default ordering
-        stats_order = sorted(stats.items())
+        stats_order = stats.items()
 
     # Pre-lookup the appropriate config file
     config = ConfigSource.from_config(config).path
