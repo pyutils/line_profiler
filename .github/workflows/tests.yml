@@ -103,7 +103,7 @@ jobs:
         echo "MOD_DPATH = $MOD_DPATH"
         python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v4.6.2
       name: Upload sdist artifact
       with:
         name: sdist_wheels
@@ -194,7 +194,7 @@ jobs:
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v4.6.2
       name: Upload wheels artifact
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.arch }}
@@ -532,7 +532,7 @@ jobs:
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
         twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v4.6.2
       name: Upload deploy artifacts
       with:
         name: deploy_artifacts
@@ -608,7 +608,7 @@ jobs:
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
         twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v4.6.2
       name: Upload deploy artifacts
       with:
         name: deploy_artifacts
