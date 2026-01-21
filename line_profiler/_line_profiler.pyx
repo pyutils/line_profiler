@@ -109,7 +109,7 @@ ctypedef PyCodeObject *PyCodeObjectPtr
 #ctypedef unordered_map[int64, LastTime] LastTimeMap
 #ctypedef unordered_map[int64, LineTime] LineTimeMap
 
-cdef extern from "c_trace_callbacks.c":  # Legacy tracing
+cdef extern from "c_trace_callbacks.h":  # Legacy tracing
     ctypedef unsigned long long Py_uintptr_t
 
     ctypedef struct TraceCallback:
