@@ -242,7 +242,7 @@ def test_kernprof_sys_restoration(capsys, error, args):
       {'^Output to stdout': True,
        r"^Wrote .* '.*script\.py\.lprof'": True,
        r'^Inspect results with:''\n'
-       r'python -m line_profiler .*script\.py\.lprof': True,
+       r'\S*python\S* -m line_profiler .*script\.py\.lprof': True,
        r'line_profiler\.autoprofile\.autoprofile'
        r'\.run\(\n(?:.+,\n)*.*\)': False,
        r'^\[kernprof .*\]': False,
@@ -252,7 +252,7 @@ def test_kernprof_sys_restoration(capsys, error, args):
       {'^Output to stdout': True,
        r"^Wrote .* '.*script\.py\.lprof'": True,
        r'^Inspect results with:''\n'
-       r'python -m line_profiler .*script\.py\.lprof': False,
+       r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
        r'line_profiler\.autoprofile\.autoprofile'
        r'\.run\(\n(?:.+,\n)*.*\)': False,
        r'^\[kernprof .*\]': False,
@@ -262,7 +262,7 @@ def test_kernprof_sys_restoration(capsys, error, args):
       {'^Output to stdout': True,
        r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
        r'Inspect results with:''\n'
-       r'python -m line_profiler .*script\.py\.lprof': False,
+       r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
        r'line_profiler\.autoprofile\.autoprofile'
        r'\.run\(\n(?:.+,\n)*.*\)': True,
        r'^Function: main': True},
