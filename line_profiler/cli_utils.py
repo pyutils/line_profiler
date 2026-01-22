@@ -2,12 +2,16 @@
 Shared utilities between the :command:`python -m line_profiler` and
 :command:`kernprof` CLI tools.
 """
+from __future__ import annotations
+
 import argparse
 import functools
 import os
 import pathlib
 import shutil
 import sys
+from os import PathLike
+from typing import Protocol, Sequence, TypeVar, cast
 from .toml_config import ConfigSource
 
 
@@ -16,9 +20,32 @@ _BOOLEAN_VALUES = {**{k.casefold(): False
                    **{k.casefold(): True
                       for k in ('1', 'on', 'True', 'T', 'yes', 'Y')}}
 
+P_con = TypeVar('P_con', bound='ParserLike', contravariant=True)
+A_co = TypeVar('A_co', bound='ActionLike', covariant=True)
 
-def add_argument(parser_like, arg, /, *args,
-                 hide_complementary_options=True, **kwargs):
+
+class ActionLike(Protocol[P_con]):
+    def __call__(self, parser: P_con, namespace: argparse.Namespace,
+                 values: str | Sequence[object] | None,
+                 option_string: str | None = None) -> None:
+        ...
+
+    def format_usage(self) -> str:
+        ...
+
+
+class ParserLike(Protocol[A_co]):
+    def add_argument(self, arg: str, /, *args: str, **kwargs: object) -> A_co:
+        ...
+
+    @property
+    def prefix_chars(self) -> str:
+        ...
+
+
+def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
+                 hide_complementary_options: bool = True,
+                 **kwargs: object) -> A_co:
     """
     Override the ``'store_true'`` and ``'store_false'`` actions so that
     they are turned into options which:
@@ -70,7 +97,7 @@ def add_argument(parser_like, arg, /, *args,
         return negated
 
     # Make sure there's at least one positional argument
-    args = [arg, *args]
+    args = (arg, *args)
 
     if kwargs.get('action') not in ('store_true', 'store_false'):
         return parser_like.add_argument(*args, **kwargs)
@@ -111,7 +138,9 @@ def add_argument(parser_like, arg, /, *args,
             'form' if len(short_flags) == 1 else 'forms',
             ', '.join(short_flags))
         if long_kwargs.get('help'):
-            help_text = long_kwargs['help'].strip()
+            raw_help = long_kwargs['help']
+            help_text = raw_help if isinstance(raw_help, str) else str(raw_help)
+            help_text = help_text.strip()
             if help_text.endswith((')', ']')):
                 # Interpolate into existing parenthetical
                 help_text = '{}; {}{}{}'.format(
@@ -126,7 +155,8 @@ def add_argument(parser_like, arg, /, *args,
             long_kwargs['help'] = f'({additional_msg})'
         short_kwargs['help'] = argparse.SUPPRESS
 
-    long_action = short_action = None
+    long_action: A_co | None = None
+    short_action: A_co | None = None
     if long_flags:
         long_action = parser_like.add_argument(*long_flags, **long_kwargs)
         short_kwargs['dest'] = long_action.dest
@@ -158,7 +188,10 @@ def add_argument(parser_like, arg, /, *args,
     return action
 
 
-def get_cli_config(subtable, /, *args, **kwargs):
+def get_cli_config(
+        subtable: str, /,
+        config: str | PathLike[str] | bool | None = None,
+        *, read_env: bool = True) -> ConfigSource:
     """
     Get the ``tool.line_profiler.<subtable>`` configs and normalize
     its keys (``some-key`` -> ``some_key``).
@@ -175,28 +208,32 @@ def get_cli_config(subtable, /, *args, **kwargs):
         New :py:class:`~.line_profiler.toml_config.ConfigSource`
         instance
     """
-    config = ConfigSource.from_config(*args, **kwargs).get_subconfig(subtable)
-    config.conf_dict = {key.replace('-', '_'): value
-                        for key, value in config.conf_dict.items()}
-    return config
+    config_source = ConfigSource.from_config(
+        config, read_env=read_env).get_subconfig(subtable)
+    config_source.conf_dict = {
+        key.replace('-', '_'): value
+        for key, value in config_source.conf_dict.items()}
+    return config_source
 
 
-def get_python_executable():
+def get_python_executable() -> str:
     """
     Returns:
         str: command
             Command or path thereto corresponding to
             :py:data:`sys.executable`.
     """
-    if os.path.samefile(shutil.which('python'), sys.executable):
+    python_path = shutil.which('python')
+    python3_path = shutil.which('python3')
+    if python_path and os.path.samefile(python_path, sys.executable):
         return 'python'
-    elif os.path.samefile(shutil.which('python3'), sys.executable):
+    elif python3_path and os.path.samefile(python3_path, sys.executable):
         return 'python3'
     else:
         return short_string_path(sys.executable)
 
 
-def positive_float(value):
+def positive_float(value: str) -> float:
     """
     Arguments:
         value (str)
@@ -214,7 +251,8 @@ def positive_float(value):
     return val
 
 
-def boolean(value, *, fallback=None, invert=False):
+def boolean(value: str, *, fallback: bool | None = None,
+            invert: bool = False) -> bool:
     """
     Arguments:
         value (str)
@@ -275,7 +313,7 @@ def boolean(value, *, fallback=None, invert=False):
     return fallback
 
 
-def short_string_path(path):
+def short_string_path(path: str | PathLike[str]) -> str:
     """
     Arguments:
         path (str | os.PathLike[str]):
@@ -288,11 +326,12 @@ def short_string_path(path):
             current directory.
     """
     path = pathlib.Path(path)
-    paths = {str(path)}
+    paths: set[str] = {str(path)}
     abspath = path.absolute()
     paths.add(str(abspath))
     try:
         paths.add(str(abspath.relative_to(path.cwd().absolute())))
     except ValueError:  # Not relative to the curdir
         pass
-    return min(paths, key=len)
+    paths_list = list(paths)
+    return cast(str, min(paths_list, key=len))

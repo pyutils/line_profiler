@@ -32,6 +32,7 @@ help mechanism::
 .. |lprun_all| replace:: :py:data:`%%lprun_all <LineProfilerMagics.lprun_all>`
 .. |builtins| replace:: :py:mod:`__builtins__ <builtins>`
 """
+from __future__ import annotations
 
 import ast
 import builtins
@@ -44,22 +45,56 @@ import types
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
-if TYPE_CHECKING:  # pragma: no cover
-    from typing import (Callable, ParamSpec,  # noqa: F401
-                        Any, ClassVar, TypeVar)
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, TypeVar
+from typing_extensions import ParamSpec
 
+if TYPE_CHECKING:  # pragma: no cover
     PS = ParamSpec('PS')
     PD = TypeVar('PD', bound='_PatchDict')
     DefNode = TypeVar('DefNode', ast.FunctionDef, ast.AsyncFunctionDef)
 
 from io import StringIO
 
-from IPython.core.getipython import get_ipython
-from IPython.core.magic import Magics, magics_class, line_magic, cell_magic
-from IPython.core.page import page
-from IPython.utils.ipstruct import Struct
-from IPython.core.error import UsageError
+try:  # pragma: no cover - optional dependency
+    import importlib
+
+    get_ipython = importlib.import_module(
+        'IPython.core.getipython').get_ipython
+    magic_module = importlib.import_module('IPython.core.magic')
+    Magics = magic_module.Magics
+    magics_class = magic_module.magics_class
+    line_magic = magic_module.line_magic
+    cell_magic = magic_module.cell_magic
+    page = importlib.import_module('IPython.core.page').page
+    Struct = importlib.import_module('IPython.utils.ipstruct').Struct
+    UsageError = importlib.import_module('IPython.core.error').UsageError
+except ImportError:  # pragma: no cover - IPython is optional
+    if TYPE_CHECKING:
+        raise
+
+    def get_ipython():
+        return None
+
+    class Magics:
+        pass
+
+    def magics_class(cls):
+        return cls
+
+    def line_magic(func):
+        return func
+
+    def cell_magic(func):
+        return func
+
+    def page(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    class Struct(dict):
+        pass
+
+    class UsageError(Exception):
+        pass
 
 from line_profiler import line_profiler, LineProfiler, LineStats
 from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
@@ -104,26 +139,26 @@ class _ParseParamResult:
     opts: Struct
     arg_str: str
 
-    def __getattr__(self, attr):  # type: (str) -> Any
+    def __getattr__(self, attr: str) -> Any:
         """ Defers to :py:attr:`_ParseParamResult.opts`."""
         return getattr(self.opts, attr)
 
     @functools.cached_property
-    def dump_raw_dest(self):  # type: () -> Path | None
+    def dump_raw_dest(self) -> Path | None:
         path = self.opts.D[0]
         if path:
             return Path(path)
         return None
 
     @functools.cached_property
-    def dump_text_dest(self):  # type: () -> Path | None
+    def dump_text_dest(self) -> Path | None:
         path = self.opts.T[0]
         if path:
             return Path(path)
         return None
 
     @functools.cached_property
-    def output_unit(self):  # type: () -> float | None
+    def output_unit(self) -> float | None:
         if self.opts.u is None:
             return None
         try:
@@ -132,11 +167,11 @@ class _ParseParamResult:
             raise TypeError("Timer unit setting must be a float.")
 
     @functools.cached_property
-    def strip_zero(self):  # type: () -> bool
+    def strip_zero(self) -> bool:
         return "z" in self.opts
 
     @functools.cached_property
-    def return_profiler(self):  # type: () -> bool
+    def return_profiler(self) -> bool:
         return "r" in self.opts
 
 
@@ -147,9 +182,9 @@ class _RunAndProfileResult:
     """
     stats: LineStats
     parse_result: _ParseParamResult
-    message: Union[str, None] = None
-    time_elapsed: Union[float, None] = None
-    tempfile: Union[str, 'os.PathLike[str]', None] = None
+    message: str | None = None
+    time_elapsed: float | None = None
+    tempfile: str | os.PathLike[str] | None = None
 
     def __post_init__(self):
         if self.tempfile is not None:
@@ -185,7 +220,7 @@ class _RunAndProfileResult:
                     line_profiler, get_code_block=get_code_block_wrapper):
                 return call()
 
-        def get_code_block_wrapper(filename, lineno):
+        def get_code_block_wrapper(filename: str, lineno: int) -> list[str]:
             """ Return the entire content of :py:attr:`~.tempfile`."""
             with tmp.open(mode='r') as fobj:
                 return fobj.read().splitlines(keepends=True)
@@ -193,7 +228,7 @@ class _RunAndProfileResult:
         return show_func_wrapper
 
     @functools.cached_property
-    def output(self):  # type: () -> str
+    def output(self) -> str:
         with ExitStack() as stack:
             cap = stack.enter_context(StringIO())  # Trap text output
             patch_show_func = _PatchDict.from_module(
@@ -229,14 +264,13 @@ class _PatchProfilerIntoBuiltins:
         skip this doctest if :py:mod:`IPython` (and hence this module)
         can't be imported.
     """
-    def __init__(self, prof=None):
-        # type: (LineProfiler | None) -> None
+    def __init__(self, prof: LineProfiler | None = None) -> None:
         if prof is None:
             prof = LineProfiler()
         self.prof = prof
         self._ctx = _PatchDict.from_module(builtins, profile=self.prof)
 
-    def __enter__(self):  # type: () -> LineProfiler
+    def __enter__(self) -> LineProfiler:
         self._ctx.__enter__()
         return self.prof
 
@@ -245,14 +279,14 @@ class _PatchProfilerIntoBuiltins:
 
 
 class _PatchDict:
-    def __init__(self, namespace, /, **kwargs):
-        # type: (dict[str, Any], Any) -> None
+    def __init__(self, namespace: dict[str, Any], /,
+                 **kwargs: Any) -> None:
         self.namespace = namespace
         self.replacements = kwargs
-        self._stack = []  # type: list[dict[str, Any]]
+        self._stack: list[dict[str, Any]] = []
         self._absent = object()
 
-    def __enter__(self):  # type: (PD) -> PD
+    def __enter__(self: PD) -> PD:
         self._push()
         return self
 
@@ -278,15 +312,16 @@ class _PatchDict:
                 namespace[key] = value
 
     @classmethod
-    def from_module(cls, module, /, **kwargs):
-        # type: (type[PD], types.ModuleType, Any) -> PD
+    def from_module(cls: type[PD], module: types.ModuleType, /,
+                    **kwargs: Any) -> PD:
         return cls(vars(module), **kwargs)
 
 
 @magics_class
 class LineProfilerMagics(Magics):
-    def _parse_parameters(self, parameter_s, getopt_spec, opts_def):
-        # type: (str, str, Struct) -> _ParseParamResult
+    def _parse_parameters(
+            self, parameter_s: str, getopt_spec: str,
+            opts_def: Struct) -> _ParseParamResult:
         # FIXME: There is a chance that this handling will need to be
         # updated to handle single-quoted characters better (#382)
         parameter_s = parameter_s.replace('"', r"\"").replace("'", r"\"")
@@ -297,13 +332,13 @@ class LineProfilerMagics(Magics):
         return _ParseParamResult(opts, arg_str)
 
     @staticmethod
-    def _run_and_profile(prof,  # type: LineProfiler
-                         parse_result,  # type: _ParseParamResult
-                         tempfile,  # type: str | None
-                         method,  # type: Callable[PS, Any]
-                         *args,  # type: PS.args
-                         **kwargs,  # type: PS.kwargs
-                         ):  # type: (...) -> _RunAndProfileResult
+    def _run_and_profile(
+            prof: LineProfiler,
+            parse_result: _ParseParamResult,
+            tempfile: str | None,
+            method: Callable[PS, Any],
+            *args: PS.args,
+            **kwargs: PS.kwargs) -> _RunAndProfileResult:
         # Use the time module because it's easier than parsing the
         # output from `show_text()`.
         # `perf_counter()` is a monotonically increasing alternative to
@@ -323,8 +358,8 @@ class LineProfilerMagics(Magics):
             message=message, time_elapsed=total_time, tempfile=tempfile)
 
     @classmethod
-    def _lprun_all_get_rewritten_profiled_code(cls, tmpfile):
-        # type: (str) -> types.CodeType
+    def _lprun_all_get_rewritten_profiled_code(
+            cls, tmpfile: str) -> types.CodeType:
         """ Transform and compile the AST of the profiled code. This is
         similar to :py:meth:`.LineProfiler.runctx`,
         """
@@ -334,15 +369,16 @@ class LineProfilerMagics(Magics):
         return compile(tree, tmpfile, "exec")
 
     @classmethod
-    def _lprun_get_top_level_profiled_code(cls, tmpfile):
-        # type: (str) -> types.CodeType
+    def _lprun_get_top_level_profiled_code(
+            cls, tmpfile: str) -> types.CodeType:
         """ Compile the profiled code."""
         with open(tmpfile, mode='r') as fobj:
             return compile(fobj.read(), tmpfile, "exec")
 
     @staticmethod
-    def _handle_end(prof, run_result):
-        # type: (LineProfiler, _RunAndProfileResult) -> LineProfiler | None
+    def _handle_end(
+            prof: LineProfiler,
+            run_result: _RunAndProfileResult) -> LineProfiler | None:
         page(run_result.output)
 
         dump_file = run_result.parse_result.dump_raw_dest
@@ -363,7 +399,7 @@ class LineProfilerMagics(Magics):
         return prof if run_result.parse_result.return_profiler else None
 
     @line_magic
-    def lprun(self, parameter_s=""):
+    def lprun(self, parameter_s: str = "") -> LineProfiler | None:
         """Execute a statement under the line-by-line profiler from the
         :py:mod:`line_profiler` module.
 
@@ -449,7 +485,8 @@ class LineProfilerMagics(Magics):
         return self._handle_end(profile, run)
 
     @cell_magic
-    def lprun_all(self, parameter_s="", cell=""):
+    def lprun_all(self, parameter_s: str = "",
+                  cell: str = "") -> LineProfiler | None:
         """Execute the whole notebook cell under the line-by-line
         profiler from the :py:mod:`line_profiler` module.
 
@@ -530,7 +567,7 @@ class LineProfilerMagics(Magics):
                 # - `prof.add_function()` might have replaced the code
                 #   object, so retrieve it back from the dummy function
                 mock_func = types.SimpleNamespace(__code__=code)
-                prof.add_function(mock_func)  # type: ignore[arg-type]
+                prof.add_function(mock_func)
                 code = mock_func.__code__
                 # Notes:
                 # - We don't define `ip.user_global_ns` and `ip.user_ns`

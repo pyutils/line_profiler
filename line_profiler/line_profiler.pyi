@@ -4,14 +4,9 @@ from os import PathLike
 from types import FunctionType, ModuleType
 from typing import (TYPE_CHECKING,
                     overload,
-                    Callable, Mapping,
+                    Callable, Mapping, Sequence,
                     Literal, Self,
-                    Protocol, TypeVar)
-try:
-    from typing import (  # type: ignore[attr-defined]  # noqa: F401
-        ParamSpec)
-except ImportError:
-    from typing_extensions import ParamSpec  # noqa: F401
+                    Protocol, TypeVar, ParamSpec)
 from _typeshed import Incomplete
 from ._line_profiler import (LineProfiler as CLineProfiler,
                              LineStats as CLineStats)
@@ -25,6 +20,7 @@ if TYPE_CHECKING:
 T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
 PS = ParamSpec('PS')
+_TimingsMap = Mapping[tuple[str, int, str], list[tuple[int, int, int]]]
 
 
 def get_column_widths(
@@ -38,16 +34,23 @@ def load_ipython_extension(ip) -> None:
 
 
 class _StatsLike(Protocol):
-    timings: Mapping[tuple[str, int, str],  # funcname, lineno, filename
-                     list[tuple[int, int, int]]]  # lineno, nhits, time
+    timings: _TimingsMap
     unit: float
 
 
 class LineStats(CLineStats):
+    def __init__(self, timings: _TimingsMap, unit: float) -> None:
+        ...
+
     def to_file(self, filename: PathLike[str] | str) -> None:
         ...
 
-    def print(self, stream: Incomplete | None = None, **kwargs) -> None:
+    def print(
+        self, stream: io.TextIOBase | None = None,
+        output_unit: float | None = None,
+        stripzeros: bool = False, details: bool = True,
+        summarize: bool = False, sort: bool = False, rich: bool = False,
+        *, config: str | PathLike[str] | bool | None = None) -> None:
         ...
 
     @classmethod
@@ -75,23 +78,23 @@ class LineStats(CLineStats):
 
 class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     @overload
-    def __call__(self,  # type: ignore[overload-overlap]
+    def __call__(self,
                  func: CLevelCallable) -> CLevelCallable:
         ...
 
     @overload
-    def __call__(  # type: ignore[overload-overlap]
+    def __call__(
         self, func: UnparametrizedCallableLike,
     ) -> UnparametrizedCallableLike:
         ...
 
     @overload
-    def __call__(self,  # type: ignore[overload-overlap]
+    def __call__(self,
                  func: type[T]) -> type[T]:
         ...
 
     @overload
-    def __call__(self,  # type: ignore[overload-overlap]
+    def __call__(self,
                  func: partial[T]) -> partial[T]:
         ...
 
@@ -104,7 +107,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         ...
 
     @overload
-    def __call__(self,  # type: ignore[overload-overlap]
+    def __call__(self,
                  func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
         ...
 
@@ -166,7 +169,7 @@ def is_generated_code(filename):
 def show_func(filename: str,
               start_lineno: int,
               func_name: str,
-              timings: list[tuple[int, int, float]],
+              timings: Sequence[tuple[int, int, int | float]],
               unit: float,
               output_unit: float | None = None,
               stream: io.TextIOBase | None = None,
@@ -177,10 +180,10 @@ def show_func(filename: str,
     ...
 
 
-def show_text(stats,
-              unit,
-              output_unit: Incomplete | None = ...,
-              stream: Incomplete | None = ...,
+def show_text(stats: _TimingsMap,
+              unit: float,
+              output_unit: float | None = ...,
+              stream: io.TextIOBase | None = ...,
               stripzeros: bool = ...,
               details: bool = ...,
               summarize: bool = ...,

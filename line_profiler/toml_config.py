@@ -2,6 +2,8 @@
 Read and resolve user-supplied TOML files and combine them with the
 default to generate configurations.
 """
+from __future__ import annotations
+
 import copy
 import dataclasses
 import functools
@@ -14,7 +16,9 @@ try:
 except ImportError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef] # noqa: F811
 from collections.abc import Mapping
-from typing import Dict, List, Any
+from os import PathLike
+from typing import Any, Mapping as TypingMapping, Sequence, TypeVar, cast
+from typing_extensions import Self
 
 
 __all__ = ['ConfigSource']
@@ -23,7 +27,7 @@ NAMESPACE = 'tool', 'line_profiler'
 TARGETS = 'line_profiler.toml', 'pyproject.toml'
 ENV_VAR = 'LINE_PROFILER_RC'
 
-_DEFAULTS = None
+_DEFAULTS: ConfigSource | None = None
 
 
 @dataclasses.dataclass
@@ -45,11 +49,11 @@ class ConfigSource:
             :py:attr:`~.ConfigSource.path`
             :py:attr:`~.ConfigSource.conf_dict` can be found.
     """
-    conf_dict: Dict[str, Any]
+    conf_dict: dict[str, Any]
     path: pathlib.Path
-    subtable: List[str]
+    subtable: list[str]
 
-    def copy(self):
+    def copy(self) -> Self:
         """
         Returns:
             Copy of the object.
@@ -57,7 +61,8 @@ class ConfigSource:
         return type(self)(
             copy.deepcopy(self.conf_dict), self.path, self.subtable.copy())
 
-    def get_subconfig(self, *headers, allow_absence=False, copy=False):
+    def get_subconfig(self, *headers: str, allow_absence: bool = False,
+                      copy: bool = False) -> Self:
         """
         Arguments:
             headers (str):
@@ -87,13 +92,14 @@ class ConfigSource:
             >>> assert (display_widths.conf_dict
             ...         is default.conf_dict['show']['column_widths'])
         """
-        new_dict = get_subtable(
-            self.conf_dict, headers, allow_absence=allow_absence)
+        new_dict = cast(
+            dict[str, Any],
+            get_subtable(self.conf_dict, headers, allow_absence=allow_absence))
         new_subtable = [*self.subtable, *headers]
         return type(self)(new_dict, self.path, new_subtable)
 
     @classmethod
-    def from_default(cls, *, copy=True):
+    def from_default(cls, *, copy: bool = True) -> Self:
         """
         Get the default TOML configuration that ships with the package.
 
@@ -120,17 +126,27 @@ class ConfigSource:
 
         global _DEFAULTS
         if _DEFAULTS is None:
-            package = __spec__.name.rpartition('.')[0]
+            if __spec__ is None:
+                package = __name__.rpartition('.')[0]
+            else:
+                package = __spec__.name.rpartition('.')[0]
             with find_file(package + '.rc', 'line_profiler.toml') as path:
-                conf_dict, source = find_and_read_config_file(config=path)
-            conf_dict = get_subtable(conf_dict, NAMESPACE, allow_absence=False)
+                result = find_and_read_config_file(config=path)
+            if result is None:
+                raise FileNotFoundError(
+                    'Default configuration file could not be read')
+            conf_dict, source = result
+            conf_dict = cast(
+                dict[str, Any],
+                get_subtable(conf_dict, NAMESPACE, allow_absence=False))
             _DEFAULTS = cls(conf_dict, source, list(NAMESPACE))
         if not copy:
-            return _DEFAULTS
-        return _DEFAULTS.copy()
+            return cast(Self, _DEFAULTS)
+        return cast(Self, _DEFAULTS.copy())
 
     @classmethod
-    def from_config(cls, config=None, *, read_env=True):
+    def from_config(cls, config: str | PathLike | bool | None = None, *,
+                    read_env: bool = True) -> Self:
         """
         Create an instance by loading from a config file.
 
@@ -187,7 +203,7 @@ class ConfigSource:
                 configuration (see
                 :py:meth:`~.ConfigSource.from_default`).
         """
-        def merge(template, supplied):
+        def merge(template: dict[str, Any], supplied: dict[str, Any]):
             if not (isinstance(template, dict) and isinstance(supplied, dict)):
                 return supplied
             result = {}
@@ -213,9 +229,8 @@ class ConfigSource:
         else:  # Shield the lookup from the environment
             get_conf = functools.partial(find_and_read_config_file,
                                          config=config, env_var=None)
-        try:
-            content, source = get_conf()
-        except TypeError:  # Got `None`
+        result = get_conf()
+        if result is None:
             if config:
                 if os.path.exists(config):
                     Error = ValueError
@@ -224,6 +239,7 @@ class ConfigSource:
                 raise Error(
                     f'Cannot load configurations from {config!r}') from None
             return default_instance
+        content, source = result
         conf = {}
         try:
             for header in get_headers(default_instance.conf_dict):
@@ -257,8 +273,16 @@ class ConfigSource:
             merge(default_instance.conf_dict, conf), source, list(NAMESPACE))
 
 
+Config = tuple[dict[str, dict[str, Any]], pathlib.Path]
+K = TypeVar('K')
+V = TypeVar('V')
+NestedTable = TypingMapping[K, 'NestedTable[K, V]' | V]
+
+
 def find_and_read_config_file(
-        *, config=None, env_var=ENV_VAR, targets=TARGETS):
+        *, config: str | PathLike | None = None,
+        env_var: str | None = ENV_VAR,
+        targets: Sequence[str | PathLike] = TARGETS) -> Config | None:
     """
     Arguments:
         config (str | os.PathLike[str] | None):
@@ -308,7 +332,8 @@ def find_and_read_config_file(
     return None
 
 
-def get_subtable(table, keys, *, allow_absence=True):
+def get_subtable(table: NestedTable[K, V], keys: Sequence[K], *,
+                 allow_absence: bool = True) -> NestedTable[K, V]:
     """
     Arguments:
         table (Mapping):
@@ -354,7 +379,8 @@ def get_subtable(table, keys, *, allow_absence=True):
     return subtable
 
 
-def get_headers(table, *, include_implied=False):
+def get_headers(table: NestedTable[K, Any], *,
+                include_implied: bool = False) -> set[tuple[K, ...]]:
     """
     Arguments:
         table (Mapping):

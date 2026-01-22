@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import ast
+from typing import cast
 
 
-def ast_create_profile_node(modname, profiler_name='profile', attr='add_imported_function_or_module'):
+def ast_create_profile_node(
+        modname: str, profiler_name: str = 'profile',
+        attr: str = 'add_imported_function_or_module') -> ast.Expr:
     """Create an abstract syntax tree node that adds an object to the profiler to be profiled.
 
     An abstract syntax tree node is created which calls the attr method from profile and
@@ -45,7 +50,9 @@ class AstProfileTransformer(ast.NodeTransformer):
     immediately after the import.
     """
 
-    def __init__(self, profile_imports=False, profiled_imports=None, profiler_name='profile'):
+    def __init__(self, profile_imports: bool = False,
+                 profiled_imports: list[str] | None = None,
+                 profiler_name: str = 'profile') -> None:
         """Initializes the AST transformer with the profiler name.
 
         Args:
@@ -63,7 +70,9 @@ class AstProfileTransformer(ast.NodeTransformer):
         self._profiled_imports = profiled_imports if profiled_imports is not None else []
         self._profiler_name = profiler_name
 
-    def _visit_func_def(self, node):
+    def _visit_func_def(
+            self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef:
         """Decorate functions/methods with profiler.
 
         Checks if the function/method already has a profile_name decorator, if not, it will append
@@ -81,17 +90,19 @@ class AstProfileTransformer(ast.NodeTransformer):
         """
         decor_ids = set()
         for decor in node.decorator_list:
-            try:
+            if isinstance(decor, ast.Name):
                 decor_ids.add(decor.id)
-            except AttributeError:
-                ...
         if self._profiler_name not in decor_ids:
             node.decorator_list.append(ast.Name(id=self._profiler_name, ctx=ast.Load()))
-        return self.generic_visit(node)
+        self.generic_visit(node)
+        return node
 
     visit_FunctionDef = visit_AsyncFunctionDef = _visit_func_def
 
-    def _visit_import(self, node):
+    def _visit_import(
+            self, node: ast.Import | ast.ImportFrom
+    ) -> (ast.Import | ast.ImportFrom
+          | list[ast.Import | ast.ImportFrom | ast.Expr]):
         """Add a node that profiles an import
 
         If profile_imports is True and the import is not in profiled_imports,
@@ -110,8 +121,9 @@ class AstProfileTransformer(ast.NodeTransformer):
                     returns list containing the import node and the profiling node
         """
         if not self._profile_imports:
-            return self.generic_visit(node)
-        visited = [self.generic_visit(node)]
+            self.generic_visit(node)
+            return node
+        visited = [cast(ast.Import | ast.ImportFrom, self.generic_visit(node))]
         for names in node.names:
             node_name = names.name if names.asname is None else names.asname
             if node_name in self._profiled_imports:
@@ -121,7 +133,9 @@ class AstProfileTransformer(ast.NodeTransformer):
             visited.append(expr)
         return visited
 
-    def visit_Import(self, node):
+    def visit_Import(
+            self, node: ast.Import
+    ) -> ast.Import | list[ast.Import | ast.Expr]:
         """Add a node that profiles an object imported using the "import foo" sytanx
 
         Args:
@@ -135,9 +149,12 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return self._visit_import(node)
+        return cast(ast.Import | list[ast.Import | ast.Expr],
+                    self._visit_import(node))
 
-    def visit_ImportFrom(self, node):
+    def visit_ImportFrom(
+            self, node: ast.ImportFrom
+    ) -> ast.ImportFrom | list[ast.ImportFrom | ast.Expr]:
         """Add a node that profiles an object imported using the "from foo import bar" syntax
 
         Args:
@@ -151,4 +168,5 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return self._visit_import(node)
+        return cast(ast.ImportFrom | list[ast.ImportFrom | ast.Expr],
+                    self._visit_import(node))
