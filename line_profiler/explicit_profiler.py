@@ -171,6 +171,12 @@ from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
 from .toml_config import ConfigSource
 
+# The first process that enables profiling records its PID here. Child processes
+# created via multiprocessing (spawn/forkserver) inherit this environment value,
+# allowing them to avoid registering duplicate atexit hooks (which can print
+# output after the parent exits and/or clobber output files).
+_OWNER_PID_ENVVAR = 'LINE_PROFILER_OWNER_PID'
+
 
 class GlobalProfiler:
     """
@@ -265,6 +271,7 @@ class GlobalProfiler:
 
         self._profile = None
         self.enabled = None
+        self._owner_pid = None
 
         # Configs:
         # - How to toggle the profiler
@@ -310,6 +317,27 @@ class GlobalProfiler:
         """
         Explicitly enables global profiler and controls its settings.
         """
+        # When using multiprocessing start methods like 'spawn'/'forkserver',
+        # helper processes may import this module. We only register the atexit
+        # reporting hook (and enable profiling) in the first process that
+        # called enable(), to prevent duplicate/out-of-order output.
+        owner = os.environ.get(_OWNER_PID_ENVVAR)
+        if owner is None:
+            owner_pid = os.getpid()
+            os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
+        else:
+            try:
+                owner_pid = int(owner)
+            except Exception:
+                owner_pid = os.getpid()
+                os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
+        self._owner_pid = owner_pid
+
+        # Only enable + register atexit in the owner process.
+        if os.getpid() != owner_pid:
+            self.enabled = False
+            return
+
         if self._profile is None:
             # Try to only ever create one real LineProfiler object
             atexit.register(self.show)
@@ -366,8 +394,8 @@ class GlobalProfiler:
         write_timestamped_text = self.write_config['timestamped_text']
         write_lprof = self.write_config['lprof']
 
+        kwargs = {'config': self._config, **self.show_config}
         if write_stdout:
-            kwargs = {'config': self._config, **self.show_config}
             self._profile.print_stats(**kwargs)
 
         if write_text or write_timestamped_text:
