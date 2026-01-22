@@ -2,16 +2,18 @@
 Tools for eagerly pre-importing everything as specified in
 ``line_profiler.autoprof.run(prof_mod=...)``.
 """
+from __future__ import annotations
+
 import ast
 import functools
 import itertools
-from collections import namedtuple
 from collections.abc import Collection
 from keyword import iskeyword
 from importlib.util import find_spec
 from pkgutil import walk_packages
 from textwrap import dedent, indent as indent_
 from warnings import warn
+from typing import Any, Generator, NamedTuple, TextIO
 from .util_static import (
     modname_to_modpath, modpath_to_modname, package_modpaths)
 
@@ -20,7 +22,7 @@ __all__ = ('is_dotted_path', 'split_dotted_path',
            'resolve_profiling_targets', 'write_eager_import_module')
 
 
-def is_dotted_path(obj):
+def is_dotted_path(obj: Any) -> bool:
     """
     Example:
         >>> assert not is_dotted_path(object())
@@ -37,7 +39,7 @@ def is_dotted_path(obj):
     return True
 
 
-def get_expression(obj):
+def get_expression(obj: Any) -> ast.Expression | None:
     """
     Example:
         >>> assert not get_expression(object())
@@ -55,7 +57,8 @@ def get_expression(obj):
         return None
 
 
-def split_dotted_path(dotted_path, static=True):
+def split_dotted_path(
+        dotted_path: str, static: bool = True) -> tuple[str, str | None]:
     """
     Arguments:
         dotted_path (str):
@@ -133,7 +136,7 @@ def split_dotted_path(dotted_path, static=True):
                               f'module: {checked_locs!r}')
 
 
-def strip(s):
+def strip(s: str) -> str:
     return dedent(s).strip('\n')
 
 
@@ -163,18 +166,20 @@ class LoadedNameFinder(ast.NodeVisitor):
         >>> names = LoadedNameFinder.find(ast.parse(module))
         >>> assert names == {'bar', 'foobar', 'a', 'str'}, names
     """
-    def __init__(self):
-        self.names = set()
-        self.contexts = []
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+        self.contexts: list[set[str]] = []
 
-    def visit_Name(self, node):
+    def visit_Name(self, node: ast.Name) -> None:
         if not isinstance(node.ctx, ast.Load):
             return
         name = node.id
         if not any(name in ctx for ctx in self.contexts):
             self.names.add(node.id)
 
-    def _visit_func_def(self, node):
+    def _visit_func_def(
+            self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+    ) -> None:
         args = node.args
         arg_names = {
             arg.arg
@@ -191,13 +196,13 @@ class LoadedNameFinder(ast.NodeVisitor):
     visit_FunctionDef = visit_AsyncFunctionDef = visit_Lambda = _visit_func_def
 
     @classmethod
-    def find(cls, node):
+    def find(cls, node: ast.AST) -> set[str]:
         finder = cls()
         finder.visit(node)
         return finder.names
 
 
-def propose_names(prefixes):
+def propose_names(prefixes: Collection[str]) -> Generator[str, None, None]:
     """
     Generate names based on prefixes.
 
@@ -235,7 +240,9 @@ def propose_names(prefixes):
             yield pattern(prefix, i)
 
 
-def resolve_profiling_targets(dotted_paths, static=True, recurse=False):
+def resolve_profiling_targets(
+        dotted_paths: Collection[str], static: bool = True,
+        recurse: Collection[str] | bool = False) -> ResolvedResult:
     """
     Arguments:
         dotted_paths (Collection[str]):
@@ -327,11 +334,12 @@ def resolve_profiling_targets(dotted_paths, static=True, recurse=False):
     return ResolvedResult(all_targets, indirect_submods, unknown_locs)
 
 
-def write_eager_import_module(dotted_paths, stream=None, *,
-                              static=True,
-                              recurse=False,
-                              adder='profile.add_imported_function_or_module',
-                              indent='    '):
+def write_eager_import_module(
+        dotted_paths: Collection[str], stream: TextIO | None = None, *,
+        static: bool = True,
+        recurse: Collection[str] | bool = False,
+        adder: str = 'profile.add_imported_function_or_module',
+        indent: str = '    ') -> None:
     r"""
     Write a module which autoprofiles all its imports.
 
@@ -564,5 +572,7 @@ def write_eager_import_module(dotted_paths, stream=None, *,
         """))
 
 
-ResolvedResult = namedtuple('ResolvedResult',
-                            ('targets', 'indirect', 'unresolved'))
+class ResolvedResult(NamedTuple):
+    targets: dict[str, set[str | None]]
+    indirect: set[str]
+    unresolved: list[str]

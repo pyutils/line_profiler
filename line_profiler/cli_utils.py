@@ -2,12 +2,16 @@
 Shared utilities between the :command:`python -m line_profiler` and
 :command:`kernprof` CLI tools.
 """
+from __future__ import annotations
+
 import argparse
 import functools
 import os
 import pathlib
 import shutil
 import sys
+from os import PathLike
+from typing import Protocol, Sequence, TypeVar
 from .toml_config import ConfigSource
 
 
@@ -16,9 +20,32 @@ _BOOLEAN_VALUES = {**{k.casefold(): False
                    **{k.casefold(): True
                       for k in ('1', 'on', 'True', 'T', 'yes', 'Y')}}
 
+P_con = TypeVar('P_con', bound='ParserLike', contravariant=True)
+A_co = TypeVar('A_co', bound='ActionLike', covariant=True)
 
-def add_argument(parser_like, arg, /, *args,
-                 hide_complementary_options=True, **kwargs):
+
+class ActionLike(Protocol[P_con]):
+    def __call__(self, parser: P_con, namespace: argparse.Namespace,
+                 values: str | Sequence[object] | None,
+                 option_string: str | None = None) -> None:
+        ...
+
+    def format_usage(self) -> str:
+        ...
+
+
+class ParserLike(Protocol[A_co]):
+    def add_argument(self, arg: str, /, *args: str, **kwargs: object) -> A_co:
+        ...
+
+    @property
+    def prefix_chars(self) -> str:
+        ...
+
+
+def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
+                 hide_complementary_options: bool = True,
+                 **kwargs: object) -> A_co:
     """
     Override the ``'store_true'`` and ``'store_false'`` actions so that
     they are turned into options which:
@@ -126,7 +153,8 @@ def add_argument(parser_like, arg, /, *args,
             long_kwargs['help'] = f'({additional_msg})'
         short_kwargs['help'] = argparse.SUPPRESS
 
-    long_action = short_action = None
+    long_action: A_co | None = None
+    short_action: A_co | None = None
     if long_flags:
         long_action = parser_like.add_argument(*long_flags, **long_kwargs)
         short_kwargs['dest'] = long_action.dest
@@ -158,7 +186,8 @@ def add_argument(parser_like, arg, /, *args,
     return action
 
 
-def get_cli_config(subtable, /, *args, **kwargs):
+def get_cli_config(subtable: str, /, *args: object,
+                   **kwargs: object) -> ConfigSource:
     """
     Get the ``tool.line_profiler.<subtable>`` configs and normalize
     its keys (``some-key`` -> ``some_key``).
@@ -181,7 +210,7 @@ def get_cli_config(subtable, /, *args, **kwargs):
     return config
 
 
-def get_python_executable():
+def get_python_executable() -> str:
     """
     Returns:
         str: command
@@ -196,7 +225,7 @@ def get_python_executable():
         return short_string_path(sys.executable)
 
 
-def positive_float(value):
+def positive_float(value: str) -> float:
     """
     Arguments:
         value (str)
@@ -214,7 +243,8 @@ def positive_float(value):
     return val
 
 
-def boolean(value, *, fallback=None, invert=False):
+def boolean(value: str, *, fallback: bool | None = None,
+            invert: bool = False) -> bool:
     """
     Arguments:
         value (str)
@@ -275,7 +305,7 @@ def boolean(value, *, fallback=None, invert=False):
     return fallback
 
 
-def short_string_path(path):
+def short_string_path(path: str | PathLike[str]) -> str:
     """
     Arguments:
         path (str | os.PathLike[str]):

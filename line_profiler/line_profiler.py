@@ -4,7 +4,10 @@ This module defines the core :class:`LineProfiler` class as well as methods to
 inspect its output. This depends on the :py:mod:`line_profiler._line_profiler`
 Cython backend.
 """
+from __future__ import annotations
+
 import functools
+import io
 import inspect
 import linecache
 import operator
@@ -16,6 +19,11 @@ import types
 import tokenize
 from argparse import ArgumentParser
 from datetime import datetime
+from os import PathLike
+from typing import (TYPE_CHECKING, Callable, Literal, Mapping, Protocol,
+                    TypeVar, overload)
+from typing_extensions import ParamSpec, Self
+from functools import cached_property, partial, partialmethod
 
 try:
     from ._line_profiler import (LineProfiler as CLineProfiler,
@@ -29,16 +37,25 @@ from . import _diagnostics as diagnostics
 from .cli_utils import (
     add_argument, get_cli_config, positive_float, short_string_path)
 from .profiler_mixin import ByCountProfilerMixin, is_c_level_callable
-from .scoping_policy import ScopingPolicy
+from .scoping_policy import ScopingPolicy, ScopingPolicyDict
 from .toml_config import ConfigSource
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .profiler_mixin import CLevelCallable, UnparametrizedCallableLike
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '5.0.1'
 
+T = TypeVar('T')
+T_co = TypeVar('T_co', covariant=True)
+PS = ParamSpec('PS')
+
 
 @functools.lru_cache()
-def get_column_widths(config=False):
+def get_column_widths(
+        config: bool | str | PathLike[str] | None = False
+) -> Mapping[Literal['line', 'hits', 'time', 'perhit', 'percent'], int]:
     """
     Arguments
         config (bool | str | pathlib.PurePath | None)
@@ -53,14 +70,14 @@ def get_column_widths(config=False):
     return types.MappingProxyType(subconf.conf_dict)
 
 
-def load_ipython_extension(ip):
+def load_ipython_extension(ip: object) -> None:
     """ API for IPython to recognize this module as an IPython extension.
     """
     from .ipython_extension import LineProfilerMagics
     ip.register_magics(LineProfilerMagics)
 
 
-def get_code_block(filename, lineno):
+def get_code_block(filename: os.PathLike[str] | str, lineno: int) -> list[str]:
     """
     Get the lines in the code block in a file starting from required
     line number; understands Cython code.
@@ -163,7 +180,8 @@ class _CythonBlockFinder(inspect.BlockFinder):
         is public but undocumented API.  See similar caveat in
         :py:func:`~.get_code_block`.
     """
-    def tokeneater(self, type, token, *args, **kwargs):
+    def tokeneater(self, type: int, token: str,
+                   *args: object, **kwargs: object) -> object:
         if (
                 not self.started
                 and type == tokenize.NAME
@@ -183,17 +201,22 @@ class _WrapperInfo:
         profiler_id (int)
             ID of the `LineProfiler`.
     """
-    def __init__(self, func, profiler_id):
+    def __init__(self, func: types.FunctionType, profiler_id: int) -> None:
         self.func = func
         self.profiler_id = profiler_id
 
 
+class _StatsLike(Protocol):
+    timings: Mapping[tuple[str, int, str], list[tuple[int, int, int]]]
+    unit: float
+
+
 class LineStats(CLineStats):
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '{}({}, {:.2G})'.format(
             type(self).__name__, self.timings, self.unit)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         """
         Example:
             >>> from copy import deepcopy
@@ -222,7 +245,7 @@ class LineStats(CLineStats):
                 return NotImplemented
         return True
 
-    def __add__(self, other):
+    def __add__(self, other: _StatsLike) -> Self:
         """
         Example:
             >>> stats1 = LineStats(
@@ -246,7 +269,7 @@ class LineStats(CLineStats):
         timings, unit = self._get_aggregated_timings([self, other])
         return type(self)(timings, unit)
 
-    def __iadd__(self, other):
+    def __iadd__(self, other: _StatsLike) -> Self:
         """
         Example:
             >>> stats1 = LineStats(
@@ -273,17 +296,20 @@ class LineStats(CLineStats):
         self.timings, self.unit = self._get_aggregated_timings([self, other])
         return self
 
-    def print(self, stream=None, **kwargs):
+    def print(self, stream: io.TextIOBase | None = None,
+              **kwargs: object) -> None:
         show_text(self.timings, self.unit, stream=stream, **kwargs)
 
-    def to_file(self, filename):
+    def to_file(self, filename: PathLike[str] | str) -> None:
         """ Pickle the instance to the given filename.
         """
         with open(filename, 'wb') as f:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
     @classmethod
-    def from_files(cls, file, /, *files):
+    def from_files(
+            cls, file: PathLike[str] | str, /,
+            *files: PathLike[str] | str) -> Self:
         """
         Utility function to load an instance from the given filenames.
         """
@@ -294,7 +320,9 @@ class LineStats(CLineStats):
         return cls.from_stats_objects(*stats_objs)
 
     @classmethod
-    def from_stats_objects(cls, stats, /, *more_stats):
+    def from_stats_objects(
+            cls, stats: _StatsLike, /,
+            *more_stats: _StatsLike) -> Self:
         """
         Example:
             >>> stats1 = LineStats(
@@ -368,7 +396,45 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> func()
         >>> profile.print_stats()
     """
-    def __call__(self, func):
+    @overload
+    def __call__(self, func: CLevelCallable) -> CLevelCallable:
+        ...
+
+    @overload
+    def __call__(self, func: UnparametrizedCallableLike) -> UnparametrizedCallableLike:
+        ...
+
+    @overload
+    def __call__(self, func: type[T]) -> type[T]:
+        ...
+
+    @overload
+    def __call__(self, func: partial[T]) -> partial[T]:
+        ...
+
+    @overload
+    def __call__(self, func: partialmethod[T]) -> partialmethod[T]:
+        ...
+
+    @overload
+    def __call__(self, func: cached_property[T_co]) -> cached_property[T_co]:
+        ...
+
+    @overload
+    def __call__(self, func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
+        ...
+
+    @overload
+    def __call__(
+        self, func: classmethod[type[T], PS, T_co],
+    ) -> classmethod[type[T], PS, T_co]:
+        ...
+
+    @overload
+    def __call__(self, func: Callable) -> types.FunctionType:
+        ...
+
+    def __call__(self, func: object):
         """
         Decorate a function, method, :py:class:`property`,
         :py:func:`~functools.partial` object etc. to start the profiler
@@ -384,12 +450,15 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         self.add_callable(func)
         return self.wrap_callable(func)
 
-    def wrap_callable(self, func):
+    def wrap_callable(self, func: object):
         if is_c_level_callable(func):  # Non-profilable
             return func
         return super().wrap_callable(func)
 
-    def add_callable(self, func, guard=None, name=None):
+    def add_callable(
+            self, func: object,
+            guard: Callable[[types.FunctionType], bool] | None = None,
+            name: str | None = None) -> Literal[0, 1]:
         """
         Register a function, method, :py:class:`property`,
         :py:func:`~functools.partial` object, etc. with the underlying
@@ -461,18 +530,21 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
             msg = f'{self_repr}: {msg}'
         logger.debug(msg)
 
-    def get_stats(self):
+    def get_stats(self) -> LineStats:
         return LineStats.from_stats_objects(super().get_stats())
 
-    def dump_stats(self, filename):
+    def dump_stats(self, filename: os.PathLike[str] | str) -> None:
         """ Dump a representation of the data to a file as a pickled
         :py:class:`~.LineStats` object from :py:meth:`~.get_stats()`.
         """
         self.get_stats().to_file(filename)
 
-    def print_stats(self, stream=None, output_unit=None, stripzeros=False,
-                    details=True, summarize=False, sort=False, rich=False, *,
-                    config=None):
+    def print_stats(
+            self, stream: io.TextIOBase | None = None,
+            output_unit: float | None = None, stripzeros: bool = False,
+            details: bool = True, summarize: bool = False,
+            sort: bool = False, rich: bool = False, *,
+            config: str | PathLike[str] | bool | None = None) -> None:
         """ Show the gathered statistics.
         """
         self.get_stats().print(
@@ -546,7 +618,10 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
                     self._repr_for_log(namespace, name)))
         return count
 
-    def add_class(self, cls, *, scoping_policy=None, wrap=False):
+    def add_class(
+            self, cls: type, *,
+            scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
+            wrap: bool = False) -> int:
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a class' local namespace and profile them.
@@ -591,7 +666,10 @@ ScopingPolicyDict, None]):
                                    module_scoping_policy=policies['module'],
                                    wrap=wrap)
 
-    def add_module(self, mod, *, scoping_policy=None, wrap=False):
+    def add_module(
+            self, mod: types.ModuleType, *,
+            scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
+            wrap: bool = False) -> int:
         """
         Add the members (callables (wrappers), methods, classes, ...) in
         a module's local namespace and profile them.
@@ -658,7 +736,7 @@ ScopingPolicyDict, None]):
 
 # This could be in the ipython_extension submodule,
 # but it doesn't depend on the IPython module so it's easier to just let it stay here.
-def is_generated_code(filename):
+def is_generated_code(filename: str) -> bool:
     """ Return True if a filename corresponds to generated code, such as a
     Jupyter Notebook cell.
     """
@@ -672,10 +750,13 @@ def is_generated_code(filename):
     )
 
 
-def show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit=None, stream=None, stripzeros=False, rich=False,
+def show_func(filename: str, start_lineno: int, func_name: str,
+              timings: list[tuple[int, int, float]], unit: float,
+              output_unit: float | None = None,
+              stream: io.TextIOBase | None = None,
+              stripzeros: bool = False, rich: bool = False,
               *,
-              config=None):
+              config: str | PathLike[str] | bool | None = None) -> None:
     """
     Show results for a single function.
 
@@ -895,9 +976,12 @@ def show_func(filename, start_lineno, func_name, timings, unit,
     stream.write('\n')
 
 
-def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
-              details=True, summarize=False, sort=False, rich=False, *,
-              config=None):
+def show_text(stats: _StatsLike, unit: float,
+              output_unit: float | None = None,
+              stream: io.TextIOBase | None = None,
+              stripzeros: bool = False, details: bool = True,
+              summarize: bool = False, sort: bool = False, rich: bool = False,
+              *, config: str | PathLike[str] | bool | None = None) -> None:
     """
     Show text for the given timings.
 
@@ -967,7 +1051,7 @@ def show_text(stats, unit, output_unit=None, stream=None, stripzeros=False,
 load_stats = LineStats.from_files
 
 
-def main():
+def main() -> None:
     """
     The line profiler CLI to view output from :command:`kernprof -l`.
     """

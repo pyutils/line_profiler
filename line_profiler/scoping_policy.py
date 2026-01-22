@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from enum import auto
-from types import MappingProxyType, ModuleType
-from typing import Union, TypedDict
+from types import FunctionType, MappingProxyType, ModuleType
+from typing import Callable, Literal, TypedDict, overload
 from .line_profiler_utils import StringEnum
 
 
@@ -97,7 +99,7 @@ class ScopingPolicy(StringEnum):
 
     # Verification
 
-    def __init_subclass__(cls, *args, **kwargs):
+    def __init_subclass__(cls, *args: object, **kwargs: object) -> None:
         """
         Call :py:meth:`_check_class`.
         """
@@ -105,7 +107,7 @@ class ScopingPolicy(StringEnum):
         cls._check_class()
 
     @classmethod
-    def _check_class(cls):
+    def _check_class(cls) -> None:
         """
         Verify that :py:meth:`.get_filter` return a callable for all
         policy values and object types.
@@ -122,7 +124,25 @@ class ScopingPolicy(StringEnum):
 
     # Filtering
 
-    def get_filter(self, namespace, obj_type):
+    @overload
+    def get_filter(
+            self, namespace: type | ModuleType,
+            obj_type: Literal['func']) -> Callable[[FunctionType], bool]:
+        ...
+
+    @overload
+    def get_filter(
+            self, namespace: type | ModuleType,
+            obj_type: Literal['class']) -> Callable[[type], bool]:
+        ...
+
+    @overload
+    def get_filter(
+            self, namespace: type | ModuleType,
+            obj_type: Literal['module']) -> Callable[[ModuleType], bool]:
+        ...
+
+    def get_filter(self, namespace: type | ModuleType, obj_type: str):
         """
         Args:
             namespace (Union[type, types.ModuleType]):
@@ -157,7 +177,10 @@ class ScopingPolicy(StringEnum):
         return method(namespace, is_class=(obj_type == 'class'))
 
     @classmethod
-    def to_policies(cls, policies=None):
+    def to_policies(
+            cls,
+            policies: str | ScopingPolicy | ScopingPolicyDict | None = None
+    ) -> _ScopingPolicyDict:
         """
         Normalize ``policies`` into a dictionary of policies for various
         object types.
@@ -222,26 +245,28 @@ ScopingPolicyDict, None]):
                                    'module': cls(policies['module'])})
 
     @staticmethod
-    def _return_const(value):
+    def _return_const(value: bool) -> Callable[[object], bool]:
         def return_const(*_, **__):
             return value
 
         return return_const
 
     @staticmethod
-    def _match_prefix(s, prefix, sep='.'):
+    def _match_prefix(s: str, prefix: str, sep: str = '.') -> bool:
         return s == prefix or s.startswith(prefix + sep)
 
-    def _get_callable_filter_in_class(self, cls, is_class):
-        def func_is_child(other):
+    def _get_callable_filter_in_class(
+            self, cls: type, is_class: bool
+    ) -> Callable[[FunctionType | type], bool]:
+        def func_is_child(other: FunctionType):
             if not modules_are_equal(other):
                 return False
             return other.__qualname__ == f'{cls.__qualname__}.{other.__name__}'
 
-        def modules_are_equal(other):  # = sibling check
+        def modules_are_equal(other: FunctionType | type):  # = sibling check
             return cls.__module__ == other.__module__
 
-        def func_is_descdendant(other):
+        def func_is_descdendant(other: FunctionType):
             if not modules_are_equal(other):
                 return False
             return other.__qualname__.startswith(cls.__qualname__ + '.')
@@ -254,14 +279,16 @@ ScopingPolicyDict, None]):
                 'siblings': modules_are_equal,
                 'none': self._return_const(True)}[self.value]
 
-    def _get_callable_filter_in_module(self, mod, is_class):
-        def func_is_child(other):
+    def _get_callable_filter_in_module(
+            self, mod: ModuleType, is_class: bool
+    ) -> Callable[[FunctionType | type], bool]:
+        def func_is_child(other: FunctionType):
             return other.__module__ == mod.__name__
 
-        def func_is_descdendant(other):
+        def func_is_descdendant(other: FunctionType):
             return self._match_prefix(other.__module__, mod.__name__)
 
-        def func_is_cousin(other):
+        def func_is_cousin(other: FunctionType):
             if func_is_descdendant(other):
                 return True
             return self._match_prefix(other.__module__, parent)
@@ -277,14 +304,16 @@ ScopingPolicyDict, None]):
                              func_is_descdendant),
                 'none': self._return_const(True)}[self.value]
 
-    def _get_module_filter_in_module(self, mod):
-        def module_is_descendant(other):
+    def _get_module_filter_in_module(
+            self, mod: ModuleType
+    ) -> Callable[[ModuleType], bool]:
+        def module_is_descendant(other: ModuleType):
             return other.__name__.startswith(mod.__name__ + '.')
 
-        def module_is_child(other):
+        def module_is_child(other: ModuleType):
             return other.__name__.rpartition('.')[0] == mod.__name__
 
-        def module_is_sibling(other):
+        def module_is_sibling(other: ModuleType):
             return other.__name__.startswith(parent + '.')
 
         parent, _, basename = mod.__name__.rpartition('.')
@@ -301,11 +330,13 @@ ScopingPolicyDict, None]):
 # the corresponding methods
 ScopingPolicy._check_class()
 
-ScopingPolicyDict = TypedDict('ScopingPolicyDict',
-                              {'func': Union[str, ScopingPolicy],
-                               'class': Union[str, ScopingPolicy],
-                               'module': Union[str, ScopingPolicy]})
-_ScopingPolicyDict = TypedDict('_ScopingPolicyDict',
-                               {'func': ScopingPolicy,
-                                'class': ScopingPolicy,
-                                'module': ScopingPolicy})
+ScopingPolicyDict = TypedDict(
+    'ScopingPolicyDict',
+    {'func': str | ScopingPolicy,
+     'class': str | ScopingPolicy,
+     'module': str | ScopingPolicy})
+_ScopingPolicyDict = TypedDict(
+    '_ScopingPolicyDict',
+    {'func': ScopingPolicy,
+     'class': ScopingPolicy,
+     'module': ScopingPolicy})

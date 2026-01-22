@@ -44,12 +44,15 @@ profiles it with autoprofile.
     python -m kernprof -p demo.py -l demo.py
     python -m line_profiler -rmt demo.py.lprof
 """
+from __future__ import annotations
 import contextlib
 import functools
 import importlib.util
 import operator
 import sys
 import types
+from collections.abc import MutableMapping
+from typing import Any
 from .ast_tree_profiler import AstTreeProfiler
 from .run_module import AstTreeModuleProfiler
 from .line_profiler_utils import add_imported_function_or_module
@@ -58,7 +61,7 @@ from .util_static import modpath_to_modname
 PROFILER_LOCALS_NAME = 'prof'
 
 
-def _extend_line_profiler_for_profiling_imports(prof):
+def _extend_line_profiler_for_profiling_imports(prof: Any) -> None:
     """Allow profiler to handle functions/methods, classes & modules with a single call.
 
     Add a method to LineProfiler that can identify whether the object is a
@@ -73,7 +76,9 @@ def _extend_line_profiler_for_profiling_imports(prof):
     prof.add_imported_function_or_module = types.MethodType(add_imported_function_or_module, prof)
 
 
-def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
+def run(script_file: str, ns: MutableMapping[str, Any],
+        prof_mod: list[str], profile_imports: bool = False,
+        as_module: bool = False) -> None:
     """Automatically profile a script and run it.
 
     Profile functions, classes & modules specified in prof_mod without needing to add
@@ -98,10 +103,10 @@ def run(script_file, ns, prof_mod, profile_imports=False, as_module=False):
             Whether we're running script_file as a module
     """
     class restore_dict:
-        def __init__(self, d, target=None):
+        def __init__(self, d: MutableMapping[str, Any], target=None):
             self.d = d
             self.target = target
-            self.copy = None
+            self.copy: dict[str, Any] | None = None
 
         def __enter__(self):
             assert self.copy is None

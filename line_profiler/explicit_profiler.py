@@ -181,6 +181,9 @@ from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
 from .toml_config import ConfigSource
 
+F = TypeVar('F', bound=Callable[..., Any])
+ConfigArg = str | pathlib.PurePath | bool | None
+
 # The first process that enables profiling records its PID here. Child processes
 # created via multiprocessing (spawn/forkserver) inherit this environment value,
 # which helps prevent helper processes from claiming ownership and clobbering
@@ -291,6 +294,7 @@ class GlobalProfiler:
         self._profile = None
         self._owner_pid = None
         self.enabled = None
+
         # Configs:
         # - How to toggle the profiler
         self.setup_config = config_source.conf_dict['setup']
