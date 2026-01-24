@@ -164,7 +164,9 @@ for ``func2`` and ``func4``.
 The core functionality in this module was ported from :mod:`xdev`.
 """
 import atexit
+import multiprocessing
 import os
+import pathlib
 import sys
 # This is for compatibility
 from .cli_utils import boolean, get_python_executable as _python_command
@@ -173,8 +175,8 @@ from .toml_config import ConfigSource
 
 # The first process that enables profiling records its PID here. Child processes
 # created via multiprocessing (spawn/forkserver) inherit this environment value,
-# allowing them to avoid registering duplicate atexit hooks (which can print
-# output after the parent exits and/or clobber output files).
+# which helps prevent helper processes from claiming ownership and clobbering
+# output. Standalone subprocess runs should always be able to reset this value.
 _OWNER_PID_ENVVAR = 'LINE_PROFILER_OWNER_PID'
 
 
@@ -270,9 +272,8 @@ class GlobalProfiler:
         self._config = config_source.path
 
         self._profile = None
-        self.enabled = None
         self._owner_pid = None
-
+        self.enabled = None
         # Configs:
         # - How to toggle the profiler
         self.setup_config = config_source.conf_dict['setup']
@@ -317,26 +318,27 @@ class GlobalProfiler:
         """
         Explicitly enables global profiler and controls its settings.
         """
+        self._debug('enable:enter')
         # When using multiprocessing start methods like 'spawn'/'forkserver',
-        # helper processes may import this module. We only register the atexit
-        # reporting hook (and enable profiling) in the first process that
-        # called enable(), to prevent duplicate/out-of-order output.
-        owner = os.environ.get(_OWNER_PID_ENVVAR)
-        if owner is None:
-            owner_pid = os.getpid()
-            os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
-        else:
-            try:
-                owner_pid = int(owner)
-            except Exception:
-                owner_pid = os.getpid()
-                os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
-        self._owner_pid = owner_pid
-
-        # Only enable + register atexit in the owner process.
-        if os.getpid() != owner_pid:
+        # helper processes may import this module. Only register the atexit
+        # reporting hook (and enable profiling) in real script invocations to
+        # prevent duplicate/out-of-order output.
+        if self._is_helper_process_context():
+            self._debug('enable:helper-context')
             self.enabled = False
             return
+
+        if self._should_skip_due_to_owner():
+            self._debug('enable:skip-due-to-owner')
+            self.enabled = False
+            return
+
+        # Standalone script executions should always claim ownership, even if a
+        # PID marker was inherited from another process environment.
+        owner_pid = os.getpid()
+        os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
+        self._owner_pid = owner_pid
+        self._debug('enable:owner-claimed', owner_pid=owner_pid)
 
         if self._profile is None:
             # Try to only ever create one real LineProfiler object
@@ -349,6 +351,120 @@ class GlobalProfiler:
 
         if output_prefix is not None:
             self.output_prefix = output_prefix
+
+    def _is_helper_process_context(self):
+        """
+        Determine if this process looks like a multiprocessing helper.
+
+        Helper contexts should never register atexit hooks or claim ownership,
+        while real script invocations should always be allowed to do so.
+        """
+        argv0 = sys.argv[0] if sys.argv else ''
+        if self._has_forkserver_env():
+            self._debug('helper:forkserver-env', argv0=argv0)
+            return True
+        try:
+            import multiprocessing.spawn as mp_spawn
+            if getattr(mp_spawn, '_inheriting', False):
+                self._debug('helper:spawn-inheriting', argv0=argv0)
+                return True
+        except Exception:
+            pass
+        try:
+            if multiprocessing.current_process().name != 'MainProcess':
+                self._debug(
+                    'helper:non-main-process',
+                    process_name=multiprocessing.current_process().name,
+                    argv0=argv0,
+                )
+                return True
+        except Exception:
+            pass
+
+        main_mod = sys.modules.get('__main__')
+        main_file = getattr(main_mod, '__file__', None)
+        for candidate in (argv0, main_file):
+            if candidate:
+                try:
+                    if pathlib.Path(candidate).exists():
+                        self._debug('helper:script-detected', candidate=candidate)
+                        return False
+                except Exception:
+                    continue
+
+        self._debug('helper:no-script-detected', argv0=argv0, main_file=main_file)
+        return True
+
+    def _should_skip_due_to_owner(self):
+        """
+        In multiprocessing children, respect an inherited owner marker.
+
+        Standalone subprocesses (parent_process is None) should reset ownership,
+        but fork/spawn children should not clobber a parent owner's outputs.
+        """
+        try:
+            if multiprocessing.parent_process() is None:
+                self._debug('owner:no-parent', owner=os.environ.get(_OWNER_PID_ENVVAR))
+                return False
+        except Exception:
+            return False
+
+        owner = os.environ.get(_OWNER_PID_ENVVAR)
+        if owner is None:
+            return False
+
+        try:
+            owner_pid = int(owner)
+            if os.getppid() == 1 and owner_pid != os.getpid():
+                self._debug('owner:skip-orphan', owner=owner, ppid=os.getppid())
+                return True
+            if os.getppid() == owner_pid and owner_pid != os.getpid():
+                try:
+                    start_method = multiprocessing.get_start_method(allow_none=True)
+                except Exception:
+                    start_method = None
+                if start_method == 'forkserver':
+                    self._debug(
+                        'owner:skip-forkserver-child',
+                        owner=owner,
+                        ppid=os.getppid(),
+                        start_method=start_method,
+                    )
+                    return True
+            skip = owner_pid != os.getpid()
+            self._debug('owner:check', owner=owner, skip=skip)
+            return skip
+        except Exception:
+            return False
+
+    def _has_forkserver_env(self):
+        for key in os.environ:
+            if key.startswith('FORKSERVER_'):
+                return True
+            if key.startswith('MULTIPROCESSING_FORKSERVER'):
+                return True
+        return False
+
+    def _debug(self, message, **extra):
+        if not os.environ.get('LINE_PROFILER_DEBUG'):
+            return
+        try:
+            parent = multiprocessing.parent_process()
+            parent_pid = parent.pid if parent is not None else None
+        except Exception:
+            parent_pid = None
+        info = {
+            'pid': os.getpid(),
+            'ppid': os.getppid(),
+            'process': getattr(multiprocessing.current_process(), 'name', None),
+            'parent_pid': parent_pid,
+            'owner_env': os.environ.get(_OWNER_PID_ENVVAR),
+            'owner_pid': self._owner_pid,
+            'enabled': self.enabled,
+        }
+        info.update(extra)
+        payload = ' '.join(f'{k}={v!r}' for k, v in info.items())
+        print(f'[line_profiler debug] {message} {payload}')
 
     def disable(self):
         """
@@ -386,6 +502,14 @@ class GlobalProfiler:
         If the implicit setup triggered, then this will be called by
         :py:mod:`atexit`.
         """
+        self._debug('show:enter')
+        owner_env = os.environ.get(_OWNER_PID_ENVVAR)
+        if os.getppid() == 1 and owner_env == str(os.getpid()):
+            self._debug('show:skip-orphan-owner', owner_env=owner_env)
+            return
+        if self._owner_pid is not None and os.getpid() != self._owner_pid:
+            self._debug('show:skip-non-owner', current_pid=os.getpid())
+            return
         import io
         import pathlib
 

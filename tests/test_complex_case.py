@@ -95,6 +95,7 @@ def test_varied_complex_invocations():
             temp_dpath = stack.enter_context(tempfile.TemporaryDirectory())
             stack.enter_context(ub.ChDir(temp_dpath))
             env = {}
+            env['LINE_PROFILER_DEBUG'] = '1'
 
             outpath = case['outpath']
             if outpath:
