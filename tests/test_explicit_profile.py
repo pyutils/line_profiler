@@ -141,6 +141,88 @@ def test_explicit_profile_with_environ_on():
         assert (temp_dpath / 'profile_output.lprof').exists()
 
 
+def test_explicit_profile_ignores_inherited_owner_marker():
+    """
+    Standalone runs should not be blocked by an inherited owner marker.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_dpath = ub.Path(tmp)
+        env = os.environ.copy()
+        env['LINE_PROFILE'] = '1'
+        env['LINE_PROFILER_OWNER_PID'] = str(os.getpid() + 100000)
+        env['PYTHONPATH'] = os.getcwd()
+
+        with ub.ChDir(temp_dpath):
+
+            script_fpath = ub.Path('script.py')
+            script_fpath.write_text(_demo_explicit_profile_script())
+
+            args = [sys.executable, os.fspath(script_fpath)]
+            proc = ub.cmd(args, env=env)
+            print(proc.stdout)
+            print(proc.stderr)
+            proc.check_returncode()
+
+        assert (temp_dpath / 'profile_output.txt').exists()
+        assert (temp_dpath / 'profile_output.lprof').exists()
+
+
+def test_explicit_profile_process_pool_forkserver():
+    """
+    Ensure explicit profiler works with forkserver ProcessPoolExecutor.
+    """
+    import multiprocessing as mp
+    if 'forkserver' not in mp.get_all_start_methods():
+        pytest.skip('forkserver start method not available')
+    with tempfile.TemporaryDirectory() as tmp:
+        temp_dpath = ub.Path(tmp)
+        env = os.environ.copy()
+        env['LINE_PROFILE'] = '1'
+        # env['LINE_PROFILER_DEBUG'] = '1'
+        env['PYTHONPATH'] = os.getcwd()
+
+        with ub.ChDir(temp_dpath):
+
+            script_fpath = ub.Path('script.py')
+            script_fpath.write_text(ub.codeblock(
+                '''
+                import multiprocessing as mp
+                from concurrent.futures import ProcessPoolExecutor
+                from line_profiler import profile
+
+                def worker(x):
+                    return x * x
+
+                @profile
+                def run():
+                    total = 0
+                    for i in range(1000):
+                        total += i % 7
+                    with ProcessPoolExecutor(max_workers=2) as ex:
+                        list(ex.map(worker, range(4)))
+                    return total
+
+                def main():
+                    if 'forkserver' in mp.get_all_start_methods():
+                        mp.set_start_method('forkserver', force=True)
+                    run()
+
+                if __name__ == '__main__':
+                    main()
+                ''').strip())
+
+            args = [sys.executable, os.fspath(script_fpath)]
+            proc = ub.cmd(args, env=env)
+            print(proc.stdout)
+            print(proc.stderr)
+            proc.check_returncode()
+
+        output_path = temp_dpath / 'profile_output.txt'
+        assert output_path.exists()
+        assert output_path.stat().st_size > 100
+        assert proc.stdout.count('Wrote profile results to profile_output.txt') == 1
+
+
 def test_explicit_profile_with_environ_off():
     """
     When LINE_PROFILE is falsy, profiling should not run.
