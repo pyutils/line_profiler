@@ -178,7 +178,7 @@ def test_explicit_profile_process_pool_forkserver():
         temp_dpath = ub.Path(tmp)
         env = os.environ.copy()
         env['LINE_PROFILE'] = '1'
-        env['LINE_PROFILER_DEBUG'] = '1'
+        # env['LINE_PROFILER_DEBUG'] = '1'
         env['PYTHONPATH'] = os.getcwd()
 
         with ub.ChDir(temp_dpath):
