@@ -317,132 +317,61 @@ class GlobalProfiler:
     def enable(self, output_prefix=None):
         """
         Explicitly enables global profiler and controls its settings.
+
+        Notes:
+            Multiprocessing start methods like 'spawn'/'forkserver' can create
+            helper/bootstrap interpreters that import this module. Those helpers
+            must not claim ownership or register an atexit hook, otherwise they can
+            clobber output from the real script process.
         """
-        self._debug('enable:enter')
-        # When using multiprocessing start methods like 'spawn'/'forkserver',
-        # helper processes may import this module. Only register the atexit
-        # reporting hook (and enable profiling) in real script invocations to
-        # prevent duplicate/out-of-order output.
-        if self._is_helper_process_context():
-            self._debug('enable:helper-context')
+        self._debug("enable:ENTER")
+
+        if is_mp_bootstrap():
+            self._debug("enable:skip-mp-bootstrap")
             self.enabled = False
             return
 
         if self._should_skip_due_to_owner():
-            self._debug('enable:skip-due-to-owner')
+            self._debug("enable:skip-due-to-owner")
             self.enabled = False
             return
 
-        # Standalone script executions should always claim ownership, even if a
-        # PID marker was inherited from another process environment.
         owner_pid = os.getpid()
         os.environ[_OWNER_PID_ENVVAR] = str(owner_pid)
         self._owner_pid = owner_pid
-        self._debug('enable:owner-claimed', owner_pid=owner_pid)
+        self._debug("enable:owner-claimed", owner_pid=owner_pid)
 
         if self._profile is None:
-            # Try to only ever create one real LineProfiler object
             atexit.register(self.show)
-            self._profile = LineProfiler()  # type: ignore
+            self._profile = LineProfiler()
 
-        # The user can call this function more than once to update the final
-        # reporting or to re-enable the profiler after it a disable.
         self.enabled = True
-
         if output_prefix is not None:
             self.output_prefix = output_prefix
 
-    def _is_helper_process_context(self):
+    def _should_skip_due_to_owner(self) -> bool:
         """
-        Determine if this process looks like a multiprocessing helper.
+        Return True if another process has already claimed ownership.
 
-        Helper contexts should never register atexit hooks or claim ownership,
-        while real script invocations should always be allowed to do so.
+        The first process to enable profiling records its PID in an env var.
+        Child interpreters can inherit that value; they must not steal ownership.
         """
-        argv0 = sys.argv[0] if sys.argv else ''
-        if self._has_forkserver_env():
-            self._debug('helper:forkserver-env', argv0=argv0)
-            return True
-        try:
-            import multiprocessing.spawn as mp_spawn
-            if getattr(mp_spawn, '_inheriting', False):
-                self._debug('helper:spawn-inheriting', argv0=argv0)
-                return True
-        except Exception:
-            pass
-        try:
-            if multiprocessing.current_process().name != 'MainProcess':
-                self._debug(
-                    'helper:non-main-process',
-                    process_name=multiprocessing.current_process().name,
-                    argv0=argv0,
-                )
-                return True
-        except Exception:
-            pass
-
-        main_mod = sys.modules.get('__main__')
-        main_file = getattr(main_mod, '__file__', None)
-        for candidate in (argv0, main_file):
-            if candidate:
-                try:
-                    if pathlib.Path(candidate).exists():
-                        self._debug('helper:script-detected', candidate=candidate)
-                        return False
-                except Exception:
-                    continue
-
-        self._debug('helper:no-script-detected', argv0=argv0, main_file=main_file)
-        return True
-
-    def _should_skip_due_to_owner(self):
-        """
-        In multiprocessing children, respect an inherited owner marker.
-
-        Standalone subprocesses (parent_process is None) should reset ownership,
-        but fork/spawn children should not clobber a parent owner's outputs.
-        """
-        try:
-            if multiprocessing.parent_process() is None:
-                self._debug('owner:no-parent', owner=os.environ.get(_OWNER_PID_ENVVAR))
-                return False
-        except Exception:
-            return False
-
         owner = os.environ.get(_OWNER_PID_ENVVAR)
-        if owner is None:
+        if not owner:
+            self._debug("owner:no-owner-env")
             return False
 
-        try:
-            owner_pid = int(owner)
-            if os.getppid() == 1 and owner_pid != os.getpid():
-                self._debug('owner:skip-orphan', owner=owner, ppid=os.getppid())
-                return True
-            if os.getppid() == owner_pid and owner_pid != os.getpid():
-                try:
-                    start_method = multiprocessing.get_start_method(allow_none=True)
-                except Exception:
-                    start_method = None
-                if start_method == 'forkserver':
-                    self._debug(
-                        'owner:skip-forkserver-child',
-                        owner=owner,
-                        ppid=os.getppid(),
-                        start_method=start_method,
-                    )
-                    return True
-            skip = owner_pid != os.getpid()
-            self._debug('owner:check', owner=owner, skip=skip)
-            return skip
-        except Exception:
+        current = str(os.getpid())
+        if owner == current:
+            self._debug("owner:is-us", owner=owner)
             return False
 
-    def _has_forkserver_env(self):
-        for key in os.environ:
-            if key.startswith('FORKSERVER_'):
-                return True
-            if key.startswith('MULTIPROCESSING_FORKSERVER'):
-                return True
+        if is_mp_bootstrap():
+            self._debug("owner:skip-mp-bootstrap", owner=owner, current=current)
+            return True
+
+        # Standalone run: allow this interpreter to become the owner.
+        self._debug("owner:allow-standalone-reset", owner=owner, current=current)
         return False
 
     def _debug(self, message, **extra):
@@ -453,8 +382,10 @@ class GlobalProfiler:
             parent_pid = parent.pid if parent is not None else None
         except Exception:
             parent_pid = None
+
+        pid = os.getpid()
+
         info = {
-            'pid': os.getpid(),
             'ppid': os.getppid(),
             'process': getattr(multiprocessing.current_process(), 'name', None),
             'parent_pid': parent_pid,
@@ -464,7 +395,7 @@ class GlobalProfiler:
         }
         info.update(extra)
         payload = ' '.join(f'{k}={v!r}' for k, v in info.items())
-        print(f'[line_profiler debug] {message} {payload}')
+        print(f'[line_profiler debug {pid=}] {message} {payload}')
 
     def disable(self):
         """
@@ -511,7 +442,6 @@ class GlobalProfiler:
             self._debug('show:skip-non-owner', current_pid=os.getpid())
             return
         import io
-        import pathlib
 
         write_stdout = self.write_config['stdout']
         write_text = self.write_config['text']
@@ -551,6 +481,66 @@ class GlobalProfiler:
             py_exe = _python_command()
             print(py_exe + ' -m line_profiler -rtmz '
                   + str(lprof_output_fpath))
+
+
+def is_mp_bootstrap() -> bool:
+    """
+    True when this interpreter invocation looks like multiprocessing
+    bootstrapping/plumbing, where we must not claim ownership / write outputs.
+
+    CommandLine:
+        xdoctest -m line_profiler.explicit_profiler is_mp_bootstrap
+
+    Example:
+        >>> import pytest
+        >>> if is_mp_bootstrap():
+        ...     pytest.skip('Cannot test mp bootstrap detection from within an mp bootstrap process')
+
+        >>> import subprocess, sys
+        >>> def _py_bool(code, *extra_argv):
+        ...     out = subprocess.check_output(
+        ...         [sys.executable, "-c", code, *extra_argv],
+        ...         text=True,
+        ...     )
+        ...     return out.strip() == "True"
+
+        >>> # Normal script-like invocation: should NOT look like MP bootstrapping.
+        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())")
+        False
+
+        >>> # Multiprocessing bootstraps often pass `--multiprocessing-*` args.
+        >>> # We can supply these as script args (after -c) so Python accepts them,
+        >>> # and `sys.orig_argv` will still include them.
+        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())",
+        ...          "--multiprocessing-fork")
+        True
+
+        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())",
+        ...          "--multiprocessing-spawn")
+        True
+    """
+    try:
+        import multiprocessing.spawn as mp_spawn
+        if getattr(mp_spawn, "_inheriting", False):
+            return True
+    except Exception:
+        pass
+
+    orig = getattr(sys, "orig_argv", None) or []
+    if any(a.startswith("--multiprocessing") for a in orig):
+        return True
+    if any("multiprocessing.forkserver" in a for a in orig):
+        return True
+    if any("multiprocessing.spawn" in a for a in orig):
+        return True
+
+    try:
+        if multiprocessing.current_process().name != "MainProcess":
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 # Construct the global profiler.
