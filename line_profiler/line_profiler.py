@@ -34,7 +34,7 @@ from .toml_config import ConfigSource
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
-__version__ = '5.0.1'
+__version__ = '5.0.2'
 
 
 @functools.lru_cache()
