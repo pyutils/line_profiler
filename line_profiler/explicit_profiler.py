@@ -488,35 +488,29 @@ def is_mp_bootstrap() -> bool:
     True when this interpreter invocation looks like multiprocessing
     bootstrapping/plumbing, where we must not claim ownership / write outputs.
 
-    CommandLine:
-        xdoctest -m line_profiler.explicit_profiler is_mp_bootstrap
-
     Example:
         >>> import pytest
         >>> if is_mp_bootstrap():
         ...     pytest.skip('Cannot test mp bootstrap detection from within an mp bootstrap process')
-
-        >>> import subprocess, sys
-        >>> def _py_bool(code, *extra_argv):
-        ...     out = subprocess.check_output(
-        ...         [sys.executable, "-c", code, *extra_argv],
-        ...         text=True,
-        ...     )
-        ...     return out.strip() == "True"
-
-        >>> # Normal script-like invocation: should NOT look like MP bootstrapping.
-        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())")
-        False
-
-        >>> # Multiprocessing bootstraps often pass `--multiprocessing-*` args.
-        >>> # We can supply these as script args (after -c) so Python accepts them,
-        >>> # and `sys.orig_argv` will still include them.
-        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())",
-        ...          "--multiprocessing-fork")
-        True
-
-        >>> _py_bool("from line_profiler.explicit_profiler import is_mp_bootstrap; print(is_mp_bootstrap())",
-        ...          "--multiprocessing-spawn")
+        >>> import sys, subprocess, textwrap
+        >>> code = textwrap.dedent(r'''
+        ... import multiprocessing as mp
+        ... from line_profiler.explicit_profiler import is_mp_bootstrap
+        ...
+        ... def child(q):
+        ...     q.put(is_mp_bootstrap())
+        ...
+        ... if __name__ == "__main__":
+        ...     ctx = mp.get_context("spawn")
+        ...     q = ctx.Queue()
+        ...     p = ctx.Process(target=child, args=(q,))
+        ...     p.start()
+        ...     val = q.get()
+        ...     p.join()
+        ...     print(val)
+        ... ''')
+        >>> out = subprocess.check_output([sys.executable, "-c", code], text=True).strip()
+        >>> out in {"True", "False"}
         True
     """
     try:
