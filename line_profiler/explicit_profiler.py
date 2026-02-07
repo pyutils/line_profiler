@@ -163,21 +163,32 @@ for ``func2`` and ``func4``.
 
 The core functionality in this module was ported from :mod:`xdev`.
 """
+from __future__ import annotations
 import atexit
 import multiprocessing
 import os
 import pathlib
 import sys
+import typing
+from typing import Any, Callable, TypeVar
+
+if typing.TYPE_CHECKING:
+    from typing import cast
+
+
 # This is for compatibility
 from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
 from .toml_config import ConfigSource
 
+F = TypeVar('F', bound=Callable[..., Any])
+ConfigArg = str | pathlib.PurePath | bool | None
+
 # The first process that enables profiling records its PID here. Child processes
 # created via multiprocessing (spawn/forkserver) inherit this environment value,
 # which helps prevent helper processes from claiming ownership and clobbering
 # output. Standalone subprocess runs should always be able to reset this value.
-_OWNER_PID_ENVVAR = 'LINE_PROFILER_OWNER_PID'
+_OWNER_PID_ENVVAR: str = 'LINE_PROFILER_OWNER_PID'
 
 
 class GlobalProfiler:
@@ -187,7 +198,7 @@ class GlobalProfiler:
     The :py:obj:`line_profile.profile` decorator is an instance of this object.
 
     Arguments:
-        config (Union[str, PurePath, bool, None]):
+        config (str | PurePath | bool | None):
             Optional TOML config file from which to load the
             configurations (see Attributes);
             if not explicitly given (= :py:data:`True` or
@@ -195,8 +206,7 @@ class GlobalProfiler:
             :envvar:`!LINE_PROFILER_RC` environment variable or looked
             up among the current directory or its ancestors.  Should all
             that fail, the default config file at
-            ``importlib.resources.path('line_profiler.rc', \
-'line_profiler.toml')`` is used;
+            ``importlib.resources.path('line_profiler.rc', 'line_profiler.toml')`` is used;
             passing :py:data:`False` disables all lookup and falls back
             to the default configuration
 
@@ -266,7 +276,17 @@ class GlobalProfiler:
         >>> self.show()
     """
 
-    def __init__(self, config=None):
+    _config: pathlib.PurePath | None
+    _profile: LineProfiler | None
+    _owner_pid: int | None
+    enabled: bool | None
+
+    setup_config: dict[str, list[str]]
+    write_config: dict[str, Any]
+    show_config: dict[str, Any]
+    output_prefix: str
+
+    def __init__(self, config: ConfigArg = None) -> None:
         # Remember which config file we loaded settings from
         config_source = ConfigSource.from_config(config)
         self._config = config_source.path
@@ -288,7 +308,7 @@ class GlobalProfiler:
         # supplied `config`)
         self.show_config.pop('column_widths')
 
-    def _kernprof_overwrite(self, profile):
+    def _kernprof_overwrite(self, profile: LineProfiler) -> None:
         """
         Kernprof will call this when it runs, so we can use its profile object
         instead of our own. Note: when kernprof overwrites us we wont register
@@ -298,7 +318,7 @@ class GlobalProfiler:
         self._profile = profile
         self.enabled = True
 
-    def _implicit_setup(self):
+    def _implicit_setup(self) -> None:
         """
         Called once the first time the user decorates a function with
         ``line_profiler.profile`` and they have not explicitly setup the global
@@ -314,7 +334,7 @@ class GlobalProfiler:
         else:
             self.disable()
 
-    def enable(self, output_prefix=None):
+    def enable(self, output_prefix: str | None = None) -> None:
         """
         Explicitly enables global profiler and controls its settings.
 
@@ -374,7 +394,7 @@ class GlobalProfiler:
         self._debug("owner:allow-standalone-reset", owner=owner, current=current)
         return False
 
-    def _debug(self, message, **extra):
+    def _debug(self, message: str, **extra: Any) -> None:
         if not os.environ.get('LINE_PROFILER_DEBUG'):
             return
         try:
@@ -385,7 +405,7 @@ class GlobalProfiler:
 
         pid = os.getpid()
 
-        info = {
+        info: dict[str, Any] = {
             'ppid': os.getppid(),
             'process': getattr(multiprocessing.current_process(), 'name', None),
             'parent_pid': parent_pid,
@@ -397,13 +417,13 @@ class GlobalProfiler:
         payload = ' '.join(f'{k}={v!r}' for k, v in info.items())
         print(f'[line_profiler debug {pid=}] {message} {payload}')
 
-    def disable(self):
+    def disable(self) -> None:
         """
         Explicitly initialize and disable this global profiler.
         """
         self.enabled = False
 
-    def __call__(self, func):
+    def __call__(self, func: F) -> F:
         """
         If the global profiler is enabled, decorate a function to start the
         profiler on function entry and stop it on function exit. Otherwise
@@ -424,9 +444,14 @@ class GlobalProfiler:
             self._implicit_setup()
         if not self.enabled:
             return func
-        return self._profile(func)
+        assert self._profile is not None
 
-    def show(self):
+        wrapped = self._profile(func)
+        if typing.TYPE_CHECKING:
+            wrapped = cast(F, wrapped)
+        return wrapped
+
+    def show(self) -> None:
         """
         Write the managed profiler stats to enabled outputs.
 
@@ -448,14 +473,16 @@ class GlobalProfiler:
         write_timestamped_text = self.write_config['timestamped_text']
         write_lprof = self.write_config['lprof']
 
-        kwargs = {'config': self._config, **self.show_config}
+        assert self._profile is not None
+
+        kwargs: dict[str, Any] = {'config': self._config, **self.show_config}
         if write_stdout:
             self._profile.print_stats(**kwargs)
 
         if write_text or write_timestamped_text:
             stream = io.StringIO()
             # Text output always contains details, and cannot be rich.
-            text_kwargs = {**kwargs, 'rich': False, 'details': True}
+            text_kwargs: dict[str, Any] = {**kwargs, 'rich': False, 'details': True}
             self._profile.print_stats(stream=stream, **text_kwargs)
             raw_text = stream.getvalue()
 
