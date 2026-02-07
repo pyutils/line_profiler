@@ -117,7 +117,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
     # Fallback: just wrap the `.__call__()` of a generic callable
 
     @overload
-    def __call__(self, func: Callable) -> FunctionType:
+    def __call__(self, func: Callable) -> Callable:
         ...
 
     def add_callable(
