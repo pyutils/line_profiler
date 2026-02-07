@@ -511,6 +511,7 @@ def is_mp_bootstrap() -> bool:
     bootstrapping/plumbing, where we must not claim ownership / write outputs.
 
     Example:
+        >>> # xdoctest: +SKIP('can be flaky at test time')
         >>> import pytest
         >>> if is_mp_bootstrap():
         ...     pytest.skip('Cannot test mp bootstrap detection from within an mp bootstrap process')
