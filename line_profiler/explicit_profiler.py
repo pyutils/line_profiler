@@ -170,10 +170,9 @@ import os
 import pathlib
 import sys
 import typing
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable
 
 if typing.TYPE_CHECKING:
-    from typing import cast
     ConfigArg = str | pathlib.PurePath | bool | None
 
 
@@ -181,8 +180,6 @@ if typing.TYPE_CHECKING:
 from .cli_utils import boolean, get_python_executable as _python_command
 from .line_profiler import LineProfiler
 from .toml_config import ConfigSource
-
-F = TypeVar('F', bound=Callable[..., Any])
 
 # The first process that enables profiling records its PID here. Child processes
 # created via multiprocessing (spawn/forkserver) inherit this environment value,
@@ -423,7 +420,7 @@ class GlobalProfiler:
         """
         self.enabled = False
 
-    def __call__(self, func: F) -> F:
+    def __call__(self, func: Callable) -> Callable:
         """
         If the global profiler is enabled, decorate a function to start the
         profiler on function entry and stop it on function exit. Otherwise
@@ -447,8 +444,6 @@ class GlobalProfiler:
         assert self._profile is not None
 
         wrapped = self._profile(func)
-        if typing.TYPE_CHECKING:
-            wrapped = cast(F, wrapped)
         return wrapped
 
     def show(self) -> None:
