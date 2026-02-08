@@ -8,10 +8,18 @@ from functools import partial
 from io import StringIO
 from itertools import count
 from types import CodeType, ModuleType
-from typing import (Any, Optional, Union, Literal,
-                    Callable, Generator,
-                    Dict, FrozenSet, Tuple,
-                    ClassVar)
+from typing import (
+    Any,
+    Optional,
+    Union,
+    Literal,
+    Callable,
+    Generator,
+    Dict,
+    FrozenSet,
+    Tuple,
+    ClassVar,
+)
 
 import pytest
 
@@ -31,9 +39,11 @@ class SysMonHelper:
     Helper object which helps with simplifying attribute access on
     :py:mod:`sys.monitoring`.
     """
+
     tool_id: int
     no_tool_id_callables: ClassVar[FrozenSet[str]] = frozenset(
-        {'restart_events'})
+        {'restart_events'}
+    )
 
     def __init__(self, tool_id: Optional[int] = None) -> None:
         if tool_id is None:
@@ -68,7 +78,8 @@ class SysMonHelper:
         return result
 
     def get_current_callback(
-            self, event_id: Optional[int] = None) -> Union[Callable, None]:
+        self, event_id: Optional[int] = None
+    ) -> Union[Callable, None]:
         """
         Arguments:
             event_id (int | None)
@@ -92,13 +103,14 @@ class restore_events(AbstractContextManager):
     """
     Restore the global or local :py:mod:`sys.monitoring` events.
     """
+
     code: Union[CodeType, None]
     mon: SysMonHelper
     events: int
 
-    def __init__(self, *,
-                 code: Optional[CodeType] = None,
-                 tool_id: Optional[int] = None) -> None:
+    def __init__(
+        self, *, code: Optional[CodeType] = None, tool_id: Optional[int] = None
+    ) -> None:
         self.code = code
         self.mon = SysMonHelper(tool_id)
         self.events = sys.monitoring.events.NO_EVENTS
@@ -137,6 +149,7 @@ class LineCallback:
             Settable boolean determining whether to return
             :py:data:`sys.monitoring.DISABLE` on a reported line event.
     """
+
     nhits: Dict[Tuple[str, int, str], 'Counter[int]']
     predicate: Callable[[CodeType, int], bool]
     disable: bool
@@ -146,7 +159,7 @@ class LineCallback:
         predicate: Callable[[CodeType, int], bool],
         *,
         register: bool = True,
-        disable: bool = False
+        disable: bool = False,
     ) -> None:
         """
         Arguments:
@@ -184,8 +197,9 @@ class LineCallback:
         """
         result = self.predicate(code, lineno)
         if result:
-            self.nhits.setdefault(
-                _line_profiler.label(code), Counter())[lineno] += 1
+            self.nhits.setdefault(_line_profiler.label(code), Counter())[
+                lineno
+            ] += 1
         return result
 
     def __call__(self, code: CodeType, lineno: int) -> Any:
@@ -237,7 +251,8 @@ def disable_line_events(code: Optional[CodeType] = None) -> None:
 
 @pytest.fixture(autouse=True)
 def sys_mon_cleanup(
-        monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
     """
     If :py:mod:`sys.monitoring` is available:
     * Make sure that we are using the default behavior by overriding
@@ -254,6 +269,7 @@ def sys_mon_cleanup(
 
     otherwise, automatically :py:func:`pytest.skip` the test.
     """
+
     def restore(message):
         for name, callback in callbacks.items():
             prev_callback = MON.register_callback(event_ids[name], callback)
@@ -261,16 +277,22 @@ def sys_mon_cleanup(
                 callback_repr = '(UNCHANGED)'
             else:
                 callback_repr = '-> ' + repr(callback)
-            print('{} (`sys.monitoring.events.{}`): {!r} {}'.format(
-                message, name, prev_callback, callback_repr))
+            print(
+                '{} (`sys.monitoring.events.{}`): {!r} {}'.format(
+                    message, name, prev_callback, callback_repr
+                )
+            )
 
     if not USE_SYS_MONITORING:
         pytest.skip('No `sys.monitoring`')
     # Remember the callbacks
-    event_ids = {name: getattr(MON, name)
-                 for name in ('LINE', 'PY_RETURN', 'PY_YIELD')}
-    callbacks = {name: MON.register_callback(event_id, None)
-                 for name, event_id in event_ids.items()}
+    event_ids = {
+        name: getattr(MON, name) for name in ('LINE', 'PY_RETURN', 'PY_YIELD')
+    }
+    callbacks = {
+        name: MON.register_callback(event_id, None)
+        for name, event_id in event_ids.items()
+    }
     # Restore the callbacks since we "popped" them
     restore('Pre-test: putting the callbacks back')
     # Set the tool name if it isn't set already
@@ -308,25 +330,28 @@ def test_wrapping_trace(wrap_trace: bool) -> None:
     prof = LineProfiler(wrap_trace=wrap_trace)
     try:
         nhits_expected = _test_callback_helper(
-            6, 7, 8, 9, prof=prof, callback_called=wrap_trace)
+            6, 7, 8, 9, prof=prof, callback_called=wrap_trace
+        )
     finally:
         with StringIO() as sio:
             prof.print_stats(sio)
             output = sio.getvalue()
         print(output)
-    line = next(line for line in output.splitlines()
-                if line.endswith('# Loop body'))
+    line = next(
+        line for line in output.splitlines() if line.endswith('# Loop body')
+    )
     nhits = int(line.split()[1])
     assert nhits == nhits_expected
 
 
 def _test_callback_helper(
-        nloop_no_trace: int,
-        nloop_trace_global: int,
-        nloop_trace_local: int,
-        nloop_disabled: int,
-        prof: Optional[LineProfiler] = None,
-        callback_called: bool = True) -> int:
+    nloop_no_trace: int,
+    nloop_trace_global: int,
+    nloop_trace_local: int,
+    nloop_disabled: int,
+    prof: Optional[LineProfiler] = None,
+    callback_called: bool = True,
+) -> int:
     cumulative_nhits = 0
 
     def func(n: int) -> int:
@@ -337,8 +362,9 @@ def _test_callback_helper(
 
     def get_loop_hits() -> int:
         nonlocal cumulative_nhits
-        cumulative_nhits = (
-            callback.nhits[_line_profiler.label(code)][lineno_loop])
+        cumulative_nhits = callback.nhits[_line_profiler.label(code)][
+            lineno_loop
+        ]
         return cumulative_nhits
 
     def test_running_func(n: int) -> int:
@@ -353,9 +379,11 @@ def _test_callback_helper(
         assert MON.get_current_callback() is callback
         new_ref_count = callback.get_return_ref_count()
         referrers = repr(gc.get_referrers(callback.return_value))
-        msg = (f'ReturnObjectCallback.return_value: '
-               f'ref count {old_ref_count} -> {new_ref_count} '
-               f'(referrers: {referrers})')
+        msg = (
+            f'ReturnObjectCallback.return_value: '
+            f'ref count {old_ref_count} -> {new_ref_count} '
+            f'(referrers: {referrers})'
+        )
         if new_ref_count == old_ref_count:
             print(msg)
         else:
@@ -367,6 +395,7 @@ def _test_callback_helper(
         Callback which returns an arbitrary object in place of
         :py:data:`None` for reference-count-tracking purposes.
         """
+
         return_value: ClassVar[Any] = object()
 
         def __call__(self, *args, **kwargs) -> Any:
@@ -383,8 +412,10 @@ def _test_callback_helper(
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Loop body'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body')
+    )
     names = {func.__name__, func.__qualname__}
     code = func.__code__
     if prof is not None:
@@ -450,10 +481,12 @@ def _test_callback_helper(
 
     # Return the total number of loops run
     # (Note: `nloop_disabled` is used twice)
-    return (nloop_no_trace
-            + nloop_trace_global
-            + nloop_trace_local
-            + 2 * nloop_disabled)
+    return (
+        nloop_no_trace
+        + nloop_trace_global
+        + nloop_trace_local
+        + 2 * nloop_disabled
+    )
 
 
 @pytest.mark.parametrize('standalone', [True, False])
@@ -478,14 +511,16 @@ def test_callback_switching(standalone: bool) -> None:
     if prof is None:
         return
 
-    line = next(line for line in output.splitlines()
-                if line.endswith('# Loop body'))
+    line = next(
+        line for line in output.splitlines() if line.endswith('# Loop body')
+    )
     nhits = int(line.split()[1])
     assert nhits == nhits_expected
 
 
 def _test_callback_switching_helper(
-        nloop: int, prof: Optional[LineProfiler] = None) -> int:
+    nloop: int, prof: Optional[LineProfiler] = None
+) -> int:
     cumulative_nhits = 0, 0
 
     def func(n: int) -> int:
@@ -497,9 +532,11 @@ def _test_callback_switching_helper(
     def get_loop_hits() -> Tuple[int, int]:
         nonlocal cumulative_nhits
         cumulative_nhits = tuple(  # type: ignore[assignment]
-            callback.nhits.get(
-                _line_profiler.label(code), Counter())[lineno_loop]
-            for callback in (callback_1, callback_2))
+            callback.nhits.get(_line_profiler.label(code), Counter())[
+                lineno_loop
+            ]
+            for callback in (callback_1, callback_2)
+        )
         return cumulative_nhits
 
     def predicate(code: CodeType, lineno: int) -> bool:
@@ -510,11 +547,12 @@ def _test_callback_switching_helper(
         Callback which switches to the next one after having been
         triggered.
         """
+
         next: Union['SwitchingCallback', None]
 
-        def __init__(self, *args,
-                     next: Optional['SwitchingCallback'] = None,
-                     **kwargs) -> None:
+        def __init__(
+            self, *args, next: Optional['SwitchingCallback'] = None, **kwargs
+        ) -> None:
             super().__init__(*args, **kwargs)
             self.next = next
 
@@ -528,8 +566,10 @@ def _test_callback_switching_helper(
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Loop body'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body')
+    )
     names = {func.__name__, func.__qualname__}
     code = func.__code__
     if prof is not None:
@@ -552,8 +592,10 @@ def _test_callback_switching_helper(
         if nhits_one == nhits_other:
             assert get_loop_hits() == (nhits_one, nhits_other)
         else:  # Odd number
-            assert get_loop_hits() in ((nhits_one, nhits_other),
-                                       (nhits_other, nhits_one))
+            assert get_loop_hits() in (
+                (nhits_one, nhits_other),
+                (nhits_other, nhits_one),
+            )
 
     return nloop
 
@@ -563,8 +605,11 @@ def _test_callback_switching_helper(
 @pytest.mark.parametrize('start_with_events', [True, False])
 @pytest.mark.parametrize('standalone', [True, False])
 def test_callback_update_events(
-        standalone: bool, start_with_events: bool,
-        code_local_events: bool, add_events: bool) -> None:
+    standalone: bool,
+    start_with_events: bool,
+    code_local_events: bool,
+    add_events: bool,
+) -> None:
     """
     Check that a :py:mod:`sys.monitoring` callback which updates the
     event set (global and code-object-local) after a certain number of
@@ -582,8 +627,9 @@ def test_callback_update_events(
 
     def get_loop_hits() -> int:
         nonlocal cumulative_nhits
-        cumulative_nhits = (
-            callback.nhits[_line_profiler.label(code)][lineno_loop])
+        cumulative_nhits = callback.nhits[_line_profiler.label(code)][
+            lineno_loop
+        ]
         return cumulative_nhits
 
     class EventUpdatingCallback(LineCallback):
@@ -593,9 +639,14 @@ def test_callback_update_events(
         - Enables :py:attr:`sys.monitoring.CALL` events (if
           :py:attr:`~.call` is true)
         """
-        def __init__(self, *args,
-                     code: Optional[CodeType] = None, call: bool = False,
-                     **kwargs) -> None:
+
+        def __init__(
+            self,
+            *args,
+            code: Optional[CodeType] = None,
+            call: bool = False,
+            **kwargs,
+        ) -> None:
             super().__init__(*args, **kwargs)
             self.count = 0
             self.code = code
@@ -613,12 +664,15 @@ def test_callback_update_events(
                     MON.set_events(MON.get_events() | MON.CALL)
                 else:
                     MON.set_local_events(
-                        self.code, MON.get_local_events(self.code) | MON.CALL)
+                        self.code, MON.get_local_events(self.code) | MON.CALL
+                    )
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Loop body'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body')
+    )
     names = {func.__name__, func.__qualname__}
     code = func.__code__
 
@@ -635,9 +689,10 @@ def test_callback_update_events(
         code = orig_func.__code__
 
     callback = EventUpdatingCallback(
-        lambda code, lineno: (code.co_name in names and lineno == lineno_loop),
+        lambda code, lineno: code.co_name in names and lineno == lineno_loop,
         code=code if code_local_events else None,
-        call=add_events)
+        call=add_events,
+    )
 
     local_events = local_events_after = MON.NO_EVENTS
     global_events_after = global_events
@@ -673,8 +728,9 @@ def test_callback_update_events(
     if prof is None:
         return
 
-    line = next(line for line in output.splitlines()
-                if line.endswith('# Loop body'))
+    line = next(
+        line for line in output.splitlines() if line.endswith('# Loop body')
+    )
     nhits = int(line.split()[1])
     assert nhits == nloop
 
@@ -694,7 +750,8 @@ def test_callback_toggle_local_events(standalone: bool) -> None:
 
     try:
         nhits_expected = _test_callback_toggle_local_events_helper(
-            17, 18, 19, prof)
+            17, 18, 19, prof
+        )
     finally:
         if prof is not None:
             with StringIO() as sio:
@@ -704,17 +761,19 @@ def test_callback_toggle_local_events(standalone: bool) -> None:
     if prof is None:
         return
 
-    line = next(line for line in output.splitlines()
-                if line.endswith('# Loop body'))
+    line = next(
+        line for line in output.splitlines() if line.endswith('# Loop body')
+    )
     nhits = int(line.split()[1])
     assert nhits == nhits_expected
 
 
 def _test_callback_toggle_local_events_helper(
-        nloop_before_disabling: int,
-        nloop_when_disabled: int,
-        nloop_after_reenabling: int,
-        prof: Optional[LineProfiler] = None) -> int:
+    nloop_before_disabling: int,
+    nloop_when_disabled: int,
+    nloop_after_reenabling: int,
+    prof: Optional[LineProfiler] = None,
+) -> int:
     cumulative_nhits = 0
 
     def func(*nloops) -> int:
@@ -728,8 +787,9 @@ def _test_callback_toggle_local_events_helper(
 
     def get_loop_hits() -> int:
         nonlocal cumulative_nhits
-        cumulative_nhits = (
-            callback.nhits[_line_profiler.label(code)][lineno_loop])
+        cumulative_nhits = callback.nhits[_line_profiler.label(code)][
+            lineno_loop
+        ]
         return cumulative_nhits
 
     class LocalDisablingCallback(LineCallback):
@@ -737,6 +797,7 @@ def _test_callback_toggle_local_events_helper(
         Callback which disables LINE events locally after a certain
         number of hits
         """
+
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.switch_count = 0
@@ -760,11 +821,15 @@ def _test_callback_toggle_local_events_helper(
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Loop body'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body')
+    )
     lineno_switch = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Switching location'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Switching location')
+    )
     linenos = {lineno_loop, lineno_switch}
     names = {func.__name__, func.__qualname__}
     code = func.__code__
@@ -773,14 +838,18 @@ def _test_callback_toggle_local_events_helper(
         code = orig_func.__code__
 
     callback = LocalDisablingCallback(
-        lambda code, lineno: (code.co_name in names and lineno in linenos))
+        lambda code, lineno: code.co_name in names and lineno in linenos
+    )
 
     MON.set_events(MON.get_events() | MON.LINE)
     n = nloop_before_disabling + nloop_when_disabled + nloop_after_reenabling
     assert MON.get_current_callback() is callback
-    assert func(nloop_before_disabling,
-                nloop_when_disabled,
-                nloop_after_reenabling) == n * (n + 1) // 2
+    assert (
+        func(
+            nloop_before_disabling, nloop_when_disabled, nloop_after_reenabling
+        )
+        == n * (n + 1) // 2
+    )
     assert MON.get_current_callback() is callback
     print(callback.nhits)
     assert get_loop_hits() == nloop_before_disabling + nloop_after_reenabling
@@ -790,7 +859,8 @@ def _test_callback_toggle_local_events_helper(
 
 @pytest.mark.parametrize('profile_when', ['before', 'after'])
 def test_local_event_preservation(
-        profile_when: Literal['before', 'after']) -> None:
+    profile_when: Literal['before', 'after'],
+) -> None:
     """
     Check that existing :py:mod:`sys.monitoring` code-local events are
     preserved when a profiler swaps out the callable's code object.
@@ -821,12 +891,15 @@ def test_local_event_preservation(
         orig_func, func = func, prof(func)
         code = orig_func.__code__
         assert code is not orig_code, (
-            '`line_profiler` didn\'t overwrite the function\'s code object')
+            "`line_profiler` didn't overwrite the function's code object"
+        )
 
     lines, first_lineno = inspect.getsourcelines(func)
     lineno_loop = first_lineno + next(
-        offset for offset, line in enumerate(lines)
-        if line.rstrip().endswith('# Loop body'))
+        offset
+        for offset, line in enumerate(lines)
+        if line.rstrip().endswith('# Loop body')
+    )
     names = {func.__name__, func.__qualname__}
     code = func.__code__
     callback = LineCallback(lambda code, _: code.co_name in names)
@@ -855,7 +928,8 @@ def test_local_event_preservation(
             prof.print_stats(sio)
             output = sio.getvalue()
         print(output)
-    line = next(line for line in output.splitlines()
-                if line.endswith('# Loop body'))
+    line = next(
+        line for line in output.splitlines() if line.endswith('# Loop body')
+    )
     nhits = int(line.split()[1])
     assert nhits == n

@@ -13,6 +13,7 @@ class enter_tmpdir:
     """
     Set up a temporary directory and :cmd:`chdir` into it.
     """
+
     def __init__(self):
         self.stack = ExitStack()
 
@@ -43,6 +44,7 @@ class restore_sys_modules:
     """
     Restore :py:attr:`sys.modules` after exiting the context.
     """
+
     def __enter__(self):
         self.old = sys.modules.copy()
 
@@ -64,6 +66,7 @@ def test_simple_explicit_nonglobal_usage():
     python -c "from test_explicit_profile import *; test_simple_explicit_nonglobal_usage()"
     """
     from line_profiler import LineProfiler
+
     profiler = LineProfiler()
 
     def func(a):
@@ -83,7 +86,7 @@ def test_simple_explicit_nonglobal_usage():
 
 def _demo_explicit_profile_script():
     return ub.codeblock(
-        '''
+        """
         from line_profiler import profile
 
         @profile
@@ -93,7 +96,8 @@ def _demo_explicit_profile_script():
                 a, b = b, a + b
             return a
         fib(10)
-        ''')
+        """
+    )
 
 
 def test_explicit_profile_with_nothing():
@@ -103,7 +107,6 @@ def test_explicit_profile_with_nothing():
     with tempfile.TemporaryDirectory() as tmp:
         temp_dpath = ub.Path(tmp)
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
 
@@ -128,7 +131,6 @@ def test_explicit_profile_with_environ_on():
         env['LINE_PROFILE'] = '1'
 
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
 
@@ -154,7 +156,6 @@ def test_explicit_profile_ignores_inherited_owner_marker():
         env['PYTHONPATH'] = os.getcwd()
 
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
 
@@ -173,6 +174,7 @@ def test_explicit_profile_process_pool_forkserver():
     Ensure explicit profiler works with forkserver ProcessPoolExecutor.
     """
     import multiprocessing as mp
+
     if 'forkserver' not in mp.get_all_start_methods():
         pytest.skip('forkserver start method not available')
     with tempfile.TemporaryDirectory() as tmp:
@@ -183,10 +185,10 @@ def test_explicit_profile_process_pool_forkserver():
         env['PYTHONPATH'] = os.getcwd()
 
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
-            script_fpath.write_text(ub.codeblock(
-                '''
+            script_fpath.write_text(
+                ub.codeblock(
+                    """
                 import multiprocessing as mp
                 from concurrent.futures import ProcessPoolExecutor
                 from line_profiler import profile
@@ -210,7 +212,9 @@ def test_explicit_profile_process_pool_forkserver():
 
                 if __name__ == '__main__':
                     main()
-                ''').strip())
+                """
+                ).strip()
+            )
 
             args = [sys.executable, os.fspath(script_fpath)]
             proc = ub.cmd(args, env=env)
@@ -221,7 +225,10 @@ def test_explicit_profile_process_pool_forkserver():
         output_path = temp_dpath / 'profile_output.txt'
         assert output_path.exists()
         assert output_path.stat().st_size > 100
-        assert proc.stdout.count('Wrote profile results to profile_output.txt') == 1
+        assert (
+            proc.stdout.count('Wrote profile results to profile_output.txt')
+            == 1
+        )
 
 
 def test_explicit_profile_with_environ_off():
@@ -234,7 +241,6 @@ def test_explicit_profile_with_environ_off():
         env['LINE_PROFILE'] = '0'
 
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
 
@@ -258,7 +264,6 @@ def test_explicit_profile_with_cmdline():
     with tempfile.TemporaryDirectory() as tmp:
         temp_dpath = ub.Path(tmp)
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
 
@@ -325,7 +330,7 @@ def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
         temp_dpath = ub.Path(tmp)
 
         lib_code = ub.codeblock(
-            '''
+            """
             @profile
             def func1(a):
                 return a + 1
@@ -339,11 +344,12 @@ def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
 
             def func4(a):
                 return a + 1
-            ''').strip()
+            """
+        ).strip()
         if not builtin:
             lib_code = 'from line_profiler import profile\n' + lib_code
         target_code = ub.codeblock(
-            '''
+            """
             from ._lib import func1, func2, func3, func4
 
             if __name__ == '__main__':
@@ -351,7 +357,8 @@ def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
                 func2(1)
                 func3(1)
                 func4(1)
-            ''').strip()
+            """
+        ).strip()
 
         if package:
             target_module = 'package'
@@ -387,10 +394,15 @@ def test_explicit_profile_with_kernprof_m(builtin: bool, package: bool):
             proc.check_returncode()
 
         # Note: in non-builtin mode, the entire script is profiled
-        for func, profiled in [('func1', True), ('func2', True),
-                               ('func3', not builtin), ('func4', not builtin)]:
-            result = re.search(r'lib\.py:[0-9]+\({}\)'.format(func),
-                               proc.stdout)
+        for func, profiled in [
+            ('func1', True),
+            ('func2', True),
+            ('func3', not builtin),
+            ('func4', not builtin),
+        ]:
+            result = re.search(
+                r'lib\.py:[0-9]+\({}\)'.format(func), proc.stdout
+            )
             assert bool(result) == profiled
 
         assert not (temp_dpath / 'profile_output.txt').exists()
@@ -409,7 +421,7 @@ def test_explicit_profile_with_in_code_enable():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             from line_profiler import profile
             import ubelt as ub
             print('')
@@ -454,9 +466,9 @@ def test_explicit_profile_with_in_code_enable():
             func4(1)
 
             profile._profile
-            ''')
+            """
+        )
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
@@ -468,7 +480,7 @@ def test_explicit_profile_with_in_code_enable():
 
         print('Finished running script')
 
-        output_fpath = (temp_dpath / 'custom_output.txt')
+        output_fpath = temp_dpath / 'custom_output.txt'
         raw_output = output_fpath.read_text()
         print(f'Contents of {output_fpath}')
         print(raw_output)
@@ -493,7 +505,7 @@ def test_explicit_profile_with_duplicate_functions():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             from line_profiler import profile
 
             @profile
@@ -516,9 +528,9 @@ def test_explicit_profile_with_duplicate_functions():
             func2(1)
             func3(1)
             func4(1)
-            ''').strip()
+            """
+        ).strip()
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
@@ -528,7 +540,7 @@ def test_explicit_profile_with_duplicate_functions():
             print(proc.stderr)
             proc.check_returncode()
 
-        output_fpath = (temp_dpath / 'profile_output.txt')
+        output_fpath = temp_dpath / 'profile_output.txt'
         raw_output = output_fpath.read_text()
         print(raw_output)
 
@@ -556,7 +568,8 @@ def test_explicit_profile_with_customized_config():
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(_demo_explicit_profile_script())
             toml = ub.Path('my_config.toml')
-            toml.write_text(ub.codeblock('''
+            toml.write_text(
+                ub.codeblock("""
         [tool.line_profiler.setup]
         environ_flags = ['PROFILE']
 
@@ -567,7 +580,8 @@ def test_explicit_profile_with_customized_config():
         [tool.line_profiler.show]
         details = true
         summarize = false
-            '''))
+            """)
+            )
 
             env['LINE_PROFILER_RC'] = str(toml)
             args = [sys.executable, os.fspath(script_fpath)]
@@ -577,19 +591,22 @@ def test_explicit_profile_with_customized_config():
             proc.check_returncode()
 
         # Check the `write` config
-        assert set(os.listdir(temp_dpath)) == {'script.py',
-                                               'my_config.toml',
-                                               'my_profiling_results.lprof',
-                                               'my_profiling_results.txt'}
+        assert set(os.listdir(temp_dpath)) == {
+            'script.py',
+            'my_config.toml',
+            'my_profiling_results.lprof',
+            'my_profiling_results.txt',
+        }
         # Check the `show` config
         assert '- fib' not in proc.stdout  # No summary
         assert 'Function: fib' in proc.stdout  # With details
 
 
 @pytest.mark.parametrize('reset_enable_count', [True, False])
-@pytest.mark.parametrize('wrap_class, wrap_module',
-                         [(None, None), (False, True),
-                          (True, False), (True, True)])
+@pytest.mark.parametrize(
+    'wrap_class, wrap_module',
+    [(None, None), (False, True), (True, False), (True, True)],
+)
 def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
     """
     Test the `wrap` argument for the
@@ -598,7 +615,8 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
     `line_profiler.autoprofile.autoprofile.
     _extend_line_profiler_for_profiling_imports()`) methods.
     """
-    script = ub.codeblock('''
+    script = ub.codeblock(
+        """
         from line_profiler import LineProfiler
         from line_profiler.autoprofile.autoprofile import (
             _extend_line_profiler_for_profiling_imports as upgrade_profiler)
@@ -628,30 +646,38 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
         # isn't wrapped and doesn't auto-`.enable()` before being called
         func3()
         profiler.print_stats(details=True, summarize=True)
-                          '''.format(
-        '' if wrap_module is None else f', wrap={wrap_module}',
-        '' if wrap_class is None else f', wrap={wrap_class}',
-        reset_enable_count))
+                          """.format(
+            '' if wrap_module is None else f', wrap={wrap_module}',
+            '' if wrap_class is None else f', wrap={wrap_class}',
+            reset_enable_count,
+        )
+    )
 
     with enter_tmpdir() as curdir:
         write(curdir / 'script.py', script)
-        write(curdir / 'my_module_1.py',
-              '''
+        write(
+            curdir / 'my_module_1.py',
+            """
         def func1():
             pass  # Marker: func1
-              ''')
-        write(curdir / 'my_module_2.py',
-              '''
+              """,
+        )
+        write(
+            curdir / 'my_module_2.py',
+            """
         class Class:
             @classmethod
             def method2(cls):
                 pass  # Marker: method2
-              ''')
-        write(curdir / 'my_module_3.py',
-              '''
+              """,
+        )
+        write(
+            curdir / 'my_module_3.py',
+            """
         def func3():
             pass  # Marker: func3
-              ''')
+              """,
+        )
         proc = ub.cmd([sys.executable, str(curdir / 'script.py')])
 
     # Check that the profiler has seen each of the methods
@@ -665,10 +691,16 @@ def test_profiler_add_methods(wrap_class, wrap_module, reset_enable_count):
     assert '# Marker: func3' in raw_output
 
     # Check that the timing info (of the lack thereof) are correct
-    for func, has_timing in [('func1', wrap_module), ('method2', wrap_class),
-                             ('func3', False)]:
-        line, = (line for line in raw_output.splitlines()
-                 if line.endswith('Marker: ' + func))
+    for func, has_timing in [
+        ('func1', wrap_module),
+        ('method2', wrap_class),
+        ('func3', False),
+    ]:
+        (line,) = (
+            line
+            for line in raw_output.splitlines()
+            if line.endswith('Marker: ' + func)
+        )
         has_timing = has_timing or not reset_enable_count
         assert line.split()[1] == ('1' if has_timing else 'pass')
 
@@ -730,7 +762,8 @@ def test_profiler_warn_unwrappable():
             if not getattr(cls, '_initialized', None):
                 return super(ProblamticMeta, cls).__setattr__(attr, value)
             raise AttributeError(
-                f'cannot set attribute on {type(cls)} instance')
+                f'cannot set attribute on {type(cls)} instance'
+            )
 
     class ProblematicClass(metaclass=ProblamticMeta):
         def method(self):
@@ -739,9 +772,11 @@ def test_profiler_warn_unwrappable():
     profile = LineProfiler()
     vanilla_method = ProblematicClass.method
 
-    with pytest.warns(match=r"cannot wrap 1 attribute\(s\) of "
-                      r"<class '.*\.ProblematicClass'> \(`\{attr: value\}`\): "
-                      r"\{'method': <function .*\.method at 0x.*>\}"):
+    with pytest.warns(
+        match=r'cannot wrap 1 attribute\(s\) of '
+        r"<class '.*\.ProblematicClass'> \(`\{attr: value\}`\): "
+        r"\{'method': <function .*\.method at 0x.*>\}"
+    ):
         # The method is added to the profiler, but we can't assign its
         # wrapper back into the class namespace
         assert profile.add_class(ProblematicClass, wrap=True) == 1
@@ -751,29 +786,59 @@ def test_profiler_warn_unwrappable():
 
 @pytest.mark.parametrize(
     ('scoping_policy', 'add_module_targets', 'add_class_targets'),
-    [('exact', {}, {'class3_method'}),
-     ('children',
-      {'class2_method', 'child_class2_method'},
-      {'class3_method', 'child_class3_method'}),
-     ('descendants',
-      {'class2_method', 'child_class2_method',
-       'class3_method', 'child_class3_method'},
-      {'class3_method', 'child_class3_method'}),
-     ('siblings',
-      {'class1_method', 'child_class1_method',
-       'class2_method', 'child_class2_method',
-       'class3_method', 'child_class3_method', 'other_class3_method'},
-      {'class3_method', 'child_class3_method', 'other_class3_method'}),
-     ('none',
-      {'class1_method', 'child_class1_method',
-       'class2_method', 'child_class2_method',
-       'class3_method', 'child_class3_method', 'other_class3_method'},
-      {'child_class1_method',
-       'class3_method', 'child_class3_method', 'other_class3_method'})])
-def test_profiler_class_scope_matching(monkeypatch,
-                                       scoping_policy,
-                                       add_module_targets,
-                                       add_class_targets):
+    [
+        ('exact', {}, {'class3_method'}),
+        (
+            'children',
+            {'class2_method', 'child_class2_method'},
+            {'class3_method', 'child_class3_method'},
+        ),
+        (
+            'descendants',
+            {
+                'class2_method',
+                'child_class2_method',
+                'class3_method',
+                'child_class3_method',
+            },
+            {'class3_method', 'child_class3_method'},
+        ),
+        (
+            'siblings',
+            {
+                'class1_method',
+                'child_class1_method',
+                'class2_method',
+                'child_class2_method',
+                'class3_method',
+                'child_class3_method',
+                'other_class3_method',
+            },
+            {'class3_method', 'child_class3_method', 'other_class3_method'},
+        ),
+        (
+            'none',
+            {
+                'class1_method',
+                'child_class1_method',
+                'class2_method',
+                'child_class2_method',
+                'class3_method',
+                'child_class3_method',
+                'other_class3_method',
+            },
+            {
+                'child_class1_method',
+                'class3_method',
+                'child_class3_method',
+                'other_class3_method',
+            },
+        ),
+    ],
+)
+def test_profiler_class_scope_matching(
+    monkeypatch, scoping_policy, add_module_targets, add_class_targets
+):
     """
     Test for the class-scope-matching strategies of the
     `LineProfiler.add_*()` methods.
@@ -784,8 +849,9 @@ def test_profiler_class_scope_matching(monkeypatch,
 
         pkg_dir = curdir / 'packages' / 'my_pkg'
         write(pkg_dir / '__init__.py')
-        write(pkg_dir / 'submod1.py',
-              """
+        write(
+            pkg_dir / 'submod1.py',
+            """
         class Class1:
             def class1_method(self):
                 pass
@@ -793,9 +859,11 @@ def test_profiler_class_scope_matching(monkeypatch,
             class ChildClass1:
                 def child_class1_method(self):
                     pass
-              """)
-        write(pkg_dir / 'subpkg2' / '__init__.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'subpkg2' / '__init__.py',
+            """
         from ..submod1 import Class1  # Import from a sibling
         from .submod3 import Class3  # Import descendant from a child
 
@@ -809,9 +877,11 @@ def test_profiler_class_scope_matching(monkeypatch,
                     pass
 
             BorrowedChildClass = Class1.ChildClass1  # Non-sibling class
-              """)
-        write(pkg_dir / 'subpkg2' / 'submod3.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'subpkg2' / 'submod3.py',
+            """
         from ..submod1 import Class1
 
 
@@ -832,14 +902,18 @@ def test_profiler_class_scope_matching(monkeypatch,
 
         # Sibling class
         Class3.BorrowedChildClass3 = OtherClass3
-              """)
+              """,
+        )
         monkeypatch.syspath_prepend(pkg_dir.parent)
 
         from my_pkg import subpkg2
         from line_profiler import LineProfiler
 
-        policies = {'func': 'none', 'class': scoping_policy,
-                    'module': 'exact'}  # Don't descend into submodules
+        policies = {
+            'func': 'none',
+            'class': scoping_policy,
+            'module': 'exact',
+        }  # Don't descend into submodules
         # Add a module
         profile = LineProfiler()
         profile.add_module(subpkg2, scoping_policy=policies)
@@ -856,17 +930,21 @@ def test_profiler_class_scope_matching(monkeypatch,
 
 @pytest.mark.parametrize(
     ('scoping_policy', 'add_module_targets', 'add_subpackage_targets'),
-    [('exact', {'func4'}, {'class_method'}),
-     ('children', {'func4'}, {'class_method', 'func2'}),
-     ('descendants', {'func4'}, {'class_method', 'func2'}),
-     ('siblings', {'func4'}, {'class_method', 'func2', 'func3'}),
-     ('none',
-      {'func4', 'func5'},
-      {'class_method', 'func2', 'func3', 'func4', 'func5'})])
-def test_profiler_module_scope_matching(monkeypatch,
-                                        scoping_policy,
-                                        add_module_targets,
-                                        add_subpackage_targets):
+    [
+        ('exact', {'func4'}, {'class_method'}),
+        ('children', {'func4'}, {'class_method', 'func2'}),
+        ('descendants', {'func4'}, {'class_method', 'func2'}),
+        ('siblings', {'func4'}, {'class_method', 'func2', 'func3'}),
+        (
+            'none',
+            {'func4', 'func5'},
+            {'class_method', 'func2', 'func3', 'func4', 'func5'},
+        ),
+    ],
+)
+def test_profiler_module_scope_matching(
+    monkeypatch, scoping_policy, add_module_targets, add_subpackage_targets
+):
     """
     Test for the module-scope-matching strategies of the
     `LineProfiler.add_*()` methods.
@@ -877,8 +955,9 @@ def test_profiler_module_scope_matching(monkeypatch,
 
         pkg_dir = curdir / 'packages' / 'my_pkg'
         write(pkg_dir / '__init__.py')
-        write(pkg_dir / 'subpkg1' / '__init__.py',
-              """
+        write(
+            pkg_dir / 'subpkg1' / '__init__.py',
+            """
               import my_mod4  # Unrelated
               from .. import submod3  # Sibling
               from . import submod2  # Child
@@ -891,38 +970,50 @@ def test_profiler_module_scope_matching(monkeypatch,
 
                   # We shouldn't descend into this no matter what
                   import my_mod5 as module
-              """)
-        write(pkg_dir / 'subpkg1' / 'submod2.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'subpkg1' / 'submod2.py',
+            """
               def func2():
                   pass
-              """)
-        write(pkg_dir / 'submod3.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'submod3.py',
+            """
               def func3():
                   pass
-              """)
-        write(curdir / 'packages' / 'my_mod4.py',
-              """
+              """,
+        )
+        write(
+            curdir / 'packages' / 'my_mod4.py',
+            """
               import my_mod5  # Unrelated
 
 
               def func4():
                   pass
-              """)
-        write(curdir / 'packages' / 'my_mod5.py',
-              """
+              """,
+        )
+        write(
+            curdir / 'packages' / 'my_mod5.py',
+            """
               def func5():
                   pass
-              """)
+              """,
+        )
         monkeypatch.syspath_prepend(pkg_dir.parent)
 
         import my_mod4
         from my_pkg import subpkg1
         from line_profiler import LineProfiler
 
-        policies = {'func': 'none', 'class': 'children',
-                    'module': scoping_policy}
+        policies = {
+            'func': 'none',
+            'class': 'children',
+            'module': scoping_policy,
+        }
         # Add a module
         profile = LineProfiler()
         profile.add_module(my_mod4, scoping_policy=policies)
@@ -943,19 +1034,25 @@ def test_profiler_module_scope_matching(monkeypatch,
 
 @pytest.mark.parametrize(
     ('scoping_policy', 'add_module_targets', 'add_class_targets'),
-    [('exact', {'func1'}, {'method'}),
-     ('children', {'func1'}, {'method'}),
-     ('descendants', {'func1', 'func2'}, {'method', 'child_class_method'}),
-     ('siblings',
-      {'func1', 'func2', 'func3'},
-      {'method', 'child_class_method', 'func1'}),
-     ('none',
-      {'func1', 'func2', 'func3', 'func4'},
-      {'method', 'child_class_method', 'func1', 'another_func4'})])
-def test_profiler_func_scope_matching(monkeypatch,
-                                      scoping_policy,
-                                      add_module_targets,
-                                      add_class_targets):
+    [
+        ('exact', {'func1'}, {'method'}),
+        ('children', {'func1'}, {'method'}),
+        ('descendants', {'func1', 'func2'}, {'method', 'child_class_method'}),
+        (
+            'siblings',
+            {'func1', 'func2', 'func3'},
+            {'method', 'child_class_method', 'func1'},
+        ),
+        (
+            'none',
+            {'func1', 'func2', 'func3', 'func4'},
+            {'method', 'child_class_method', 'func1', 'another_func4'},
+        ),
+    ],
+)
+def test_profiler_func_scope_matching(
+    monkeypatch, scoping_policy, add_module_targets, add_class_targets
+):
     """
     Test for the class-scope-matching strategies of the
     `LineProfiler.add_*()` methods.
@@ -966,8 +1063,9 @@ def test_profiler_func_scope_matching(monkeypatch,
 
         pkg_dir = curdir / 'packages' / 'my_pkg'
         write(pkg_dir / '__init__.py')
-        write(pkg_dir / 'subpkg1' / '__init__.py',
-              """
+        write(
+            pkg_dir / 'subpkg1' / '__init__.py',
+            """
               from ..submod3 import func3  # Sibling
               from .submod2 import func2  # Descendant
               from my_mod4 import func4  # Unrelated
@@ -992,34 +1090,44 @@ def test_profiler_func_scope_matching(monkeypatch,
 
                   # Unrelated
                   from my_mod4 import another_func4 as imported_method
-              """)
-        write(pkg_dir / 'subpkg1' / 'submod2.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'subpkg1' / 'submod2.py',
+            """
               def func2():
                   pass
-              """)
-        write(pkg_dir / 'submod3.py',
-              """
+              """,
+        )
+        write(
+            pkg_dir / 'submod3.py',
+            """
               def func3():
                   pass
-              """)
-        write(curdir / 'packages' / 'my_mod4.py',
-              """
+              """,
+        )
+        write(
+            curdir / 'packages' / 'my_mod4.py',
+            """
               def func4():
                   pass
 
 
               def another_func4(_):
                   pass
-              """)
+              """,
+        )
         monkeypatch.syspath_prepend(pkg_dir.parent)
 
         from my_pkg import subpkg1
         from line_profiler import LineProfiler
 
-        policies = {'func': scoping_policy,
-                    # No descensions
-                    'class': 'exact', 'module': 'exact'}
+        policies = {
+            'func': scoping_policy,
+            # No descensions
+            'class': 'exact',
+            'module': 'exact',
+        }
         # Add a module
         profile = LineProfiler()
         profile.add_module(subpkg1, scoping_policy=policies)

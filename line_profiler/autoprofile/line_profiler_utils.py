@@ -12,27 +12,43 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @overload
 def add_imported_function_or_module(
-        self, item: CLevelCallable | Any, *,
-        scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
-        wrap: bool = False) -> Literal[0]:
-    ...
+    self,
+    item: CLevelCallable | Any,
+    *,
+    scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
+    wrap: bool = False,
+) -> Literal[0]: ...
 
 
 @overload
 def add_imported_function_or_module(
-        self,
-        item: (FunctionType | CythonCallable | type | partial | property
-               | cached_property | MethodType | staticmethod | classmethod
-               | partialmethod | ModuleType),
-        *, scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
-        wrap: bool = False) -> Literal[0, 1]:
-    ...
+    self,
+    item: (
+        FunctionType
+        | CythonCallable
+        | type
+        | partial
+        | property
+        | cached_property
+        | MethodType
+        | staticmethod
+        | classmethod
+        | partialmethod
+        | ModuleType
+    ),
+    *,
+    scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
+    wrap: bool = False,
+) -> Literal[0, 1]: ...
 
 
 def add_imported_function_or_module(
-        self, item: object, *,
-        scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
-        wrap: bool = False) -> Literal[0, 1]:
+    self,
+    item: object,
+    *,
+    scoping_policy: ScopingPolicy | str | ScopingPolicyDict | None = None,
+    wrap: bool = False,
+) -> Literal[0, 1]:
     """
     Method to add an object to
     :py:class:`~.line_profiler.LineProfiler` to be profiled.

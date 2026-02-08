@@ -7,6 +7,7 @@ Similar Scripts:
     ~/code/mkinit/dev/maintain/port_ubelt_code.py
     ~/code/line_profiler/dev/maintain/port_utilities.py
 """
+
 import ubelt as ub
 import liberator
 import re
@@ -45,7 +46,8 @@ def generate_util_static():
         :py:mod:`xdoctest` via dev/maintain/port_utilities.py in the
         line_profiler repo.
         """
-        ''')
+        '''
+    )
 
     # Remove doctest references to ubelt
     new_lines = []
@@ -53,7 +55,9 @@ def generate_util_static():
         if line.strip().startswith('>>> from ubelt'):
             continue
         if line.strip().startswith('>>> import ubelt as ub'):
-            line = re.sub('>>> .*', '>>> # xdoctest: +SKIP("ubelt dependency")', line)
+            line = re.sub(
+                '>>> .*', '>>> # xdoctest: +SKIP("ubelt dependency")', line
+            )
         new_lines.append(line)
 
     text = '\n'.join(new_lines)
@@ -67,13 +71,26 @@ def main():
 
     import parso
     import line_profiler
-    target_fpath = ub.Path(line_profiler.__file__).parent / 'autoprofile' / 'util_static.py'
+
+    target_fpath = (
+        ub.Path(line_profiler.__file__).parent
+        / 'autoprofile'
+        / 'util_static.py'
+    )
 
     new_module = parso.parse(text)
     if target_fpath.exists():
         old_module = parso.parse(target_fpath.read_text())
-        new_names = [child.name.value for child in new_module.children if child.type in {'funcdef', 'classdef'}]
-        old_names = [child.name.value for child in old_module.children if child.type in {'funcdef', 'classdef'}]
+        new_names = [
+            child.name.value
+            for child in new_module.children
+            if child.type in {'funcdef', 'classdef'}
+        ]
+        old_names = [
+            child.name.value
+            for child in old_module.children
+            if child.type in {'funcdef', 'classdef'}
+        ]
         print(set(old_names) - set(new_names))
         print(set(new_names) - set(old_names))
 

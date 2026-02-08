@@ -251,14 +251,29 @@ mkinit ./line_profiler/__init__.py --relative -w
 # NOTE: This needs to be in sync with ../kernprof.py and line_profiler.py
 __version__ = '5.0.2'
 
-from .line_profiler import (LineProfiler, LineStats,
-                            load_ipython_extension, load_stats, main,
-                            show_func, show_text,)
+from .line_profiler import (
+    LineProfiler,
+    LineStats,
+    load_ipython_extension,
+    load_stats,
+    main,
+    show_func,
+    show_text,
+)
 
 
 from .explicit_profiler import profile
 
 
-__all__ = ['LineProfiler', 'LineStats', 'line_profiler',
-           'load_ipython_extension', 'load_stats', 'main', 'show_func',
-           'show_text', '__version__', 'profile']
+__all__ = [
+    'LineProfiler',
+    'LineStats',
+    'line_profiler',
+    'load_ipython_extension',
+    'load_stats',
+    'main',
+    'show_func',
+    'show_text',
+    '__version__',
+    'profile',
+]

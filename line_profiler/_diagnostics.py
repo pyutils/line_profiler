@@ -2,6 +2,7 @@
 Global state initialized at import time.
 Used for hidden arguments and developer features.
 """
+
 import os
 import sys
 from types import ModuleType
@@ -9,10 +10,11 @@ from line_profiler import _logger
 
 
 def _boolean_environ(
-        envvar,
-        truey=frozenset({'1', 'on', 'true', 'yes'}),
-        falsy=frozenset({'0', 'off', 'false', 'no'}),
-        default=False):
+    envvar,
+    truey=frozenset({'1', 'on', 'true', 'yes'}),
+    falsy=frozenset({'0', 'off', 'false', 'no'}),
+    default=False,
+):
     r"""
     Args:
         envvar (str)
@@ -91,13 +93,14 @@ STATIC_ANALYSIS = _boolean_environ('LINE_PROFILER_STATIC_ANALYSIS')
 WRAP_TRACE = _boolean_environ('LINE_PROFILER_WRAP_TRACE')
 SET_FRAME_LOCAL_TRACE = _boolean_environ('LINE_PROFILER_SET_FRAME_LOCAL_TRACE')
 _MUST_USE_LEGACY_TRACE = not isinstance(
-    getattr(sys, 'monitoring', None), ModuleType)
-USE_LEGACY_TRACE = (
-    _MUST_USE_LEGACY_TRACE
-    or _boolean_environ('LINE_PROFILER_CORE',
-                        # Also provide `coverage-style` aliases
-                        truey={'old', 'legacy', 'ctrace'},
-                        falsy={'new', 'sys.monitoring', 'sysmon'},
-                        default=_MUST_USE_LEGACY_TRACE))
+    getattr(sys, 'monitoring', None), ModuleType
+)
+USE_LEGACY_TRACE = _MUST_USE_LEGACY_TRACE or _boolean_environ(
+    'LINE_PROFILER_CORE',
+    # Also provide `coverage-style` aliases
+    truey={'old', 'legacy', 'ctrace'},
+    falsy={'new', 'sys.monitoring', 'sysmon'},
+    default=_MUST_USE_LEGACY_TRACE,
+)
 
 log = _logger.Logger('line_profiler', backend='auto')

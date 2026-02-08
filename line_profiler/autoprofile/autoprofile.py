@@ -44,6 +44,7 @@ profiles it with autoprofile.
     python -m kernprof -p demo.py -l demo.py
     python -m line_profiler -rmt demo.py.lprof
 """
+
 from __future__ import annotations
 import contextlib
 import functools
@@ -74,12 +75,18 @@ def _extend_line_profiler_for_profiling_imports(prof: Any) -> None:
         prof (LineProfiler):
             instance of LineProfiler.
     """
-    prof.add_imported_function_or_module = types.MethodType(add_imported_function_or_module, prof)
+    prof.add_imported_function_or_module = types.MethodType(
+        add_imported_function_or_module, prof
+    )
 
 
-def run(script_file: str, ns: MutableMapping[str, Any],
-        prof_mod: list[str], profile_imports: bool = False,
-        as_module: bool = False) -> None:
+def run(
+    script_file: str,
+    ns: MutableMapping[str, Any],
+    prof_mod: list[str],
+    profile_imports: bool = False,
+    as_module: bool = False,
+) -> None:
     """Automatically profile a script and run it.
 
     Profile functions, classes & modules specified in prof_mod without needing to add
@@ -103,6 +110,7 @@ def run(script_file: str, ns: MutableMapping[str, Any],
         as_module (bool):
             Whether we're running script_file as a module
     """
+
     class restore_dict:
         def __init__(self, d: MutableMapping[str, Any], target=None):
             self.d = d
@@ -128,8 +136,9 @@ def run(script_file: str, ns: MutableMapping[str, Any],
         Profiler = AstTreeModuleProfiler
         module_name = modpath_to_modname(script_file)
         if not module_name:
-            raise ModuleNotFoundError(f'script_file = {script_file!r}: '
-                                      'cannot find corresponding module')
+            raise ModuleNotFoundError(
+                f'script_file = {script_file!r}: cannot find corresponding module'
+            )
 
         module_obj = types.ModuleType(module_name)
         namespace = vars(module_obj)
@@ -141,7 +150,8 @@ def run(script_file: str, ns: MutableMapping[str, Any],
         # Set the module object to `sys.modules` via a callback, and
         # then restore it via the context manager
         callback = functools.partial(
-            operator.setitem, sys.modules, '__main__', module_obj)
+            operator.setitem, sys.modules, '__main__', module_obj
+        )
         ctx = restore_dict(sys.modules, callback)
     else:
         Profiler = AstTreeProfiler

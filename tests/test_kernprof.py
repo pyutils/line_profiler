@@ -15,41 +15,54 @@ from kernprof import main, ContextualProfile
 
 
 def f(x):
-    """ A function. """
+    """A function."""
     y = x + 10
     return y
 
 
 def g(x):
-    """ A generator. """
+    """A generator."""
     y = yield x + 10
     yield y + 20
 
 
 @pytest.mark.parametrize(
     'use_kernprof_exec, args, expected_output, expect_error',
-    [([False, ['-m'], '', True]),
-     # `python -m kernprof`
-     (False, ['-m', 'mymod'], "[__MYMOD__]", False),
-     # `kernprof`
-     (True, ['-m', 'mymod'], "[__MYMOD__]", False),
-     (False, ['-m', 'mymod', '-p', 'bar'], "[__MYMOD__, '-p', 'bar']", False),
-     # `-p bar` consumed by `kernprof`, `-p baz` are not
-     (False,
-      ['-p', 'bar', '-m', 'mymod', '-p', 'baz'],
-      "[__MYMOD__, '-p', 'baz']",
-      False),
-     # Separator `--` broke off the remainder, so the requisite arg for
-     # `-m` is not found and we error out
-     (False, ['-p', 'bar', '-m', '--', 'mymod', '-p', 'baz'], '', True),
-     # Separator `--` broke off the remainder, so `-m` is passed to the
-     # script instead of being parsed as the module to execute
-     (False,
-      ['-p', 'bar', 'mymod.py', '--', '-m', 'mymod', '-p', 'baz'],
-      "['mymod.py', '-m', 'mymod', '-p', 'baz']",
-      False)])
+    [
+        ([False, ['-m'], '', True]),
+        # `python -m kernprof`
+        (False, ['-m', 'mymod'], '[__MYMOD__]', False),
+        # `kernprof`
+        (True, ['-m', 'mymod'], '[__MYMOD__]', False),
+        (
+            False,
+            ['-m', 'mymod', '-p', 'bar'],
+            "[__MYMOD__, '-p', 'bar']",
+            False,
+        ),
+        # `-p bar` consumed by `kernprof`, `-p baz` are not
+        (
+            False,
+            ['-p', 'bar', '-m', 'mymod', '-p', 'baz'],
+            "[__MYMOD__, '-p', 'baz']",
+            False,
+        ),
+        # Separator `--` broke off the remainder, so the requisite arg for
+        # `-m` is not found and we error out
+        (False, ['-p', 'bar', '-m', '--', 'mymod', '-p', 'baz'], '', True),
+        # Separator `--` broke off the remainder, so `-m` is passed to the
+        # script instead of being parsed as the module to execute
+        (
+            False,
+            ['-p', 'bar', 'mymod.py', '--', '-m', 'mymod', '-p', 'baz'],
+            "['mymod.py', '-m', 'mymod', '-p', 'baz']",
+            False,
+        ),
+    ],
+)
 def test_kernprof_m_parsing(
-        use_kernprof_exec, args, expected_output, expect_error):
+    use_kernprof_exec, args, expected_output, expect_error
+):
     """
     Test that `kernprof -m` behaves like `python -m` in that it requires
     an argument and cuts off everything after it, passing that along
@@ -58,14 +71,17 @@ def test_kernprof_m_parsing(
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dpath = ub.Path(tmpdir)
         mod = (temp_dpath / 'mymod.py').resolve()
-        mod.write_text(ub.codeblock(
-            '''
+        mod.write_text(
+            ub.codeblock(
+                """
             import sys
 
 
             if __name__ == '__main__':
                 print(sys.argv)
-            '''))
+            """
+            )
+        )
         if use_kernprof_exec:
             cmd = ['kernprof']
         else:
@@ -77,17 +93,24 @@ def test_kernprof_m_parsing(
     else:
         proc.check_returncode()
     expected_output = re.escape(expected_output).replace(
-        '__MYMOD__', "'.*{}'".format(re.escape(os.path.sep + mod.name)))
+        '__MYMOD__', "'.*{}'".format(re.escape(os.path.sep + mod.name))
+    )
     assert re.match('^' + expected_output, proc.stdout)
 
 
-@pytest.mark.skipif(sys.version_info[:2] < (3, 11),
-                    reason='no `@enum.global_enum` in Python '
-                    f'{".".join(str(v) for v in sys.version_info[:3])}')
-@pytest.mark.parametrize(('flags', 'profiled_main'),
-                         [('-lv -p mymod', True),  # w/autoprofile
-                          ('-lv', True),  # w/o autoprofile
-                          ('-b', False)])  # w/o line profiling
+@pytest.mark.skipif(
+    sys.version_info[:2] < (3, 11),
+    reason='no `@enum.global_enum` in Python '
+    f'{".".join(str(v) for v in sys.version_info[:3])}',
+)
+@pytest.mark.parametrize(
+    ('flags', 'profiled_main'),
+    [
+        ('-lv -p mymod', True),  # w/autoprofile
+        ('-lv', True),  # w/o autoprofile
+        ('-b', False),
+    ],
+)  # w/o line profiling
 def test_kernprof_m_sys_modules(flags, profiled_main):
     """
     Test that `kernprof -m` is amenable to modules relying on the global
@@ -95,8 +118,9 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dpath = ub.Path(tmpdir)
-        (temp_dpath / 'mymod.py').write_text(ub.codeblock(
-            '''
+        (temp_dpath / 'mymod.py').write_text(
+            ub.codeblock(
+                """
             import enum
             import os
             import sys
@@ -117,9 +141,17 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
 
             if __name__ == '__main__':
                 main()
-            '''))
-        cmd = [sys.executable, '-m', 'kernprof',
-               *shlex.split(flags), '-m', 'mymod']
+            """
+            )
+        )
+        cmd = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            *shlex.split(flags),
+            '-m',
+            'mymod',
+        ]
         proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2)
     proc.check_returncode()
     assert proc.stdout.startswith('3\n')
@@ -135,7 +167,7 @@ def test_kernprof_m_import_resolution(static, autoprof):
     :env:`LINE_PROFILER_STATIC_ANALYSIS`; note that static analysis
     doesn't handle namespace modules while dynamic resolution does.
     """
-    code = ub.codeblock('''
+    code = ub.codeblock("""
     import enum
     import os
     import sys
@@ -148,12 +180,13 @@ def test_kernprof_m_import_resolution(static, autoprof):
 
     if __name__ == '__main__':
         main()
-    ''')
+    """)
     cmd = [sys.executable, '-m', 'kernprof', '-lv']
     if autoprof:
         # Remove the explicit decorator, and use the `--prof-mod` flag
-        code = '\n'.join(line for line in code.splitlines()
-                         if '@profile' not in line)
+        code = '\n'.join(
+            line for line in code.splitlines() if '@profile' not in line
+        )
         cmd += ['-p', 'my_namesapce_pkg.mysubmod']
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dpath = ub.Path(tmpdir)
@@ -163,11 +196,13 @@ def test_kernprof_m_import_resolution(static, autoprof):
         python_path = tmpdir
         if 'PYTHONPATH' in os.environ:
             python_path += ':' + os.environ['PYTHONPATH']
-        env = {**os.environ,
-               # Toggle use of static analysis
-               'LINE_PROFILER_STATIC_ANALYSIS': str(bool(static)),
-               # Add the tempdir to `sys.path`
-               'PYTHONPATH': python_path}
+        env = {
+            **os.environ,
+            # Toggle use of static analysis
+            'LINE_PROFILER_STATIC_ANALYSIS': str(bool(static)),
+            # Add the tempdir to `sys.path`
+            'PYTHONPATH': python_path,
+        }
         cmd += ['-m', 'my_namesapce_pkg.mysubmod']
         proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2, env=env)
     if static:
@@ -200,8 +235,9 @@ def test_kernprof_sys_restoration(capsys, error, args):
         tmpdir = enter(tempfile.TemporaryDirectory())
         assert tmpdir not in sys.path
         temp_dpath = ub.Path(tmpdir)
-        (temp_dpath / 'mymod.py').write_text(ub.codeblock(
-            f'''
+        (temp_dpath / 'mymod.py').write_text(
+            ub.codeblock(
+                f"""
             import sys
 
 
@@ -217,7 +253,9 @@ def test_kernprof_sys_restoration(capsys, error, args):
 
             if __name__ == '__main__':
                 main()
-            '''))
+            """
+            )
+        )
         enter(ub.ChDir(tmpdir))
         if error:
             ctx = pytest.raises(BaseException)
@@ -239,47 +277,70 @@ def test_kernprof_sys_restoration(capsys, error, args):
 
 @pytest.mark.parametrize(
     ('flags', 'expected_stdout', 'expected_stderr'),
-    [('',  # Neutral verbosity level
-      {'^Output to stdout': True,
-       r"^Wrote .* '.*script\.py\.lprof'": True,
-       r'^Inspect results with:''\n'
-       r'\S*python\S* -m line_profiler .*script\.py\.lprof': True,
-       r'line_profiler\.autoprofile\.autoprofile'
-       r'\.run\(\n(?:.+,\n)*.*\)': False,
-       r'^\[kernprof .*\]': False,
-       r'^Function: main': False},
-      {'^Output to stderr': True}),
-     ('--view',  # Verbosity level 1 = `--view`
-      {'^Output to stdout': True,
-       r"^Wrote .* '.*script\.py\.lprof'": True,
-       r'^Inspect results with:''\n'
-       r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
-       r'line_profiler\.autoprofile\.autoprofile'
-       r'\.run\(\n(?:.+,\n)*.*\)': False,
-       r'^\[kernprof .*\]': False,
-       r'^Function: main': True},
-      {'^Output to stderr': True}),
-     ('-vv',  # Verbosity level 2, show diagnostics
-      {'^Output to stdout': True,
-       r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
-       r'Inspect results with:''\n'
-       r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
-       r'line_profiler\.autoprofile\.autoprofile'
-       r'\.run\(\n(?:.+,\n)*.*\)': True,
-       r'^Function: main': True},
-      {'^Output to stderr': True}),
-     # Verbosity level -1, suppress `kernprof` output
-     ('--quiet',
-      {'^Output to stdout': True, 'Wrote': False},
-      {'^Output to stderr': True}),
-     # Verbosity level -2, suppress script stdout
-     # (also test verbosity arithmatics)
-     ('--quiet --quiet --verbose -q', None, {'^Output to stderr': True}),
-     # Verbosity level -3, suppress script stderr
-     ('-qq --quiet', None,
-      # This should have been `None`, but there's something weird with
-      # `coverage` in CI which causes a spurious warning...
-      {'^Output to stderr': False})])
+    [
+        (
+            '',  # Neutral verbosity level
+            {
+                '^Output to stdout': True,
+                r"^Wrote .* '.*script\.py\.lprof'": True,
+                r'^Inspect results with:'
+                '\n'
+                r'\S*python\S* -m line_profiler .*script\.py\.lprof': True,
+                r'line_profiler\.autoprofile\.autoprofile'
+                r'\.run\(\n(?:.+,\n)*.*\)': False,
+                r'^\[kernprof .*\]': False,
+                r'^Function: main': False,
+            },
+            {'^Output to stderr': True},
+        ),
+        (
+            '--view',  # Verbosity level 1 = `--view`
+            {
+                '^Output to stdout': True,
+                r"^Wrote .* '.*script\.py\.lprof'": True,
+                r'^Inspect results with:'
+                '\n'
+                r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
+                r'line_profiler\.autoprofile\.autoprofile'
+                r'\.run\(\n(?:.+,\n)*.*\)': False,
+                r'^\[kernprof .*\]': False,
+                r'^Function: main': True,
+            },
+            {'^Output to stderr': True},
+        ),
+        (
+            '-vv',  # Verbosity level 2, show diagnostics
+            {
+                '^Output to stdout': True,
+                r"^\[kernprof .*\] Wrote .* '.*script\.py\.lprof'": True,
+                r'Inspect results with:'
+                '\n'
+                r'\S*python\S* -m line_profiler .*script\.py\.lprof': False,
+                r'line_profiler\.autoprofile\.autoprofile'
+                r'\.run\(\n(?:.+,\n)*.*\)': True,
+                r'^Function: main': True,
+            },
+            {'^Output to stderr': True},
+        ),
+        # Verbosity level -1, suppress `kernprof` output
+        (
+            '--quiet',
+            {'^Output to stdout': True, 'Wrote': False},
+            {'^Output to stderr': True},
+        ),
+        # Verbosity level -2, suppress script stdout
+        # (also test verbosity arithmatics)
+        ('--quiet --quiet --verbose -q', None, {'^Output to stderr': True}),
+        # Verbosity level -3, suppress script stderr
+        (
+            '-qq --quiet',
+            None,
+            # This should have been `None`, but there's something weird with
+            # `coverage` in CI which causes a spurious warning...
+            {'^Output to stderr': False},
+        ),
+    ],
+)
 def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
     """
     Test the various verbosity levels of `kernprof`.
@@ -288,8 +349,9 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
         enter = stack.enter_context
         tmpdir = enter(tempfile.TemporaryDirectory())
         temp_dpath = ub.Path(tmpdir)
-        (temp_dpath / 'script.py').write_text(ub.codeblock(
-            '''
+        (temp_dpath / 'script.py').write_text(
+            ub.codeblock(
+                """
             import sys
 
 
@@ -300,16 +362,30 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
 
             if __name__ == '__main__':
                 main()
-            '''))
+            """
+            )
+        )
         enter(ub.ChDir(tmpdir))
-        proc = ub.cmd(['kernprof', '-l',
-                       # Add an eager pre-import target
-                       '-p', 'script.py', '-p', 'zipfile', '-z',
-                       *shlex.split(flags), 'script.py'])
+        proc = ub.cmd(
+            [
+                'kernprof',
+                '-l',
+                # Add an eager pre-import target
+                '-p',
+                'script.py',
+                '-p',
+                'zipfile',
+                '-z',
+                *shlex.split(flags),
+                'script.py',
+            ]
+        )
     proc.check_returncode()
     print(proc.stdout)
-    for expected_outputs, stream in [(expected_stdout, proc.stdout),
-                                     (expected_stderr, proc.stderr)]:
+    for expected_outputs, stream in [
+        (expected_stdout, proc.stdout),
+        (expected_stderr, proc.stderr),
+    ]:
         if expected_outputs is None:
             assert not stream
             continue
@@ -317,11 +393,12 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
             found = re.search(pattern, stream, flags=re.MULTILINE)
             if not bool(found) == expect_match:
                 msg = ub.paragraph(
-                    f'''
+                    f"""
                     Searching for pattern: {pattern!r} in output.
                     Did we expect a match? {expect_match!r}.
                     Did we get a match? {bool(found)!r}.
-                    ''')
+                    """
+                )
                 raise AssertionError(msg)
 
 
@@ -330,7 +407,7 @@ def test_kernprof_eager_preimport_bad_module():
     Test for the preservation of the full traceback when an error occurs
     in an auto-generated pre-import module.
     """
-    bad_module = '''raise Exception('Boo')'''
+    bad_module = """raise Exception('Boo')"""
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
         tmpdir = enter(tempfile.TemporaryDirectory())
@@ -342,10 +419,17 @@ def test_kernprof_eager_preimport_bad_module():
             python_path = f'{python_path}:{tmpdir}'
         else:
             python_path = tmpdir
-        proc = ub.cmd(['kernprof', '-l',
-                       # Add an eager pre-import target
-                       '-pmy_bad_module', '-c', 'print(1)'],
-                      env={**os.environ, 'PYTHONPATH': python_path})
+        proc = ub.cmd(
+            [
+                'kernprof',
+                '-l',
+                # Add an eager pre-import target
+                '-pmy_bad_module',
+                '-c',
+                'print(1)',
+            ],
+            env={**os.environ, 'PYTHONPATH': python_path},
+        )
     # Check that the traceback is preserved
     print(proc.stdout)
     print(proc.stderr, file=sys.stderr)
@@ -369,17 +453,21 @@ def test_kernprof_bad_temp_script(stdin):
     Test for the preservation of the full traceback when an error occurs
     in a temporary script supplied via `kernprof -c` or `kernprof -`.
     """
-    bad_script = '''1 / 0'''
+    bad_script = """1 / 0"""
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
         enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
         if stdin:
             proc = subprocess.run(
                 ['kernprof', '-'],
-                input=bad_script, capture_output=True, text=True)
+                input=bad_script,
+                capture_output=True,
+                text=True,
+            )
         else:
-            proc = subprocess.run(['kernprof', '-c', bad_script],
-                                  capture_output=True, text=True)
+            proc = subprocess.run(
+                ['kernprof', '-c', bad_script], capture_output=True, text=True
+            )
     # Check that the traceback is preserved
     print(proc.stdout)
     print(proc.stderr, file=sys.stderr)
@@ -405,9 +493,17 @@ def test_bad_prof_mod_target(debug):
     with contextlib.ExitStack() as stack:
         enter = stack.enter_context
         enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
-        proc = ub.cmd(['kernprof', '-l', '-p', './nonexistent.py',
-                       '-c', 'print("Output: foo")'],
-                      env={**os.environ, 'LINE_PROFILER_DEBUG': str(debug)})
+        proc = ub.cmd(
+            [
+                'kernprof',
+                '-l',
+                '-p',
+                './nonexistent.py',
+                '-c',
+                'print("Output: foo")',
+            ],
+            env={**os.environ, 'LINE_PROFILER_DEBUG': str(debug)},
+        )
         print(proc.stdout)
         print(proc.stderr, file=sys.stderr)
         proc.check_returncode()
@@ -429,22 +525,24 @@ def test_call_with_diagnostics(module, builtin):
         cmd = ['kernprof']
         if builtin:
             cmd += ['-b']
-        proc = ub.cmd(cmd + to_run,
-                      env={**os.environ, 'LINE_PROFILER_DEBUG': 'true'})
+        proc = ub.cmd(
+            cmd + to_run, env={**os.environ, 'LINE_PROFILER_DEBUG': 'true'}
+        )
         print(proc.stdout)
         print(proc.stderr, file=sys.stderr)
         proc.check_returncode()
         assert os.listdir()  # Profile results
     has_runctx_call = re.search(
-        r'Calling: .+\.runctx\(.+\)', proc.stdout, flags=re.DOTALL)
+        r'Calling: .+\.runctx\(.+\)', proc.stdout, flags=re.DOTALL
+    )
     has_execfile_call = re.search(
-        r'execfile\(.+\)', proc.stdout, flags=re.DOTALL)
+        r'execfile\(.+\)', proc.stdout, flags=re.DOTALL
+    )
     assert bool(has_runctx_call) == (not builtin)
     assert bool(has_execfile_call) == (not module)
 
 
 class TestKernprof(unittest.TestCase):
-
     def test_enable_disable(self):
         profile = ContextualProfile()
         self.assertEqual(profile.enable_count, 0)

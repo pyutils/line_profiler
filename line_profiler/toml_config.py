@@ -2,6 +2,7 @@
 Read and resolve user-supplied TOML files and combine them with the
 default to generate configurations.
 """
+
 from __future__ import annotations
 
 import copy
@@ -10,6 +11,7 @@ import importlib.resources
 import itertools
 import os
 import pathlib
+
 try:
     import tomllib
 except ImportError:  # Python < 3.11
@@ -53,6 +55,7 @@ class ConfigSource:
             :py:attr:`~.ConfigSource.path`
             :py:attr:`~.ConfigSource.conf_dict` can be found.
     """
+
     conf_dict: Mapping[str, Any]
     path: pathlib.Path
     subtable: list[str]
@@ -63,10 +66,12 @@ class ConfigSource:
             Copy of the object.
         """
         return type(self)(
-            copy.deepcopy(self.conf_dict), self.path, self.subtable.copy())
+            copy.deepcopy(self.conf_dict), self.path, self.subtable.copy()
+        )
 
-    def get_subconfig(self, *headers: str, allow_absence: bool = False,
-                      copy: bool = False) -> ConfigSource:
+    def get_subconfig(
+        self, *headers: str, allow_absence: bool = False, copy: bool = False
+    ) -> ConfigSource:
         """
         Arguments:
             headers (str):
@@ -98,7 +103,8 @@ class ConfigSource:
         """
         new_dict = cast(
             Dict[str, Any],
-            get_subtable(self.conf_dict, headers, allow_absence=allow_absence))
+            get_subtable(self.conf_dict, headers, allow_absence=allow_absence),
+        )
         new_subtable = [*self.subtable, *headers]
         return type(self)(new_dict, self.path, new_subtable)
 
@@ -125,6 +131,7 @@ class ConfigSource:
         except AttributeError:  # Python < 3.9
             find_file = ir.path
         else:
+
             def find_file(anc, *chunks):
                 return ir_as_file(ir_files(anc).joinpath(*chunks))
 
@@ -138,19 +145,25 @@ class ConfigSource:
                 result = find_and_read_config_file(config=path)
             if result is None:
                 raise FileNotFoundError(
-                    'Default configuration file could not be read')
+                    'Default configuration file could not be read'
+                )
             conf_dict, source = result
             conf_dict = cast(
                 Dict[str, Any],
-                get_subtable(conf_dict, NAMESPACE, allow_absence=False))
+                get_subtable(conf_dict, NAMESPACE, allow_absence=False),
+            )
             _DEFAULTS = cls(conf_dict, source, list(NAMESPACE))
         if not copy:
             return _DEFAULTS
         return _DEFAULTS.copy()
 
     @classmethod
-    def from_config(cls, config: str | PathLike | bool | None = None, *,
-                    read_env: bool = True) -> ConfigSource:
+    def from_config(
+        cls,
+        config: str | PathLike | bool | None = None,
+        *,
+        read_env: bool = True,
+    ) -> ConfigSource:
         """
         Create an instance by loading from a config file.
 
@@ -207,8 +220,11 @@ class ConfigSource:
                 configuration (see
                 :py:meth:`~.ConfigSource.from_default`).
         """
+
         def merge(template: Mapping[str, Any], supplied: Mapping[str, Any]):
-            if not (isinstance(template, Mapping) and isinstance(supplied, Mapping)):
+            if not (
+                isinstance(template, Mapping) and isinstance(supplied, Mapping)
+            ):
                 return supplied
             result = {}
             for key, default in template.items():
@@ -266,22 +282,28 @@ class ConfigSource:
                 all_headers = {'tool', 'tool.line_profiler'}
                 all_headers.update(
                     '.'.join(('tool.line_profiler', *header))
-                    for header in get_headers(default_instance.conf_dict,
-                                              include_implied=True))
+                    for header in get_headers(
+                        default_instance.conf_dict, include_implied=True
+                    )
+                )
                 raise ValueError(
                     f'config = {config!r}: expected each of these keys to '
                     'either be nonexistent or map to a table: '
-                    f'{sorted(all_headers)!r}') from None
+                    f'{sorted(all_headers)!r}'
+                ) from None
         # Filter the content of `conf` down to just the key-value pairs
         # pairs present in the default configs
         return cls(
-            merge(default_instance.conf_dict, conf), source, list(NAMESPACE))
+            merge(default_instance.conf_dict, conf), source, list(NAMESPACE)
+        )
 
 
 def find_and_read_config_file(
-        *, config: str | PathLike | None = None,
-        env_var: str | None = ENV_VAR,
-        targets: Sequence[str | PathLike] = TARGETS) -> Config | None:
+    *,
+    config: str | PathLike | None = None,
+    env_var: str | None = ENV_VAR,
+    targets: Sequence[str | PathLike] = TARGETS,
+) -> Config | None:
     """
     Arguments:
         config (str | os.PathLike[str] | None):
@@ -305,6 +327,7 @@ def find_and_read_config_file(
         Otherwise
             None
     """
+
     def iter_configs(dir_path):
         for dpath in itertools.chain((dir_path,), dir_path.parents):
             for target in targets:
@@ -316,9 +339,9 @@ def find_and_read_config_file(
                     pass
 
     if config:
-        configs = pathlib.Path(config).absolute(),
+        configs = (pathlib.Path(config).absolute(),)
     elif env_var and os.environ.get(env_var):
-        configs = pathlib.Path(os.environ[env_var]).absolute(),
+        configs = (pathlib.Path(os.environ[env_var]).absolute(),)
     else:
         pwd = pathlib.Path.cwd().absolute()
         configs = iter_configs(pwd)
@@ -331,8 +354,9 @@ def find_and_read_config_file(
     return None
 
 
-def get_subtable(table: Mapping[K, Mapping], keys: Sequence[K], *,
-                 allow_absence: bool = True) -> Mapping:
+def get_subtable(
+    table: Mapping[K, Mapping], keys: Sequence[K], *, allow_absence: bool = True
+) -> Mapping:
     """
     Arguments:
         table (Mapping):
@@ -372,14 +396,17 @@ def get_subtable(table: Mapping[K, Mapping], keys: Sequence[K], *,
         else:
             subtable = subtable[key]
     if not isinstance(subtable, Mapping):
-        raise TypeError(f'table = {table!r}, keys = {list(keys)!r}: '
-                        'expected result to be a mapping, got a '
-                        f'`{type(subtable).__name__}` ({subtable!r})')
+        raise TypeError(
+            f'table = {table!r}, keys = {list(keys)!r}: '
+            'expected result to be a mapping, got a '
+            f'`{type(subtable).__name__}` ({subtable!r})'
+        )
     return subtable
 
 
-def get_headers(table: Mapping[K, Any], *,
-                include_implied: bool = False) -> set[tuple[K, ...]]:
+def get_headers(
+    table: Mapping[K, Any], *, include_implied: bool = False
+) -> set[tuple[K, ...]]:
     """
     Arguments:
         table (Mapping):

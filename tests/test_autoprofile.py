@@ -19,26 +19,37 @@ def test_single_function_autoprofile():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             def func1(a):
                 return a + 1
 
             func1(1)
-            ''')
+            """
+        )
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
-            args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l',
-                    os.fspath(script_fpath)]
+            args = [
+                sys.executable,
+                '-m',
+                'kernprof',
+                '-p',
+                'script.py',
+                '-l',
+                os.fspath(script_fpath),
+            ]
             proc = ub.cmd(args)
             print(proc.stdout)
             print(proc.stderr)
             proc.check_returncode()
 
-            args = [sys.executable, '-m', 'line_profiler',
-                    os.fspath(script_fpath) + '.lprof']
+            args = [
+                sys.executable,
+                '-m',
+                'line_profiler',
+                os.fspath(script_fpath) + '.lprof',
+            ]
             proc = ub.cmd(args)
             raw_output = proc.stdout
             proc.check_returncode()
@@ -55,7 +66,7 @@ def test_multi_function_autoprofile():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             def func1(a):
                 return a + 1
 
@@ -69,21 +80,32 @@ def test_multi_function_autoprofile():
                 return a % 2 + 4
 
             func1(1)
-            ''')
+            """
+        )
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
-            args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l',
-                    os.fspath(script_fpath)]
+            args = [
+                sys.executable,
+                '-m',
+                'kernprof',
+                '-p',
+                'script.py',
+                '-l',
+                os.fspath(script_fpath),
+            ]
             proc = ub.cmd(args)
             print(proc.stdout)
             print(proc.stderr)
             proc.check_returncode()
 
-            args = [sys.executable, '-m', 'line_profiler',
-                    os.fspath(script_fpath) + '.lprof']
+            args = [
+                sys.executable,
+                '-m',
+                'line_profiler',
+                os.fspath(script_fpath) + '.lprof',
+            ]
             proc = ub.cmd(args)
             raw_output = proc.stdout
             proc.check_returncode()
@@ -103,7 +125,7 @@ def test_duplicate_function_autoprofile():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             def func1(a):
                 return a + 1
 
@@ -119,21 +141,32 @@ def test_duplicate_function_autoprofile():
             func1(1)
             func2(1)
             func3(1)
-            ''')
+            """
+        )
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
-            args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l',
-                    os.fspath(script_fpath)]
+            args = [
+                sys.executable,
+                '-m',
+                'kernprof',
+                '-p',
+                'script.py',
+                '-l',
+                os.fspath(script_fpath),
+            ]
             proc = ub.cmd(args)
             print(proc.stdout)
             print(proc.stderr)
             proc.check_returncode()
 
-            args = [sys.executable, '-m', 'line_profiler',
-                    os.fspath(script_fpath) + '.lprof']
+            args = [
+                sys.executable,
+                '-m',
+                'line_profiler',
+                os.fspath(script_fpath) + '.lprof',
+            ]
             proc = ub.cmd(args)
             raw_output = proc.stdout
             print(raw_output)
@@ -153,7 +186,7 @@ def test_async_func_autoprofile():
         temp_dpath = ub.Path(tmp)
 
         code = ub.codeblock(
-            '''
+            """
             import asyncio
 
 
@@ -179,21 +212,30 @@ def test_async_func_autoprofile():
 
             if __name__ == '__main__':
                 main(debug=True)
-            ''')
+            """
+        )
         with ub.ChDir(temp_dpath):
-
             script_fpath = ub.Path('script.py')
             script_fpath.write_text(code)
 
-            args = [sys.executable, '-m', 'kernprof',
-                    '-p', 'script.py', '-v', '-l', os.fspath(script_fpath)]
+            args = [
+                sys.executable,
+                '-m',
+                'kernprof',
+                '-p',
+                'script.py',
+                '-v',
+                '-l',
+                os.fspath(script_fpath),
+            ]
             proc = ub.cmd(args)
             raw_output = proc.stdout
             print(raw_output)
             print(proc.stderr)
             proc.check_returncode()
-            assert raw_output.startswith('[5, 4, 3, 2, 1, 0] '
-                                         '[0, 1, 2, 3, 4, 5]')
+            assert raw_output.startswith(
+                '[5, 4, 3, 2, 1, 0] [0, 1, 2, 3, 4, 5]'
+            )
 
     assert 'Function: main' in raw_output
     assert 'Function: foo' in raw_output
@@ -208,13 +250,17 @@ def _write_demo_module(temp_dpath):
     (temp_dpath / 'test_mod/subpkg').ensuredir()
 
     (temp_dpath / 'test_mod/__init__.py').touch()
-    (temp_dpath / 'test_mod/subpkg/__init__.py').write_text(ub.codeblock(
-        '''
+    (temp_dpath / 'test_mod/subpkg/__init__.py').write_text(
+        ub.codeblock(
+            """
         from .submod3 import add_three
-        '''))
+        """
+        )
+    )
 
-    (temp_dpath / 'test_mod/__main__.py').write_text(ub.codeblock(
-        '''
+    (temp_dpath / 'test_mod/__main__.py').write_text(
+        ub.codeblock(
+            """
         import argparse
 
         from .submod1 import add_one
@@ -228,28 +274,37 @@ def _write_demo_module(temp_dpath):
 
         if __name__ == '__main__':
             _main()
-        '''))
+        """
+        )
+    )
 
-    (temp_dpath / 'test_mod/util.py').write_text(ub.codeblock(
-        '''
+    (temp_dpath / 'test_mod/util.py').write_text(
+        ub.codeblock(
+            """
         def add_operator(a, b):
             return a + b
-        '''))
+        """
+        )
+    )
 
     # Note: this can't be profiled because `test_mod.more-utils` is not
     # a valid dotted path
-    (temp_dpath / 'test_mod/dev-utils.py').write_text(ub.codeblock(
-        '''
+    (temp_dpath / 'test_mod/dev-utils.py').write_text(
+        ub.codeblock(
+            '''
         """
         Just imagine that the file contains some dev tools.
         """
 
         def publish_pkg():
             pass
-        '''))
-
-    (temp_dpath / 'test_mod/submod1.py').write_text(ub.codeblock(
         '''
+        )
+    )
+
+    (temp_dpath / 'test_mod/submod1.py').write_text(
+        ub.codeblock(
+            """
         from test_mod.util import add_operator
         def add_one(items):
             new_items = []
@@ -257,23 +312,32 @@ def _write_demo_module(temp_dpath):
                 new_item = add_operator(item, 1)
                 new_items.append(new_item)
             return new_items
-        '''))
-    (temp_dpath / 'test_mod/submod2.py').write_text(ub.codeblock(
-        '''
+        """
+        )
+    )
+    (temp_dpath / 'test_mod/submod2.py').write_text(
+        ub.codeblock(
+            """
         from test_mod.util import add_operator
         def add_two(items):
             new_items = [add_operator(item, 2) for item in items]
             return new_items
-        '''))
-    (temp_dpath / 'test_mod/subpkg/submod3.py').write_text(ub.codeblock(
-        '''
+        """
+        )
+    )
+    (temp_dpath / 'test_mod/subpkg/submod3.py').write_text(
+        ub.codeblock(
+            """
         from test_mod.util import add_operator
         def add_three(items):
             new_items = [add_operator(item, 3) for item in items]
             return new_items
-        '''))
-    (temp_dpath / 'test_mod/subpkg/submod4.py').write_text(ub.codeblock(
-        '''
+        """
+        )
+    )
+    (temp_dpath / 'test_mod/subpkg/submod4.py').write_text(
+        ub.codeblock(
+            """
         import argparse
 
         from test_mod import submod1
@@ -291,11 +355,14 @@ def _write_demo_module(temp_dpath):
 
         if __name__ == '__main__':
             _main()
-        '''))
+        """
+        )
+    )
 
-    script_fpath = (temp_dpath / 'script.py')
-    script_fpath.write_text(ub.codeblock(
-        '''
+    script_fpath = temp_dpath / 'script.py'
+    script_fpath.write_text(
+        ub.codeblock(
+            """
         from test_mod import submod1
         from test_mod import submod2
         from test_mod.subpkg import submod3
@@ -311,7 +378,9 @@ def _write_demo_module(temp_dpath):
             print(result)
 
         main()
-        '''))
+        """
+        )
+    )
     return script_fpath
 
 
@@ -327,15 +396,26 @@ def test_autoprofile_script_with_module():
 
         # args = [sys.executable, '-m', 'kernprof', '--prof-imports',
         #         '-p', 'script.py', '-l', os.fspath(script_fpath)]
-        args = [sys.executable, '-m', 'kernprof', '-p', 'script.py', '-l',
-                os.fspath(script_fpath)]
+        args = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '-p',
+            'script.py',
+            '-l',
+            os.fspath(script_fpath),
+        ]
         proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
-        args = [sys.executable, '-m', 'line_profiler',
-                os.fspath(script_fpath) + '.lprof']
+        args = [
+            sys.executable,
+            '-m',
+            'line_profiler',
+            os.fspath(script_fpath) + '.lprof',
+        ]
         proc = ub.cmd(args, cwd=temp_dpath)
         raw_output = proc.stdout
         print(raw_output)
@@ -356,8 +436,15 @@ def test_autoprofile_module(static_resolution):
 
         script_fpath = _write_demo_module(temp_dpath)
 
-        args = [sys.executable, '-m', 'kernprof', '-p', 'test_mod', '-l',
-                os.fspath(script_fpath)]
+        args = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '-p',
+            'test_mod',
+            '-l',
+            os.fspath(script_fpath),
+        ]
         env = dict(os.environ)
         if static_resolution:
             env['LINE_PROFILER_STATIC_ANALYSIS'] = '1'
@@ -368,8 +455,12 @@ def test_autoprofile_module(static_resolution):
         print(proc.stderr)
         proc.check_returncode()
 
-        args = [sys.executable, '-m', 'line_profiler',
-                os.fspath(script_fpath) + '.lprof']
+        args = [
+            sys.executable,
+            '-m',
+            'line_profiler',
+            os.fspath(script_fpath) + '.lprof',
+        ]
         proc = ub.cmd(args, cwd=temp_dpath)
         raw_output = proc.stdout
         print(raw_output)
@@ -390,16 +481,26 @@ def test_autoprofile_module_list():
 
         # args = [sys.executable, '-m', 'kernprof', '--prof-imports',
         #         '-p', 'script.py', '-l', os.fspath(script_fpath)]
-        args = [sys.executable, '-m', 'kernprof',
-                '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l',
-                os.fspath(script_fpath)]
+        args = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '-p',
+            'test_mod.submod1,test_mod.subpkg.submod3',
+            '-l',
+            os.fspath(script_fpath),
+        ]
         proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
-        args = [sys.executable, '-m', 'line_profiler',
-                os.fspath(script_fpath) + '.lprof']
+        args = [
+            sys.executable,
+            '-m',
+            'line_profiler',
+            os.fspath(script_fpath) + '.lprof',
+        ]
         proc = ub.cmd(args, cwd=temp_dpath)
         raw_output = proc.stdout
         print(raw_output)
@@ -419,15 +520,27 @@ def test_autoprofile_module_with_prof_imports():
         temp_dpath = ub.Path(tmp)
         script_fpath = _write_demo_module(temp_dpath)
 
-        args = [sys.executable, '-m', 'kernprof', '--prof-imports',
-                '-p', 'test_mod.submod1', '-l', os.fspath(script_fpath)]
+        args = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '--prof-imports',
+            '-p',
+            'test_mod.submod1',
+            '-l',
+            os.fspath(script_fpath),
+        ]
         proc = ub.cmd(args, cwd=temp_dpath, verbose=2)
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
 
-        args = [sys.executable, '-m', 'line_profiler',
-                os.fspath(script_fpath) + '.lprof']
+        args = [
+            sys.executable,
+            '-m',
+            'line_profiler',
+            os.fspath(script_fpath) + '.lprof',
+        ]
         proc = ub.cmd(args, cwd=temp_dpath)
         raw_output = proc.stdout
         print(raw_output)
@@ -452,8 +565,16 @@ def test_autoprofile_script_with_prof_imports():
         #     import pytest
         #     pytest.skip('Failing due to the noop bug')
 
-        args = [sys.executable, '-m', 'kernprof', '--prof-imports',
-                '-p', 'script.py', '-l', os.fspath(script_fpath)]
+        args = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '--prof-imports',
+            '-p',
+            'script.py',
+            '-l',
+            os.fspath(script_fpath),
+        ]
         proc = ub.cmd(args, cwd=temp_dpath, verbose=0)
         print('Kernprof Stdout:')
         print(proc.stdout)
@@ -462,8 +583,12 @@ def test_autoprofile_script_with_prof_imports():
         print('About to check kernprof return code')
         proc.check_returncode()
 
-        args = [sys.executable, '-m', 'line_profiler',
-                os.fspath(script_fpath) + '.lprof']
+        args = [
+            sys.executable,
+            '-m',
+            'line_profiler',
+            os.fspath(script_fpath) + '.lprof',
+        ]
         proc = ub.cmd(args, cwd=temp_dpath, verbose=0)
         raw_output = proc.stdout
         print('Line_profile Stdout:')
@@ -480,22 +605,38 @@ def test_autoprofile_script_with_prof_imports():
 
 @pytest.mark.parametrize(
     ('use_kernprof_exec', 'prof_mod', 'flags', 'profiled_funcs'),
-    [(False, ['test_mod.submod1'], '', {'add_one', 'add_operator'}),
-     # By not using `--no-preimports`, the entirety of `.submod1` is
-     # passed to `add_imported_function_or_module()`
-     (False, ['test_mod.submod1'], '--no-preimports', {'add_one'}),
-     (False, ['test_mod.submod2'],
-      '--prof-imports', {'add_two', 'add_operator'}),
-     (False, ['test_mod'],
-      '--prof-imports', {'add_one', 'add_two', 'add_operator', '_main'}),
-     # Explicitly add all the modules via multiple `-p` flags, without
-     # using the `--prof-imports` flag
-     (False, ['test_mod', 'test_mod.submod1,test_mod.submod2'],
-      '', {'add_one', 'add_two', 'add_operator', '_main'}),
-     (False, [], '--prof-imports', set()),
-     (True, [], '--prof-imports', set())])
-def test_autoprofile_exec_package(use_kernprof_exec, prof_mod,
-                                  flags, profiled_funcs):
+    [
+        (False, ['test_mod.submod1'], '', {'add_one', 'add_operator'}),
+        # By not using `--no-preimports`, the entirety of `.submod1` is
+        # passed to `add_imported_function_or_module()`
+        (False, ['test_mod.submod1'], '--no-preimports', {'add_one'}),
+        (
+            False,
+            ['test_mod.submod2'],
+            '--prof-imports',
+            {'add_two', 'add_operator'},
+        ),
+        (
+            False,
+            ['test_mod'],
+            '--prof-imports',
+            {'add_one', 'add_two', 'add_operator', '_main'},
+        ),
+        # Explicitly add all the modules via multiple `-p` flags, without
+        # using the `--prof-imports` flag
+        (
+            False,
+            ['test_mod', 'test_mod.submod1,test_mod.submod2'],
+            '',
+            {'add_one', 'add_two', 'add_operator', '_main'},
+        ),
+        (False, [], '--prof-imports', set()),
+        (True, [], '--prof-imports', set()),
+    ],
+)
+def test_autoprofile_exec_package(
+    use_kernprof_exec, prof_mod, flags, profiled_funcs
+):
     """
     Test the execution of a package.
     """
@@ -535,30 +676,55 @@ def test_autoprofile_exec_package(use_kernprof_exec, prof_mod,
 
 @pytest.mark.parametrize(
     ('use_kernprof_exec', 'prof_mod', 'flags', 'profiled_funcs'),
-    [(False, 'test_mod.submod2,test_mod.subpkg.submod3.add_three',
-      '--no-preimports', {'add_two'}),
-     # By not using `--no-preimports`:
-     # - The entirety of `.submod2` is passed to
-     #   `add_imported_function_or_module()`
-     # - Despite not having been imported anywhere, `add_three()` is
-     #   still profiled
-     (False, 'test_mod.submod2,test_mod.subpkg.submod3.add_three',
-      '', {'add_two', 'add_three', 'add_operator'}),
-     (False, 'test_mod.submod1', '', {'add_one', 'add_operator'}),
-     (False, 'test_mod.subpkg.submod4',
-      '--prof-imports',
-      {'add_one', 'add_two', 'add_four', 'add_operator', '_main'}),
-     (False, None, '--prof-imports', {}),
-     (True, None, '--prof-imports', {}),
-     # Packages are descended into by default, unless they are specified
-     # with `<pkg>.__init__`
-     (False, 'test_mod', '',
-      {'add_one', 'add_two', 'add_three', 'add_four', 'add_operator',
-       '_main'}),
-     (False, 'test_mod.subpkg', '', {'add_three', 'add_four', '_main'}),
-     (False, 'test_mod.subpkg.__init__', '', {'add_three'})])
-def test_autoprofile_exec_module(use_kernprof_exec, prof_mod,
-                                 flags, profiled_funcs):
+    [
+        (
+            False,
+            'test_mod.submod2,test_mod.subpkg.submod3.add_three',
+            '--no-preimports',
+            {'add_two'},
+        ),
+        # By not using `--no-preimports`:
+        # - The entirety of `.submod2` is passed to
+        #   `add_imported_function_or_module()`
+        # - Despite not having been imported anywhere, `add_three()` is
+        #   still profiled
+        (
+            False,
+            'test_mod.submod2,test_mod.subpkg.submod3.add_three',
+            '',
+            {'add_two', 'add_three', 'add_operator'},
+        ),
+        (False, 'test_mod.submod1', '', {'add_one', 'add_operator'}),
+        (
+            False,
+            'test_mod.subpkg.submod4',
+            '--prof-imports',
+            {'add_one', 'add_two', 'add_four', 'add_operator', '_main'},
+        ),
+        (False, None, '--prof-imports', {}),
+        (True, None, '--prof-imports', {}),
+        # Packages are descended into by default, unless they are specified
+        # with `<pkg>.__init__`
+        (
+            False,
+            'test_mod',
+            '',
+            {
+                'add_one',
+                'add_two',
+                'add_three',
+                'add_four',
+                'add_operator',
+                '_main',
+            },
+        ),
+        (False, 'test_mod.subpkg', '', {'add_three', 'add_four', '_main'}),
+        (False, 'test_mod.subpkg.__init__', '', {'add_three'}),
+    ],
+)
+def test_autoprofile_exec_module(
+    use_kernprof_exec, prof_mod, flags, profiled_funcs
+):
     """
     Test the execution of a module.
     """
@@ -567,8 +733,14 @@ def test_autoprofile_exec_module(use_kernprof_exec, prof_mod,
         _write_demo_module(temp_dpath)
 
         # Sanity check
-        all_checked_funcs = {'add_one', 'add_two', 'add_three', 'add_four',
-                             'add_operator', '_main'}
+        all_checked_funcs = {
+            'add_one',
+            'add_two',
+            'add_three',
+            'add_four',
+            'add_operator',
+            '_main',
+        }
         profiled_funcs = set(profiled_funcs)
         assert profiled_funcs <= all_checked_funcs
 
@@ -601,10 +773,14 @@ def test_autoprofile_exec_module(use_kernprof_exec, prof_mod,
 @pytest.mark.parametrize('prof_mod', [True, False])
 @pytest.mark.parametrize(
     ('outfile', 'expected_outfile'),
-    [(None, 'kernprof-stdin-*.lprof'),
-     ('test-stdin.lprof', 'test-stdin.lprof')])
+    [
+        (None, 'kernprof-stdin-*.lprof'),
+        ('test-stdin.lprof', 'test-stdin.lprof'),
+    ],
+)
 def test_autoprofile_from_stdin(
-        outfile, expected_outfile, prof_mod, view) -> None:
+    outfile, expected_outfile, prof_mod, view
+) -> None:
     """
     Test the profiling of a script read from stdin.
     """
@@ -613,7 +789,7 @@ def test_autoprofile_from_stdin(
 
         kp_cmd = [sys.executable, '-m', 'kernprof', '-l']
         if prof_mod:
-            kp_cmd += ['-p' 'test_mod.submod1,test_mod.subpkg.submod3']
+            kp_cmd += ['-ptest_mod.submod1,test_mod.subpkg.submod3']
         if outfile:
             kp_cmd += ['-o', outfile]
         if view:
@@ -621,15 +797,17 @@ def test_autoprofile_from_stdin(
         kp_cmd += ['-']
         with ub.ChDir(temp_dpath):
             script_fpath = _write_demo_module(ub.Path())
-            proc = subprocess.run(kp_cmd,
-                                  input=script_fpath.read_text(),
-                                  text=True,
-                                  capture_output=True)
+            proc = subprocess.run(
+                kp_cmd,
+                input=script_fpath.read_text(),
+                text=True,
+                capture_output=True,
+            )
             print(proc.stdout)
             print(proc.stderr)
             proc.check_returncode()
 
-        outfile, = temp_dpath.glob(expected_outfile)
+        (outfile,) = temp_dpath.glob(expected_outfile)
         lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
         lp_proc = ub.cmd(lp_cmd)
         lp_proc.check_returncode()
@@ -652,8 +830,11 @@ def test_autoprofile_from_stdin(
 
 @pytest.mark.parametrize(
     ('outfile', 'expected_outfile'),
-    [(None, 'kernprof-command-*.lprof'),
-     ('test-command.lprof', 'test-command.lprof')])
+    [
+        (None, 'kernprof-command-*.lprof'),
+        ('test-command.lprof', 'test-command.lprof'),
+    ],
+)
 def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
     """
     Test the profiling of an inlined script (supplied with the `-c`
@@ -664,18 +845,26 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
 
         _write_demo_module(temp_dpath)
 
-        inlined_script = ('from test_mod import submod1, submod2; '
-                          'from test_mod.subpkg import submod3; '
-                          'import statistics; '
-                          'data = [1, 2, 3]; '
-                          'val = submod1.add_one(data); '
-                          'val = submod2.add_two(val); '
-                          'val = submod3.add_three(val); '
-                          'result = statistics.harmonic_mean(val); '
-                          'print(result);')
+        inlined_script = (
+            'from test_mod import submod1, submod2; '
+            'from test_mod.subpkg import submod3; '
+            'import statistics; '
+            'data = [1, 2, 3]; '
+            'val = submod1.add_one(data); '
+            'val = submod2.add_two(val); '
+            'val = submod3.add_three(val); '
+            'result = statistics.harmonic_mean(val); '
+            'print(result);'
+        )
 
-        kp_cmd = [sys.executable, '-m', 'kernprof',
-                  '-p', 'test_mod.submod1,test_mod.subpkg.submod3', '-l']
+        kp_cmd = [
+            sys.executable,
+            '-m',
+            'kernprof',
+            '-p',
+            'test_mod.submod1,test_mod.subpkg.submod3',
+            '-l',
+        ]
         if outfile:
             kp_cmd += ['-o', outfile]
         kp_cmd += ['-c', inlined_script]
@@ -683,7 +872,7 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
         print(proc.stdout)
         print(proc.stderr)
         proc.check_returncode()
-        outfile, = temp_dpath.glob(expected_outfile)
+        (outfile,) = temp_dpath.glob(expected_outfile)
         lp_cmd = [sys.executable, '-m', 'line_profiler', str(outfile)]
         proc = ub.cmd(lp_cmd)
         raw_output = proc.stdout
@@ -697,15 +886,26 @@ def test_autoprofile_from_inlined_script(outfile, expected_outfile) -> None:
 
 @pytest.mark.parametrize(
     ('explicit_config', 'prof_mod', 'prof_imports', 'profiled_funcs'),
-    [(True, 'test_mod.submod2', False, {'add_two', 'add_operator'}),
-     (False, None, False, {'add_one', 'add_operator'}),
-     (True, 'test_mod.subpkg.submod4', None,
-      {'add_one', 'add_two', 'add_four', 'add_operator', '_main'}),
-     (False,
-      '',  # This negates the `prof-mod` configued in the TOML file
-      True, {})])
+    [
+        (True, 'test_mod.submod2', False, {'add_two', 'add_operator'}),
+        (False, None, False, {'add_one', 'add_operator'}),
+        (
+            True,
+            'test_mod.subpkg.submod4',
+            None,
+            {'add_one', 'add_two', 'add_four', 'add_operator', '_main'},
+        ),
+        (
+            False,
+            '',  # This negates the `prof-mod` configued in the TOML file
+            True,
+            {},
+        ),
+    ],
+)
 def test_autoprofile_with_customized_config(
-        explicit_config, prof_mod, prof_imports, profiled_funcs):
+    explicit_config, prof_mod, prof_imports, profiled_funcs
+):
     """
     Test autoprofiling a module with a customized TOML config file.
 
@@ -724,15 +924,27 @@ def test_autoprofile_with_customized_config(
     > line = 8  # 2 wider than the default
     """
     docstring = test_autoprofile_with_customized_config.__doc__
-    toml_content = ub.codeblock('\n'.join(
-        line.lstrip('>')
-        for line in (ub.codeblock(docstring).strip('\n')
-                     .partition('----\n')[-1].splitlines())))
+    toml_content = ub.codeblock(
+        '\n'.join(
+            line.lstrip('>')
+            for line in (
+                ub.codeblock(docstring)
+                .strip('\n')
+                .partition('----\n')[-1]
+                .splitlines()
+            )
+        )
+    )
     lineno_col_width = 8
 
     # Sanity check
-    all_checked_funcs = {'add_one', 'add_two', 'add_four',
-                         'add_operator', '_main'}
+    all_checked_funcs = {
+        'add_one',
+        'add_two',
+        'add_four',
+        'add_operator',
+        '_main',
+    }
     profiled_funcs = set(profiled_funcs)
     assert profiled_funcs <= all_checked_funcs
 
@@ -754,8 +966,9 @@ def test_autoprofile_with_customized_config(
         if prof_mod is not None:
             kernprof_cmd.extend(['-p', prof_mod])
         if prof_imports in (True, False):
-            kernprof_cmd.append('--{}prof-imports'
-                                .format('' if prof_imports else 'no-'))
+            kernprof_cmd.append(
+                '--{}prof-imports'.format('' if prof_imports else 'no-')
+            )
         kernprof_cmd.extend(['-m', 'test_mod.subpkg.submod4', '1', '2', '3'])
         proc = ub.cmd(kernprof_cmd, cwd=temp_dpath, env=env, verbose=2)
         print(proc.stdout)
@@ -794,10 +1007,10 @@ def test_autoprofile_with_no_config(no_config, view_in_process):
     """
     Test disabling config lookup with the `--no-config` flag.
     """
-    toml_content = ub.codeblock('''
+    toml_content = ub.codeblock("""
     [tool.line_profiler.show.column_widths]
     line = 8  # 2 wider than the default
-    ''')
+    """)
     lineno_col_width = 6 if no_config else 8
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -807,10 +1020,14 @@ def test_autoprofile_with_no_config(no_config, view_in_process):
         toml.write_text(toml_content)
         prof = temp_dpath / 'my_output.lprof'
 
-        kernprof_cmd = ['kernprof',
-                        '-p', 'test_mod.subpkg.submod4',
-                        '-o', 'my_output.lprof',
-                        '-l']
+        kernprof_cmd = [
+            'kernprof',
+            '-p',
+            'test_mod.subpkg.submod4',
+            '-o',
+            'my_output.lprof',
+            '-l',
+        ]
         lp_cmd = [sys.executable, '-m', 'line_profiler', os.fspath(prof)]
         if view_in_process:
             kernprof_cmd.append('--view')
@@ -855,12 +1072,31 @@ def test_autoprofile_with_no_config(no_config, view_in_process):
 
 @pytest.mark.parametrize(
     ('prof_mod', 'profiled_funcs'),
-    [('my_module',
-      {'function', 'method', 'class_method', 'static_method', 'descriptor'}),
-     # `function()` included in profiling via `Class.partial_method()`
-     ('my_module.Class',
-      {'function', 'method', 'class_method', 'static_method', 'descriptor'}),
-     ('my_module.Class.descriptor', {'descriptor'})])
+    [
+        (
+            'my_module',
+            {
+                'function',
+                'method',
+                'class_method',
+                'static_method',
+                'descriptor',
+            },
+        ),
+        # `function()` included in profiling via `Class.partial_method()`
+        (
+            'my_module.Class',
+            {
+                'function',
+                'method',
+                'class_method',
+                'static_method',
+                'descriptor',
+            },
+        ),
+        ('my_module.Class.descriptor', {'descriptor'}),
+    ],
+)
 def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
     """
     Test that on-import profiling catches various callable-wrapper
@@ -872,9 +1108,14 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
     Like it does regular methods and functions.
     """
     # Sanity check
-    all_checked_funcs = {'function', 'method',
-                         'partial_method', 'class_method', 'static_method',
-                         'descriptor'}
+    all_checked_funcs = {
+        'function',
+        'method',
+        'partial_method',
+        'class_method',
+        'static_method',
+        'descriptor',
+    }
     profiled_funcs = set(profiled_funcs)
     assert profiled_funcs <= all_checked_funcs
     # Note: `partial_method()` not to be included as its own item
@@ -885,7 +1126,8 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
         temp_dpath = ub.Path(tmpdir)
         path = temp_dpath / 'path'
         path.mkdir()
-        (path / 'my_module.py').write_text(ub.codeblock("""
+        (path / 'my_module.py').write_text(
+            ub.codeblock("""
         import functools
 
 
@@ -910,26 +1152,36 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
             @property
             def descriptor(self):
                 return
-        """))
-        (temp_dpath / 'script.py').write_text(ub.codeblock("""
+        """)
+        )
+        (temp_dpath / 'script.py').write_text(
+            ub.codeblock("""
         import my_module
 
 
         if __name__ == '__main__':
             pass
-        """))
+        """)
+        )
 
         with ub.ChDir(temp_dpath):
-            args = [sys.executable, '-m', 'kernprof',
-                    '-p', prof_mod, '-lv', 'script.py']
+            args = [
+                sys.executable,
+                '-m',
+                'kernprof',
+                '-p',
+                prof_mod,
+                '-lv',
+                'script.py',
+            ]
             python_path = os.environ.get('PYTHONPATH')
             if python_path:
                 python_path = '{}:{}'.format(path, python_path)
             else:
                 python_path = str(path)
-            proc = ub.cmd(args,
-                          env={**os.environ, 'PYTHONPATH': python_path},
-                          verbose=2)
+            proc = ub.cmd(
+                args, env={**os.environ, 'PYTHONPATH': python_path}, verbose=2
+            )
             raw_output = proc.stdout
         print(raw_output)
         print(proc.stderr)
@@ -941,7 +1193,7 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
             prefix = r'.*\.'
         else:
             prefix = ''
-        in_output = re.search(f'^Function: {prefix}{func}',
-                              raw_output,
-                              re.MULTILINE)
+        in_output = re.search(
+            f'^Function: {prefix}{func}', raw_output, re.MULTILINE
+        )
         assert bool(in_output) == (func in profiled_funcs)

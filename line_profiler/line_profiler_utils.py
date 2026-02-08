@@ -1,6 +1,7 @@
 """
 Miscellaneous utilities that :py:mod:`line_profiler` uses.
 """
+
 from __future__ import annotations
 
 import enum
@@ -33,6 +34,7 @@ class _StrEnumBase(str, enum.Enum):
       ...
     ValueError: 'baz' is not a valid MyEnum
     """
+
     @staticmethod
     def _generate_next_value_(name: str, *_, **__) -> str:
         return name.lower()
@@ -70,10 +72,13 @@ class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):  # type: ignore[misc]
     >>> str(bar)
     'bar'
     """
+
     @classmethod
     def _missing_(cls, value: object) -> Self | None:
         if not isinstance(value, str):
             return None
-        members = {name.casefold(): instance
-                   for name, instance in cls.__members__.items()}
+        members = {
+            name.casefold(): instance
+            for name, instance in cls.__members__.items()
+        }
         return members.get(value.casefold())

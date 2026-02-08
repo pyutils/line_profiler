@@ -16,10 +16,8 @@ from .line_profiler_utils import StringEnum
 DEFAULT_SCOPING_POLICIES: ScopingPolicyDict = {
     'func': 'siblings',
     'class': 'siblings',
-    'module': 'exact'
+    'module': 'exact',
 }
-
-
 
 
 class ScopingPolicy(StringEnum):
@@ -96,6 +94,7 @@ class ScopingPolicy(StringEnum):
         methods prefixed with a single underscore are to be considered
         implementation details.
     """
+
     EXACT = auto()
     CHILDREN = auto()
     DESCENDANTS = auto()
@@ -131,21 +130,18 @@ class ScopingPolicy(StringEnum):
 
     @overload
     def get_filter(
-            self, namespace: type | ModuleType,
-            obj_type: Literal['func']) -> Callable[[Callable], bool]:
-        ...
+        self, namespace: type | ModuleType, obj_type: Literal['func']
+    ) -> Callable[[Callable], bool]: ...
 
     @overload
     def get_filter(
-            self, namespace: type | ModuleType,
-            obj_type: Literal['class']) -> Callable[[type], bool]:
-        ...
+        self, namespace: type | ModuleType, obj_type: Literal['class']
+    ) -> Callable[[type], bool]: ...
 
     @overload
     def get_filter(
-            self, namespace: type | ModuleType,
-            obj_type: Literal['module']) -> Callable[[ModuleType], bool]:
-        ...
+        self, namespace: type | ModuleType, obj_type: Literal['module']
+    ) -> Callable[[ModuleType], bool]: ...
 
     def get_filter(self, namespace: type | ModuleType, obj_type: str):
         """
@@ -174,17 +170,20 @@ class ScopingPolicy(StringEnum):
         if obj_type == 'module':
             if is_class:
                 return self._return_const(False)
-            return self._get_module_filter_in_module(cast(ModuleType, namespace))
+            return self._get_module_filter_in_module(
+                cast(ModuleType, namespace)
+            )
         if is_class:
             return self._get_callable_filter_in_class(
-                cast(type, namespace), is_class=(obj_type == 'class'))
+                cast(type, namespace), is_class=(obj_type == 'class')
+            )
         return self._get_callable_filter_in_module(
-            cast(ModuleType, namespace), is_class=(obj_type == 'class'))
+            cast(ModuleType, namespace), is_class=(obj_type == 'class')
+        )
 
     @classmethod
     def to_policies(
-            cls,
-            policies: str | ScopingPolicy | ScopingPolicyDict | None = None
+        cls, policies: str | ScopingPolicy | ScopingPolicyDict | None = None
     ) -> _ScopingPolicyDict:
         """
         Normalize ``policies`` into a dictionary of policies for various
@@ -241,14 +240,20 @@ class ScopingPolicy(StringEnum):
             policies = DEFAULT_SCOPING_POLICIES
         if isinstance(policies, str):
             policy = cls(policies)
-            return _ScopingPolicyDict({
-                'func': policy,
-                'class': policy,
-                'module': policy,
-            })
-        return _ScopingPolicyDict({'func': cls(policies['func']),
-                                   'class': cls(policies['class']),
-                                   'module': cls(policies['module'])})
+            return _ScopingPolicyDict(
+                {
+                    'func': policy,
+                    'class': policy,
+                    'module': policy,
+                }
+            )
+        return _ScopingPolicyDict(
+            {
+                'func': cls(policies['func']),
+                'class': cls(policies['class']),
+                'module': cls(policies['module']),
+            }
+        )
 
     @staticmethod
     def _return_const(value: bool) -> Callable[[object], bool]:
@@ -262,7 +267,7 @@ class ScopingPolicy(StringEnum):
         return s == prefix or s.startswith(prefix + sep)
 
     def _get_callable_filter_in_class(
-            self, cls: type, is_class: bool
+        self, cls: type, is_class: bool
     ) -> Callable[[FunctionType | type], bool]:
         def func_is_child(other: FunctionType | type):
             if not modules_are_equal(other):
@@ -278,9 +283,7 @@ class ScopingPolicy(StringEnum):
             return other.__qualname__.startswith(cls.__qualname__ + '.')
 
         policies: dict[str, Callable[[FunctionType | type], bool]] = {
-            'exact': (self._return_const(False)
-                      if is_class else
-                      func_is_child),
+            'exact': (self._return_const(False) if is_class else func_is_child),
             'children': func_is_child,
             'descendants': func_is_descdendant,
             'siblings': modules_are_equal,
@@ -289,7 +292,7 @@ class ScopingPolicy(StringEnum):
         return policies[self.value]
 
     def _get_callable_filter_in_module(
-            self, mod: ModuleType, is_class: bool
+        self, mod: ModuleType, is_class: bool
     ) -> Callable[[FunctionType | type], bool]:
         def func_is_child(other: FunctionType | type):
             return other.__module__ == mod.__name__
@@ -304,20 +307,20 @@ class ScopingPolicy(StringEnum):
 
         parent, _, basename = mod.__name__.rpartition('.')
         policies: dict[str, Callable[[FunctionType | type], bool]] = {
-            'exact': (self._return_const(False)
-                      if is_class else
-                      func_is_child),
+            'exact': (self._return_const(False) if is_class else func_is_child),
             'children': func_is_child,
             'descendants': func_is_descdendant,
-            'siblings': (func_is_cousin  # Only if a pkg
-                         if basename else
-                         func_is_descdendant),
+            'siblings': (
+                func_is_cousin  # Only if a pkg
+                if basename
+                else func_is_descdendant
+            ),
             'none': self._return_const(True),
         }
         return policies[self.value]
 
     def _get_module_filter_in_module(
-            self, mod: ModuleType
+        self, mod: ModuleType
     ) -> Callable[[ModuleType], bool]:
         def module_is_descendant(other: ModuleType):
             return other.__name__.startswith(mod.__name__ + '.')
@@ -333,9 +336,11 @@ class ScopingPolicy(StringEnum):
             'exact': self._return_const(False),
             'children': module_is_child,
             'descendants': module_is_descendant,
-            'siblings': (module_is_sibling  # Only if a pkg
-                         if basename else
-                         self._return_const(False)),
+            'siblings': (
+                module_is_sibling  # Only if a pkg
+                if basename
+                else self._return_const(False)
+            ),
             'none': self._return_const(True),
         }
         return policies[self.value]
@@ -348,12 +353,14 @@ ScopingPolicy._check_class()
 
 ScopingPolicyDict = TypedDict(
     'ScopingPolicyDict',
-    {'func': Union[str, ScopingPolicy],
-     'class': Union[str, ScopingPolicy],
-     'module': Union[str, ScopingPolicy]})
+    {
+        'func': Union[str, ScopingPolicy],
+        'class': Union[str, ScopingPolicy],
+        'module': Union[str, ScopingPolicy],
+    },
+)
 
 _ScopingPolicyDict = TypedDict(
     '_ScopingPolicyDict',
-    {'func': ScopingPolicy,
-     'class': ScopingPolicy,
-     'module': ScopingPolicy})
+    {'func': ScopingPolicy, 'class': ScopingPolicy, 'module': ScopingPolicy},
+)

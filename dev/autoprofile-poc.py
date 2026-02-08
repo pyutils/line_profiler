@@ -17,16 +17,16 @@ from line_profiler.autoprofile import autoprofile
 
 def create_poc(dry_run=False):
     root = ub.Path.appdir('line_profiler/test/poc/')
-    repo = (root / 'repo')
+    repo = root / 'repo'
     modpaths = {}
-    modpaths['script'] = (root / 'repo/script.py')
-    modpaths['foo'] = (root / 'repo/foo')
-    modpaths['foo.__init__'] = (root / 'repo/foo/__init__.py')
-    modpaths['foo.bar'] = (root / 'repo/foo/bar.py')
-    modpaths['foo.baz'] = (root / 'repo/foo/baz')
-    modpaths['foo.baz.__init__'] = (root / 'repo/foo/baz/__init__.py')
-    modpaths['foo.baz.spam'] = (root / 'repo/foo/baz/spam.py')
-    modpaths['foo.baz.eggs'] = (root / 'repo/foo/baz/eggs.py')
+    modpaths['script'] = root / 'repo/script.py'
+    modpaths['foo'] = root / 'repo/foo'
+    modpaths['foo.__init__'] = root / 'repo/foo/__init__.py'
+    modpaths['foo.bar'] = root / 'repo/foo/bar.py'
+    modpaths['foo.baz'] = root / 'repo/foo/baz'
+    modpaths['foo.baz.__init__'] = root / 'repo/foo/baz/__init__.py'
+    modpaths['foo.baz.spam'] = root / 'repo/foo/baz/spam.py'
+    modpaths['foo.baz.eggs'] = root / 'repo/foo/baz/eggs.py'
 
     if not dry_run:
         root.delete().ensuredir()
@@ -45,7 +45,7 @@ def create_poc(dry_run=False):
 
         """different import variations to handle"""
         script_text = ub.codeblock(
-            '''
+            """
             import foo # mod
             import foo.bar # py
             from foo import bar # py
@@ -69,7 +69,8 @@ def create_poc(dry_run=False):
             main()
             test()
             # asdf()
-            ''')
+            """
+        )
         ub.writeto(modpaths['script'], script_text)
 
     return root, repo, modpaths
@@ -115,11 +116,13 @@ def main():
     import sys
     import os
     import builtins
+
     __file__ = script_file
     __name__ = '__main__'
     script_directory = os.path.realpath(os.path.dirname(script_file))
     sys.path.insert(0, script_directory)
     import line_profiler
+
     prof = line_profiler.LineProfiler()
     builtins.__dict__['profile'] = prof
     ns = locals()
@@ -129,6 +132,7 @@ def main():
     print('\nprofiled')
     print('=' * 10)
     prof.print_stats(output_unit=1e-6, stripzeros=True, stream=sys.stdout)
+
 
 if __name__ == '__main__':
     main()

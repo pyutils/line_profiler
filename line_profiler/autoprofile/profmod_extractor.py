@@ -4,8 +4,11 @@ import ast
 import os
 import sys
 from typing import List, cast, Any, Union
-from .util_static import (modname_to_modpath, modpath_to_modname,
-                          package_modpaths)
+from .util_static import (
+    modname_to_modpath,
+    modpath_to_modname,
+    package_modpaths,
+)
 
 
 class ProfmodExtractor:
@@ -15,8 +18,9 @@ class ProfmodExtractor:
     abstract syntax tree.
     """
 
-    def __init__(self, tree: ast.Module, script_file: str,
-                 prof_mod: list[str]) -> None:
+    def __init__(
+        self, tree: ast.Module, script_file: str, prof_mod: list[str]
+    ) -> None:
         """Initializes the AST tree profiler instance with the AST, script file path and prof_mod
 
         Args:
@@ -54,7 +58,8 @@ class ProfmodExtractor:
 
     @classmethod
     def _get_modnames_to_profile_from_prof_mod(
-            cls, script_file: str, prof_mod: list[str]) -> list[str]:
+        cls, script_file: str, prof_mod: list[str]
+    ) -> list[str]:
         """Grab the valid paths and all dotted paths in prof_mod and their subpackages
         and submodules, in the form of dotted paths.
 
@@ -99,7 +104,9 @@ class ProfmodExtractor:
             if it fails, the item may point to an installed module rather than local script
             so we check if the item is path and whether that path exists, else skip the item.
             """
-            modpath = modname_to_modpath(mod, sys_path=cast(List[Union[str, os.PathLike]], new_sys_path))
+            modpath = modname_to_modpath(
+                mod, sys_path=cast(List[Union[str, os.PathLike]], new_sys_path)
+            )
             if modpath is None:
                 """if cannot convert to modpath, check if already path and if invalid"""
                 if not os.path.exists(mod):
@@ -132,7 +139,8 @@ class ProfmodExtractor:
 
     @staticmethod
     def _ast_get_imports_from_tree(
-            tree: ast.Module) -> list[dict[str, str | int | None]]:
+        tree: ast.Module,
+    ) -> list[dict[str, str | int | None]]:
         """Get all imports in an abstract syntax tree.
 
         Args:
@@ -182,8 +190,8 @@ class ProfmodExtractor:
 
     @staticmethod
     def _find_modnames_in_tree_imports(
-            modnames_to_profile: list[str],
-            module_dict_list: list[dict[str, str | int | None]]
+        modnames_to_profile: list[str],
+        module_dict_list: list[dict[str, str | int | None]],
     ) -> dict[int, str]:
         """Map modnames to imports from an abstract sytax tree.
 
@@ -219,7 +227,10 @@ class ProfmodExtractor:
             if modname in modname_added_list:
                 continue
             """check if either the parent module or submodule are in modnames_to_profile"""
-            if modname not in modnames_to_profile and modname.rsplit('.', 1)[0] not in modnames_to_profile:
+            if (
+                modname not in modnames_to_profile
+                and modname.rsplit('.', 1)[0] not in modnames_to_profile
+            ):
                 continue
             name = module_dict['alias'] or modname
             if not isinstance(name, str):
@@ -245,9 +256,13 @@ class ProfmodExtractor:
                     value (str):
                         alias (or name if no alias used) of import
         """
-        modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(self._script_file, self._prof_mod)
+        modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(
+            self._script_file, self._prof_mod
+        )
 
         module_dict_list = self._ast_get_imports_from_tree(self._tree)
 
-        tree_imports_to_profile_dict = self._find_modnames_in_tree_imports(modnames_to_profile, module_dict_list)
+        tree_imports_to_profile_dict = self._find_modnames_in_tree_imports(
+            modnames_to_profile, module_dict_list
+        )
         return tree_imports_to_profile_dict

@@ -2,6 +2,7 @@
 """
 Based on template in rc/run_tests.binpy.py.in
 """
+
 import os
 import sqlite3
 import sys
@@ -28,7 +29,7 @@ def is_cibuildwheel():
 
 def replace_docker_path(path, runner_project_dir):
     """Update path to a file installed in a temp venv to runner_project_dir."""
-    pattern = re.compile(r"\/tmp\/.+?\/site-packages")
+    pattern = re.compile(r'\/tmp\/.+?\/site-packages')
     return pattern.sub(runner_project_dir, path)
 
 
@@ -47,7 +48,10 @@ def update_coverage_file(coverage_path, runner_project_dir):
         cursor.execute(read_file_query)
 
         old_records = cursor.fetchall()
-        new_records = [(replace_docker_path(path, runner_project_dir), _id) for _id, path in old_records]
+        new_records = [
+            (replace_docker_path(path, runner_project_dir), _id)
+            for _id, path in old_records
+        ]
         print('Updated coverage file paths:\n', new_records)
 
         sql_update_query = 'Update file set path = ? where id = ?'
@@ -79,6 +83,7 @@ def copy_coverage_cibuildwheel_docker(runner_project_dir):
 
 def main():
     import pathlib
+
     orig_cwd = os.getcwd()
     repo_dir = pathlib.Path(__file__).parent.absolute()
     test_dir = repo_dir / 'tests'
@@ -117,12 +122,16 @@ def main():
     except IndexError:
         print('[run_tests] Confirmed repo dir is not in sys.path')
     else:
-        print(f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from search path')
+        print(
+            f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from search path'
+        )
         del temp_path[_idx]
         if is_cibuildwheel():
             # Remove from sys.path to prevent the import mechanism from testing
             # the source repo rather than the installed wheel.
-            print(f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from sys.path to ensure wheels are tested')
+            print(
+                f'[run_tests] Removing _resolved_repo_dir={_resolved_repo_dir} from sys.path to ensure wheels are tested'
+            )
             del sys.path[_idx]
             print(f'[run_tests] sys.path = {ub.urepr(sys.path, nl=1)}')
 
@@ -135,7 +144,9 @@ def main():
         print(f'[run_tests] Found installed version of {package_name}')
         print(f'[run_tests] modpath={modpath}')
         modpath_contents = list(pathlib.Path(modpath).glob('*'))
-        print(f'[run_tests] modpath_contents = {ub.urepr(modpath_contents, nl=1)}')
+        print(
+            f'[run_tests] modpath_contents = {ub.urepr(modpath_contents, nl=1)}'
+        )
         # module = ub.import_module_from_path(modpath, index=0)
         # print(f'[run_tests] Installed module = {module!r}')
     else:
@@ -146,20 +157,23 @@ def main():
 
     try:
         import pytest
+
         pytest_args = []
 
         if use_coverage:
             pytest_args += [
-                '--cov-config', os.fspath(pyproject_fpath),
-                '--cov-report', 'html',
-                '--cov-report', 'term',
-                '--cov-report', 'xml',
+                '--cov-config',
+                os.fspath(pyproject_fpath),
+                '--cov-report',
+                'html',
+                '--cov-report',
+                'term',
+                '--cov-report',
+                'xml',
                 '--cov=' + package_name,
             ]
 
-        pytest_args += [
-            os.fspath(modpath), os.fspath(test_dir)
-        ]
+        pytest_args += [os.fspath(modpath), os.fspath(test_dir)]
         if is_cibuildwheel() and use_coverage:
             pytest_args.append('--cov-append')
 
@@ -174,7 +188,9 @@ def main():
         os.chdir(orig_cwd)
         if is_cibuildwheel() and use_coverage:
             # for CIBW under linux
-            copy_coverage_cibuildwheel_docker(f'/home/runner/work/{package_name}/{package_name}')
+            copy_coverage_cibuildwheel_docker(
+                f'/home/runner/work/{package_name}/{package_name}'
+            )
         print('[run_tests] Restoring cwd = {!r}'.format(orig_cwd))
     return retcode
 

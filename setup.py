@@ -7,10 +7,12 @@ import setuptools
 
 
 def _choose_build_method():
-    DISABLE_C_EXTENSIONS = os.environ.get("DISABLE_C_EXTENSIONS", "").lower()
-    LINE_PROFILER_BUILD_METHOD = os.environ.get("LINE_PROFILER_BUILD_METHOD", "auto").lower()
+    DISABLE_C_EXTENSIONS = os.environ.get('DISABLE_C_EXTENSIONS', '').lower()
+    LINE_PROFILER_BUILD_METHOD = os.environ.get(
+        'LINE_PROFILER_BUILD_METHOD', 'auto'
+    ).lower()
 
-    if DISABLE_C_EXTENSIONS in {"true", "on", "yes", "1"}:
+    if DISABLE_C_EXTENSIONS in {'true', 'on', 'yes', '1'}:
         LINE_PROFILER_BUILD_METHOD = 'setuptools'
 
     if LINE_PROFILER_BUILD_METHOD == 'auto':
@@ -38,7 +40,7 @@ def parse_version(fpath):
     """
     Statically parse the version number from a python file
     """
-    value = static_parse("__version__", fpath)
+    value = static_parse('__version__', fpath)
     return value
 
 
@@ -50,18 +52,20 @@ def static_parse(varname, fpath):
     import ast
 
     if not exists(fpath):
-        raise ValueError("fpath={!r} does not exist".format(fpath))
-    with open(fpath, "r") as file_:
+        raise ValueError('fpath={!r} does not exist'.format(fpath))
+    with open(fpath, 'r') as file_:
         sourcecode = file_.read()
     pt = ast.parse(sourcecode)
 
     class StaticVisitor(ast.NodeVisitor):
         def visit_Assign(self, node: ast.Assign):
             for target in node.targets:
-                if getattr(target, "id", None) == varname:
+                if getattr(target, 'id', None) == varname:
                     value: ast.expr = node.value
                     if not isinstance(value, ast.Constant):
-                        raise ValueError("variable {!r} is not a constant".format(varname))
+                        raise ValueError(
+                            'variable {!r} is not a constant'.format(varname)
+                        )
                     self.static_value = value.value
 
     visitor = StaticVisitor()
@@ -69,7 +73,7 @@ def static_parse(varname, fpath):
     try:
         value = visitor.static_value
     except AttributeError:
-        value = "Unknown {}".format(varname)
+        value = 'Unknown {}'.format(varname)
         warnings.warn(value)
     return value
 
@@ -84,16 +88,16 @@ def parse_description():
     """
     from os.path import dirname, join, exists
 
-    readme_fpath = join(dirname(__file__), "README.rst")
+    readme_fpath = join(dirname(__file__), 'README.rst')
     # This breaks on pip install, so check that it exists.
     if exists(readme_fpath):
-        with open(readme_fpath, "r") as f:
+        with open(readme_fpath, 'r') as f:
             text = f.read()
         return text
-    return ""
+    return ''
 
 
-def parse_requirements(fname="requirements.txt", versions=False):
+def parse_requirements(fname='requirements.txt', versions=False):
     """
     Parse the package dependencies listed in a requirements file but strips
     specific versioning information.
@@ -112,7 +116,7 @@ def parse_requirements(fname="requirements.txt", versions=False):
 
     require_fpath = fname
 
-    def parse_line(line, dpath=""):
+    def parse_line(line, dpath=''):
         """
         Parse information from a line in a requirements text file
 
@@ -120,72 +124,74 @@ def parse_requirements(fname="requirements.txt", versions=False):
         line = '-e git+https://a.com/somedep@sometag#egg=SomeDep'
         """
         # Remove inline comments
-        comment_pos = line.find(" #")
+        comment_pos = line.find(' #')
         if comment_pos > -1:
             line = line[:comment_pos]
 
-        if line.startswith("-r "):
+        if line.startswith('-r '):
             # Allow specifying requirements in other files
-            target = join(dpath, line.split(" ")[1])
+            target = join(dpath, line.split(' ')[1])
             for info in parse_require_file(target):
                 yield info
         else:
             # See: https://www.python.org/dev/peps/pep-0508/
-            info = {"line": line}
-            if line.startswith("-e "):
-                info["package"] = line.split("#egg=")[1]
+            info = {'line': line}
+            if line.startswith('-e '):
+                info['package'] = line.split('#egg=')[1]
             else:
-                if ";" in line:
-                    pkgpart, platpart = line.split(";")
+                if ';' in line:
+                    pkgpart, platpart = line.split(';')
                     # Handle platform specific dependencies
                     # setuptools.readthedocs.io/en/latest/setuptools.html
                     # #declaring-platform-specific-dependencies
                     plat_deps = platpart.strip()
-                    info["platform_deps"] = plat_deps
+                    info['platform_deps'] = plat_deps
                 else:
                     pkgpart = line
                     platpart = None
 
                 # Remove versioning from the package
-                pat = "(" + "|".join([">=", "==", ">"]) + ")"
+                pat = '(' + '|'.join(['>=', '==', '>']) + ')'
                 parts = re.split(pat, pkgpart, maxsplit=1)
                 parts = [p.strip() for p in parts]
 
-                info["package"] = parts[0]
+                info['package'] = parts[0]
                 if len(parts) > 1:
                     op, rest = parts[1:]
                     version = rest  # NOQA
-                    info["version"] = (op, version)
+                    info['version'] = (op, version)
             yield info
 
     def parse_require_file(fpath):
         dpath = dirname(fpath)
-        with open(fpath, "r") as f:
+        with open(fpath, 'r') as f:
             for line in f.readlines():
                 line = line.strip()
-                if line and not line.startswith("#"):
+                if line and not line.startswith('#'):
                     for info in parse_line(line, dpath=dpath):
                         yield info
 
     def gen_packages_items():
         if exists(require_fpath):
             for info in parse_require_file(require_fpath):
-                parts = [info["package"]]
-                if versions and "version" in info:
-                    if versions == "strict":
+                parts = [info['package']]
+                if versions and 'version' in info:
+                    if versions == 'strict':
                         # In strict mode, we pin to the minimum version
-                        if info["version"]:
+                        if info['version']:
                             # Only replace the first >= instance
-                            verstr = "".join(info["version"]).replace(">=", "==", 1)
+                            verstr = ''.join(info['version']).replace(
+                                '>=', '==', 1
+                            )
                             parts.append(verstr)
                     else:
-                        parts.extend(info["version"])
-                if not sys.version.startswith("3.4"):
+                        parts.extend(info['version'])
+                if not sys.version.startswith('3.4'):
                     # apparently package_deps are broken in 3.4
-                    plat_deps = info.get("platform_deps")
+                    plat_deps = info.get('platform_deps')
                     if plat_deps is not None:
-                        parts.append(";" + plat_deps)
-                item = "".join(parts)
+                        parts.append(';' + plat_deps)
+                item = ''.join(parts)
                 yield item
 
     packages = list(gen_packages_items())
@@ -203,8 +209,8 @@ function-level profiling tools in the Python standard library.
 """
 
 
-NAME = "line_profiler"
-INIT_PATH = "line_profiler/line_profiler.py"
+NAME = 'line_profiler'
+INIT_PATH = 'line_profiler/line_profiler.py'
 VERSION = parse_version(INIT_PATH)
 
 
@@ -216,6 +222,7 @@ if __name__ == '__main__':
         setup = setuptools.setup
     elif LINE_PROFILER_BUILD_METHOD == 'scikit-build':
         import skbuild  # NOQA
+
         setup = skbuild.setup
     elif LINE_PROFILER_BUILD_METHOD == 'cython':
         # no need to try importing cython because an import
@@ -227,24 +234,36 @@ if __name__ == '__main__':
         def run_cythonize(force=False):
             return cythonize(
                 Extension(
-                    name="line_profiler._line_profiler",
-                    sources=["line_profiler/_line_profiler.pyx",
-                             "line_profiler/timers.c",
-                             "line_profiler/c_trace_callbacks.c"],
+                    name='line_profiler._line_profiler',
+                    sources=[
+                        'line_profiler/_line_profiler.pyx',
+                        'line_profiler/timers.c',
+                        'line_profiler/c_trace_callbacks.c',
+                    ],
                     # force a recompile if this changes
                     depends=[
-                        "line_profiler/_map_helpers.pxd",
+                        'line_profiler/_map_helpers.pxd',
                     ],
-                    language="c++",
-                    define_macros=[("CYTHON_TRACE", (1 if os.getenv("DEV") == "true" else 0))],
+                    language='c++',
+                    define_macros=[
+                        (
+                            'CYTHON_TRACE',
+                            (1 if os.getenv('DEV') == 'true' else 0),
+                        )
+                    ],
                 ),
                 compiler_directives={
-                    "language_level": 3,
-                    "infer_types": True,
-                    "legacy_implicit_noexcept": True,
-                    "linetrace": (True if os.getenv("DEV") == "true" else False)
+                    'language_level': 3,
+                    'infer_types': True,
+                    'legacy_implicit_noexcept': True,
+                    'linetrace': (
+                        True if os.getenv('DEV') == 'true' else False
+                    ),
                 },
-                include_path=["line_profiler/python25.pxd", "line_profiler/_map_helpers.pxd"],
+                include_path=[
+                    'line_profiler/python25.pxd',
+                    'line_profiler/_map_helpers.pxd',
+                ],
                 force=force,
                 nthreads=multiprocessing.cpu_count(),
             )
@@ -254,48 +273,62 @@ if __name__ == '__main__':
     else:
         raise Exception('Unknown build method')
 
-    setupkw["install_requires"] = parse_requirements(
-        "requirements/runtime.txt", versions="loose"
+    setupkw['install_requires'] = parse_requirements(
+        'requirements/runtime.txt', versions='loose'
     )
-    setupkw["extras_require"] = {
-        "all": parse_requirements("requirements.txt", versions="loose"),
-        "tests": parse_requirements("requirements/tests.txt", versions="loose"),
-        "optional": parse_requirements("requirements/optional.txt", versions="loose"),
-        "all-strict": parse_requirements("requirements.txt", versions="strict"),
-        "runtime-strict": parse_requirements(
-            "requirements/runtime.txt", versions="strict"
+    setupkw['extras_require'] = {
+        'all': parse_requirements('requirements.txt', versions='loose'),
+        'tests': parse_requirements('requirements/tests.txt', versions='loose'),
+        'optional': parse_requirements(
+            'requirements/optional.txt', versions='loose'
         ),
-        "tests-strict": parse_requirements("requirements/tests.txt", versions="strict"),
-        "optional-strict": parse_requirements(
-            "requirements/optional.txt", versions="strict"
+        'all-strict': parse_requirements('requirements.txt', versions='strict'),
+        'runtime-strict': parse_requirements(
+            'requirements/runtime.txt', versions='strict'
         ),
-        "ipython": parse_requirements('requirements/ipython.txt', versions="loose"),
-        "ipython-strict": parse_requirements('requirements/ipython.txt', versions="strict"),
+        'tests-strict': parse_requirements(
+            'requirements/tests.txt', versions='strict'
+        ),
+        'optional-strict': parse_requirements(
+            'requirements/optional.txt', versions='strict'
+        ),
+        'ipython': parse_requirements(
+            'requirements/ipython.txt', versions='loose'
+        ),
+        'ipython-strict': parse_requirements(
+            'requirements/ipython.txt', versions='strict'
+        ),
     }
     setupkw['entry_points'] = {
         'console_scripts': [
             'kernprof=kernprof:main',
         ],
     }
-    setupkw["name"] = NAME
-    setupkw["version"] = VERSION
-    setupkw["author"] = "Robert Kern"
-    setupkw["author_email"] = "robert.kern@enthought.com"
-    setupkw["url"] = "https://github.com/pyutils/line_profiler"
-    setupkw["description"] = "Line-by-line profiler"
-    setupkw["long_description"] = parse_description()
-    setupkw["long_description_content_type"] = "text/x-rst"
-    setupkw["license"] = "BSD"
-    setupkw["packages"] = list(setuptools.find_packages())
-    setupkw["py_modules"] = ['kernprof', 'line_profiler']
-    setupkw["python_requires"] = ">=3.8"
+    setupkw['name'] = NAME
+    setupkw['version'] = VERSION
+    setupkw['author'] = 'Robert Kern'
+    setupkw['author_email'] = 'robert.kern@enthought.com'
+    setupkw['url'] = 'https://github.com/pyutils/line_profiler'
+    setupkw['description'] = 'Line-by-line profiler'
+    setupkw['long_description'] = parse_description()
+    setupkw['long_description_content_type'] = 'text/x-rst'
+    setupkw['license'] = 'BSD'
+    setupkw['packages'] = list(setuptools.find_packages())
+    setupkw['py_modules'] = ['kernprof', 'line_profiler']
+    setupkw['python_requires'] = '>=3.8'
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
-    setupkw["package_data"] = {"line_profiler": ["py.typed", "*.pyi", "*.toml"]}
+    setupkw['package_data'] = {'line_profiler': ['py.typed', '*.pyi', '*.toml']}
     # `include_package_data` is needed to put `rc/line_profiler.toml` in
     # the wheel
-    setupkw["include_package_data"] = True
-    setupkw['keywords'] = ['timing', 'timer', 'profiling', 'profiler', 'line_profiler']
-    setupkw["classifiers"] = [
+    setupkw['include_package_data'] = True
+    setupkw['keywords'] = [
+        'timing',
+        'timer',
+        'profiling',
+        'profiler',
+        'line_profiler',
+    ]
+    setupkw['classifiers'] = [
         'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
         'Operating System :: OS Independent',

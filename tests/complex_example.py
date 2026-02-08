@@ -47,6 +47,7 @@ PROFILE_TYPE=explicit LINE_PROFILE=0 python complex_example.py
 PROFILE_TYPE=custom python complex_example.py
 
 """
+
 from __future__ import annotations
 import os
 
@@ -64,11 +65,13 @@ elif PROFILE_TYPE == 'none':
 elif PROFILE_TYPE == 'explicit':
     # Use the explicit profile decorator
     import line_profiler
+
     profile = line_profiler.profile
 elif PROFILE_TYPE == 'custom':
     # Create a custom profile decorator
     import line_profiler
     import atexit
+
     profile = line_profiler.LineProfiler()
 
     @atexit.register
@@ -106,6 +109,7 @@ def main():
     Run a lot of different Fibonacci jobs
     """
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--serial_size', type=int, default=10)
     parser.add_argument('--thread_size', type=int, default=10)
@@ -114,11 +118,11 @@ def main():
 
     for i in range(args.serial_size):
         fib(i)
-        funcy_fib(
-            i)
+        funcy_fib(i)
         fib(i)
 
     from concurrent.futures import ThreadPoolExecutor
+
     executor = ThreadPoolExecutor(max_workers=4)
     with executor:
         jobs = []
@@ -136,6 +140,7 @@ def main():
             job.result()
 
     from concurrent.futures import ProcessPoolExecutor
+
     executor = ProcessPoolExecutor(max_workers=4)
     with executor:
         jobs = []
@@ -158,14 +163,11 @@ def funcy_fib(n):
     """
     Alternative fib function where code splits out over multiple lines
     """
-    a, b = (
-        0, 1
-    )
+    a, b = (0, 1)
     while a < n:
         # print(
         #     a, end=' ')
-        a, b = b, \
-                a + b
+        a, b = b, a + b
     # print(
     # )
 

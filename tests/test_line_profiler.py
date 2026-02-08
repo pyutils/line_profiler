@@ -61,8 +61,10 @@ class check_timings_and_mem:
     - We don't leak reference counts for code objects (which are
       retrieved with a C function in the Cython code).
     """
-    def __init__(self, prof, *,
-                 check_timings=True, check_ref_counts=True, gc=False):
+
+    def __init__(
+        self, prof, *, check_timings=True, check_ref_counts=True, gc=False
+    ):
         self.prof = prof
         self.check_timings = bool(check_timings)
         self.check_ref_counts = bool(check_ref_counts)
@@ -85,14 +87,16 @@ class check_timings_and_mem:
             return
         timings = self.timings
         assert not any(timings.values()), (
-            f'Expected no timing entries, got {timings!r}')
+            f'Expected no timing entries, got {timings!r}'
+        )
 
     def _check_timings_exit(self):
         if not self.check_timings:
             return
         timings = self.timings
         assert any(timings.values()), (
-            f'Expected timing entries, got {timings!r}')
+            f'Expected timing entries, got {timings!r}'
+        )
 
     def _check_ref_counts_enter(self):
         if not self.check_ref_counts:
@@ -105,12 +109,20 @@ class check_timings_and_mem:
         assert self.ref_counts is not None
         for key, count in self.get_ref_counts().items():
             try:
-                referrers = repr(gc.get_referrers(*(
-                    code for code in self.prof.code_hash_map
-                    if code.co_name == key)))
-                msg = (f'{key}(): '
-                       f'ref count {self.ref_counts[key]} -> {count} '
-                       f'(referrers: {referrers})')
+                referrers = repr(
+                    gc.get_referrers(
+                        *(
+                            code
+                            for code in self.prof.code_hash_map
+                            if code.co_name == key
+                        )
+                    )
+                )
+                msg = (
+                    f'{key}(): '
+                    f'ref count {self.ref_counts[key]} -> {count} '
+                    f'(referrers: {referrers})'
+                )
                 if self.ref_counts[key] == count:
                     print(msg)
                 else:
@@ -166,8 +178,7 @@ def test_last_time():
 
     @prof
     def func():
-        return (get_last_time(prof, c=True).copy(),
-                get_last_time(prof).copy())
+        return (get_last_time(prof, c=True).copy(), get_last_time(prof).copy())
 
     # These are always empty outside a profiling context
     # (hence the need of the above function to capture the transient
@@ -276,8 +287,9 @@ def test_coroutine_decorator():
     """
     Test for `LineProfiler.wrap_coroutine()`.
     """
-    async def coro(delay=.015625):
-        return (await asyncio.sleep(delay, 1))
+
+    async def coro(delay=0.015625):
+        return await asyncio.sleep(delay, 1)
 
     profile = LineProfiler()
     coro_wrapped = profile(coro)
@@ -295,16 +307,18 @@ def test_async_gen_decorator(gc):
     """
     Test for `LineProfiler.wrap_async_generator()`.
     """
-    delay = .015625
+    delay = 0.015625
 
     async def use_agen_complex(*args, delay=delay):
         results = []
         agen = ag_wrapped(delay)
         results.append(await agen.asend(None))  # Start the generator
         for send in args:
-            with (pytest.raises(StopAsyncIteration)
-                  if send is None else
-                  contextlib.nullcontext()):
+            with (
+                pytest.raises(StopAsyncIteration)
+                if send is None
+                else contextlib.nullcontext()
+            ):
                 results.append(await agen.asend(send))
             if send is None:
                 break
@@ -334,18 +348,22 @@ def test_async_gen_decorator(gc):
         xfail_312 = hasattr(sys, 'monitoring') and not gc
         if xfail_312:  # Python 3.12+
             excinfo = stack.enter_context(
-                pytest.raises(AssertionError, match=r'ag\(\): ref count'))
+                pytest.raises(AssertionError, match=r'ag\(\): ref count')
+            )
         stack.enter_context(
-            check_timings_and_mem(profile, check_timings=False, gc=gc))
+            check_timings_and_mem(profile, check_timings=False, gc=gc)
+        )
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_complex(1, 2, 3)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_complex(1, 2, 3, None, 4)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
     if xfail_312:
-        pytest.xfail('\nsys.version={!r}..., gc={}:\n{}'
-                     .format(sys.version.strip().split()[0], gc,
-                             excinfo.getrepr(style='no')))
+        pytest.xfail(
+            '\nsys.version={!r}..., gc={}:\n{}'.format(
+                sys.version.strip().split()[0], gc, excinfo.getrepr(style='no')
+            )
+        )
 
 
 def test_classmethod_decorator():
@@ -373,7 +391,7 @@ def test_classmethod_decorator():
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    (line,) = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that it has been run twice
     assert int(line.split()[1]) == 2
     assert profile.enable_count == 0
@@ -404,7 +422,7 @@ def test_staticmethod_decorator():
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    (line,) = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that it has been run twice
     assert int(line.split()[1]) == 2
     assert profile.enable_count == 0
@@ -435,14 +453,11 @@ def test_boundmethod_decorator():
     assert profile.enable_count == 0
     # XXX: should we try do remove duplicates?
     assert profile.functions == [Object.foo, Object.foo]
-    assert (profiled_foo_1(2)
-            == profiled_foo_2(2)
-            == obj.foo(2)
-            == id(obj) * 2)
+    assert profiled_foo_1(2) == profiled_foo_2(2) == obj.foo(2) == id(obj) * 2
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()`
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('* x'))
+    (line,) = (line for line in output.splitlines() if line.endswith('* x'))
     # Check that the wrapped methods has been run twice in total
     assert int(line.split()[1]) == 2
     assert profile.enable_count == 0
@@ -466,8 +481,9 @@ def test_partialmethod_decorator():
 
         bar = profile(functools.partialmethod(foo, 1))
 
-    assert isinstance(inspect.getattr_static(Object, 'bar'),
-                      functools.partialmethod)
+    assert isinstance(
+        inspect.getattr_static(Object, 'bar'), functools.partialmethod
+    )
     obj = Object()
     assert profile.enable_count == 0
     assert profile.functions == [Object.foo]
@@ -475,7 +491,7 @@ def test_partialmethod_decorator():
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo()` (via `.bar()`)
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('* x'))
+    (line,) = (line for line in output.splitlines() if line.endswith('* x'))
     # Check that the wrapped method has been run once
     assert int(line.split()[1]) == 1
     assert profile.enable_count == 0
@@ -504,15 +520,11 @@ def test_partial_decorator() -> None:
     assert profile.enable_count == 0
     # XXX: should we try do remove duplicates?
     assert profile.functions == [foo, foo]
-    assert (profiled_bar_1(3)
-            == profiled_bar_2(3)
-            == bar(3)
-            == foo(2, 3)
-            == 5)
+    assert profiled_bar_1(3) == profiled_bar_2(3) == bar(3) == foo(2, 3) == 5
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `foo()`
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('x + y'))
+    (line,) = (line for line in output.splitlines() if line.endswith('x + y'))
     # Check that the wrapped partials has been run twice in total
     assert int(line.split()[1]) == 2
     assert profile.enable_count == 0
@@ -558,10 +570,12 @@ def test_property_decorator():
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo`
     assert output.endswith('foo')
-    getter_line, = (line for line in output.splitlines()
-                    if line.endswith('* 2'))
-    setter_line, = (line for line in output.splitlines()
-                    if line.endswith('// 2'))
+    (getter_line,) = (
+        line for line in output.splitlines() if line.endswith('* 2')
+    )
+    (setter_line,) = (
+        line for line in output.splitlines() if line.endswith('// 2')
+    )
     # Check that the getter has been run twice and the setter once
     assert int(getter_line.split()[1]) == 2
     assert int(setter_line.split()[1]) == 1
@@ -598,7 +612,7 @@ def test_cached_property_decorator():
     output = strip(get_prof_stats(profile, name='profile', summarize=True))
     # Check that we have profiled `Object.foo`
     assert output.endswith('foo')
-    line, = (line for line in output.splitlines() if line.endswith('* 2'))
+    (line,) = (line for line in output.splitlines() if line.endswith('* 2'))
     # Check that the getter has been run once
     assert int(line.split()[1]) == 1
     assert profile.enable_count == 0
@@ -634,7 +648,8 @@ def test_class_decorator():
     assert set(profile.functions) == {
         Object.__init__.__wrapped__,
         Object.id.fget.__wrapped__,
-        vars(Object)['class_method'].__func__.__wrapped__}
+        vars(Object)['class_method'].__func__.__wrapped__,
+    }
     # Make some calls
     assert not profile.enable_count
     obj = Object(1)
@@ -678,7 +693,8 @@ def test_add_class_wrapper():
     # Check data
     all_nhits = {
         func_name.rpartition('.')[-1]: sum(nhits for (_, nhits, _) in entries)
-        for (*_, func_name), entries in profile.get_stats().timings.items()}
+        for (*_, func_name), entries in profile.get_stats().timings.items()
+    }
     assert all_nhits['__init__'] == all_nhits['__repr__'] == 2
 
 
@@ -691,13 +707,14 @@ def test_profiler_c_callable_no_op(decorate):
     """
     profile = LineProfiler()
 
-    for (func, Type) in [
-            (len, types.BuiltinFunctionType),
-            ('string'.split, types.BuiltinMethodType),
-            (vars(int)['from_bytes'], types.ClassMethodDescriptorType),
-            (str.split, types.MethodDescriptorType),
-            ((1).__str__, types.MethodWrapperType),
-            (int.__repr__, types.WrapperDescriptorType)]:
+    for func, Type in [
+        (len, types.BuiltinFunctionType),
+        ('string'.split, types.BuiltinMethodType),
+        (vars(int)['from_bytes'], types.ClassMethodDescriptorType),
+        (str.split, types.MethodDescriptorType),
+        ((1).__str__, types.MethodWrapperType),
+        (int.__repr__, types.WrapperDescriptorType),
+    ]:
         assert isinstance(func, Type)
         if decorate:  # Decoration is no-op
             assert profile(func) is func
@@ -710,6 +727,7 @@ def test_show_func_column_formatting():
     from line_profiler.line_profiler import show_func
     import line_profiler
     import io
+
     # Use a function in this module as an example
     func = line_profiler.line_profiler.show_text
     start_lineno = func.__code__.co_firstlineno
@@ -718,12 +736,23 @@ def test_show_func_column_formatting():
 
     def get_func_linenos(func):
         import sys
+
         if sys.version_info[0:2] >= (3, 10):
-            return sorted(set([t[0] if t[2] is None else t[2]
-                               for t in func.__code__.co_lines()]))
+            return sorted(
+                set(
+                    [
+                        t[0] if t[2] is None else t[2]
+                        for t in func.__code__.co_lines()
+                    ]
+                )
+            )
         else:
             import dis
-            return sorted(set([t[1] for t in dis.findlinestarts(func.__code__)]))
+
+            return sorted(
+                set([t[1] for t in dis.findlinestarts(func.__code__)])
+            )
+
     line_numbers = get_func_linenos(func)
 
     unit = 1.0
@@ -736,8 +765,16 @@ def test_show_func_column_formatting():
         for idx, lineno in enumerate(line_numbers, start=1)
     ]
     stream = io.StringIO()
-    show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit, stream, stripzeros)
+    show_func(
+        filename,
+        start_lineno,
+        func_name,
+        timings,
+        unit,
+        output_unit,
+        stream,
+        stripzeros,
+    )
     text = stream.getvalue()
     print(text)
 
@@ -746,17 +783,27 @@ def test_show_func_column_formatting():
         for idx, lineno in enumerate(line_numbers, start=1)
     ]
     stream = io.StringIO()
-    show_func(filename, start_lineno, func_name, timings, unit,
-              output_unit, stream, stripzeros)
+    show_func(
+        filename,
+        start_lineno,
+        func_name,
+        timings,
+        unit,
+        output_unit,
+        stream,
+        stripzeros,
+    )
     text = stream.getvalue()
     print(text)
 
     # TODO: write a check to verify columns are aligned nicely
 
 
-@pytest.mark.skipif(not hasattr(sys, 'monitoring'),
-                    reason='no `sys.monitoring` in version '
-                    f'{".".join(str(v) for v in sys.version_info[:2])}')
+@pytest.mark.skipif(
+    not hasattr(sys, 'monitoring'),
+    reason='no `sys.monitoring` in version '
+    f'{".".join(str(v) for v in sys.version_info[:2])}',
+)
 def test_sys_monitoring(monkeypatch):
     """
     Test that `LineProfiler` is properly registered with
@@ -795,17 +842,24 @@ def test_profile_generated_code():
     generated_code_name = "<generated: 'test_fn'>"
     assert is_generated_code(generated_code_name)
 
-    code_lines = [
-        "def test_fn():",
-        "    return 42"
-    ]
+    code_lines = ['def test_fn():', '    return 42']
 
-    linecache.cache[generated_code_name] = (None, None, [l + "\n" for l in code_lines], None)
+    linecache.cache[generated_code_name] = (
+        None,
+        None,
+        [l + '\n' for l in code_lines],
+        None,
+    )
 
     # Compile the generated code
     ns = {}
-    exec(compile("".join(l + "\n" for l in code_lines), generated_code_name, "exec"), ns)
-    fn = ns["test_fn"]
+    exec(
+        compile(
+            ''.join(l + '\n' for l in code_lines), generated_code_name, 'exec'
+        ),
+        ns,
+    )
+    fn = ns['test_fn']
 
     # Profile the generated function
     profiler = LineProfiler()
@@ -839,14 +893,14 @@ def test_multiple_profilers_usage():
     def sum_n_sq(n):
         x = 0
         for n in range(1, n + 1):
-            x += n ** 2
+            x += n**2
         return x
 
     @prof2
     def sum_n_cb(n):
         x = 0
         for n in range(1, n + 1):
-            x += n ** 3
+            x += n**3
         return x
 
     # If we decorate a wrapper, just "register" the profiler with the
@@ -859,16 +913,20 @@ def test_multiple_profilers_usage():
 
     # Call the functions
     n = 400
-    assert sum_n_wrapper_1(n) == .5 * n * (n + 1)
-    assert sum_n_wrapper_2(n) == .5 * n * (n + 1)
+    assert sum_n_wrapper_1(n) == 0.5 * n * (n + 1)
+    assert sum_n_wrapper_2(n) == 0.5 * n * (n + 1)
     assert 6 * sum_n_sq(n) == n * (n + 1) * (2 * n + 1)
-    assert sum_n_cb(n) == .25 * (n * (n + 1)) ** 2
+    assert sum_n_cb(n) == 0.25 * (n * (n + 1)) ** 2
 
     # Inspect the timings
-    t1 = {fname.rpartition('.')[-1]: entries
-          for (*_, fname), entries in prof1.get_stats().timings.items()}
-    t2 = {fname.rpartition('.')[-1]: entries
-          for (*_, fname), entries in prof2.get_stats().timings.items()}
+    t1 = {
+        fname.rpartition('.')[-1]: entries
+        for (*_, fname), entries in prof1.get_stats().timings.items()
+    }
+    t2 = {
+        fname.rpartition('.')[-1]: entries
+        for (*_, fname), entries in prof2.get_stats().timings.items()
+    }
     assert set(t1) == {'sum_n_sq', 'sum_n'}
     assert set(t2) == {'sum_n_cb', 'sum_n'}
     # Note: `prof1` active when both wrapper is called, but `prof2` only
@@ -909,7 +967,7 @@ def test_duplicate_code_objects():
     assert namespace_2['func'](20) == 20 * 21 // 2
     # Check that data from both calls are aggregated
     # (Entries are represented as tuples `(lineno, nhits, time)`)
-    entries, = profile.get_stats().timings.values()
+    (entries,) = profile.get_stats().timings.values()
     assert entries[-2][1] == 10 + 20
 
 
@@ -928,18 +986,9 @@ def test_duplicate_code_objects():
         '-func3:prof_all'
         '-func4:prof_all:prof_some',
         # More profiler stacks
-        'func1:p1:p2'
-        '-func2:p2:p3'
-        '-func3:p3:p4'
-        '-func4:p4:p1',
-        'func1:p1:p2:p3'
-        '-func2:p2:p3:p4'
-        '-func3:p3:p4:p1'
-        '-func4:p4:p1:p2',
-        'func1:p1:p2:p3'
-        '-func2:p4:p3:p2'
-        '-func3:p3:p4:p1'
-        '-func4:p2:p1:p4',
+        'func1:p1:p2-func2:p2:p3-func3:p3:p4-func4:p4:p1',
+        'func1:p1:p2:p3-func2:p2:p3:p4-func3:p3:p4:p1-func4:p4:p1:p2',
+        'func1:p1:p2:p3-func2:p4:p3:p2-func3:p3:p4:p1-func4:p2:p1:p4',
         # Misc. edge cases
         # - Naive padding of the following case would cause `func1()`
         #   and `func2()` to end up with the same bytecode, so guard
@@ -953,9 +1002,11 @@ def test_duplicate_code_objects():
         '-func3:p3:p4'
         '-func4:p4:p1'
         '-func1:p1',  # Now we're passing `func1()` to `p1` twice
-    ])
+    ],
+)
 def test_multiple_profilers_identical_bytecode(
-        tmp_path, ops, force_same_line_numbers):
+    tmp_path, ops, force_same_line_numbers
+):
     """
     Test that functions compiling down to the same bytecode are
     correctly handled between multiple profilers.
@@ -969,36 +1020,42 @@ def test_multiple_profilers_identical_bytecode(
     - `force_same_line_numbers` is used to coerce all functions to
       compile down to code objects with the same line numbers.
     """
+
     def check_seen(name, output, func_id, expected):
-        lines = [line for line in output.splitlines()
-                 if line.startswith('Function: ')]
+        lines = [
+            line
+            for line in output.splitlines()
+            if line.startswith('Function: ')
+        ]
         if any(func_id in line for line in lines) == expected:
             return
         if expected:
-            raise AssertionError(
-                f'profiler `@{name}` didn\'t see `{func_id}()`')
-        raise AssertionError(
-            f'profiler `@{name}` saw `{func_id}()`')
+            raise AssertionError(f"profiler `@{name}` didn't see `{func_id}()`")
+        raise AssertionError(f'profiler `@{name}` saw `{func_id}()`')
 
     def check_has_profiling_data(name, output, func_id, expected):
         assert func_id.startswith('func')
-        nloops = func_id[len('func'):]
+        nloops = func_id[len('func') :]
         try:
-            line = next(line for line in output.splitlines()
-                        if line.endswith(f'result.append({nloops})'))
+            line = next(
+                line
+                for line in output.splitlines()
+                if line.endswith(f'result.append({nloops})')
+            )
         except StopIteration:
             if expected:
                 raise AssertionError(
-                    f'profiler `@{name}` didn\'t see `{func_id}()`')
+                    f"profiler `@{name}` didn't see `{func_id}()`"
+                )
             else:
                 return
         if (line.split()[1] == nloops) == expected:
             return
         if expected:
             raise AssertionError(
-                f'profiler `@{name}` didn\'t get data from `{func_id}()`')
-        raise AssertionError(
-            f'profiler `@{name}` got data from `{func_id}()`')
+                f"profiler `@{name}` didn't get data from `{func_id}()`"
+            )
+        raise AssertionError(f'profiler `@{name}` got data from `{func_id}()`')
 
     if force_same_line_numbers:
         funcs = {}
@@ -1015,6 +1072,7 @@ def test_multiple_profilers_identical_bytecode(
             tempfile.write_text(source)
             exec(compile(source, str(tempfile), 'exec'), funcs)
     else:
+
         def func1():
             result = []
             for _ in range(1):
@@ -1039,8 +1097,7 @@ def test_multiple_profilers_identical_bytecode(
                 result.append(4)
             return result
 
-        funcs = {'func1': func1, 'func2': func2,
-                 'func3': func3, 'func4': func4}
+        funcs = {'func1': func1, 'func2': func2, 'func3': func3, 'func4': func4}
 
     # Apply the decorators in order
     all_dec_names = {f'func{i}': set() for i in [1, 2, 3, 4]}
@@ -1060,10 +1117,14 @@ def test_multiple_profilers_identical_bytecode(
     assert funcs['func3']() == [3, 3, 3]
     assert funcs['func4']() == [4, 4, 4, 4]
     # Check that the bytecodes of the profiled functions are distinct
-    profiled_funcs = {funcs[name].__line_profiler_id__.func
-                      for name, decs in all_dec_names.items() if decs}
-    assert len({func.__code__.co_code
-                for func in profiled_funcs}) == len(profiled_funcs)
+    profiled_funcs = {
+        funcs[name].__line_profiler_id__.func
+        for name, decs in all_dec_names.items()
+        if decs
+    }
+    assert len({func.__code__.co_code for func in profiled_funcs}) == len(
+        profiled_funcs
+    )
     # Check the profiling results
     for name, prof in sorted(all_profs.items()):
         output = get_prof_stats(prof, name=name, summarize=True)
@@ -1079,6 +1140,7 @@ def test_aggregate_profiling_data_between_code_versions():
     are preserved when another profiler causes the code object of a
     function to be overwritten.
     """
+
     def func(n):
         x = 0
         for n in range(1, n + 1):
@@ -1101,13 +1163,16 @@ def test_aggregate_profiling_data_between_code_versions():
     # `prof1.get_stats()`
     for prof, name, count in (prof1, 'prof1', 25), (prof2, 'prof2', 15):
         result = get_prof_stats(prof, name)
-        loop_body = next(line for line in result.splitlines()
-                         if line.endswith('x += n'))
+        loop_body = next(
+            line for line in result.splitlines() if line.endswith('x += n')
+        )
         assert loop_body.split()[1] == str(count)
 
 
-@pytest.mark.xfail(condition=sys.version_info[:2] == (3, 9),
-                   reason='Handling of `finally` bugged in Python 3.9')
+@pytest.mark.xfail(
+    condition=sys.version_info[:2] == (3, 9),
+    reason='Handling of `finally` bugged in Python 3.9',
+)
 def test_profiling_exception():
     """
     Test that profiling data is reported for:
@@ -1150,9 +1215,12 @@ def test_profiling_exception():
             l.append(3)  # Try-except-finally: finally
 
     l = []
-    for func in [func_raise, func_try_finally,
-                 functools.partial(func_try_except_finally, True),
-                 functools.partial(func_try_except_finally, False)]:
+    for func in [
+        func_raise,
+        func_try_finally,
+        functools.partial(func_try_except_finally, True),
+        functools.partial(func_try_except_finally, False),
+    ]:
         try:
             func()
         except MyException:
@@ -1160,11 +1228,15 @@ def test_profiling_exception():
     result = get_prof_stats(prof)
     assert l == [1, 2, 3, 2, 3]
     for stmt, nhits in [
-            ('raise', 1), ('try-finally', 1), ('try-except-finally', 2)]:
+        ('raise', 1),
+        ('try-finally', 1),
+        ('try-except-finally', 2),
+    ]:
         for step in stmt.split('-'):
             comment = '# {}: {}'.format(stmt.capitalize(), step)
-            line = next(line for line in result.splitlines()
-                        if line.endswith(comment))
+            line = next(
+                line for line in result.splitlines() if line.endswith(comment)
+            )
             assert line.split()[1] == str(nhits)
 
 
@@ -1179,6 +1251,7 @@ def test_load_stats_files(legacy, n):
     that we ensure that ``'.lprof'`` files written by old versions of
     :py:mod:`line_profiler` is still properly handled.
     """
+
     def write(stats, filename):
         if legacy:
             legacy_stats = type(stats).__base__(stats.timings, stats.unit)
@@ -1189,10 +1262,14 @@ def test_load_stats_files(legacy, n):
             stats.to_file(filename)
         return filename
 
-    stats1 = LineStats({('foo', 1, 'spam.py'): [(2, 3, 3600)]}, .015625)
-    stats2 = LineStats({('foo', 1, 'spam.py'): [(2, 4, 700)],
-                        ('bar', 10, 'spam.py'): [(10, 20, 1000)]},
-                       .0625)
+    stats1 = LineStats({('foo', 1, 'spam.py'): [(2, 3, 3600)]}, 0.015625)
+    stats2 = LineStats(
+        {
+            ('foo', 1, 'spam.py'): [(2, 4, 700)],
+            ('bar', 10, 'spam.py'): [(10, 20, 1000)],
+        },
+        0.0625,
+    )
     with TemporaryDirectory() as tmpdir:
         fname1 = write(stats1, os.path.join(tmpdir, '1.lprof'))
         if n == 1:
