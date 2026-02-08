@@ -52,7 +52,7 @@ import operator
 import sys
 import types
 from collections.abc import MutableMapping
-from typing import Any, cast
+from typing import Any, cast, Dict
 from .ast_tree_profiler import AstTreeProfiler
 from .run_module import AstTreeModuleProfiler
 from .line_profiler_utils import add_imported_function_or_module
@@ -150,4 +150,4 @@ def run(script_file: str, ns: MutableMapping[str, Any],
     code_obj = compile(tree_profiled, script_file, 'exec')
     with ctx as callback:
         callback()
-        exec(code_obj, cast(dict[str, Any], namespace), namespace)
+        exec(code_obj, cast(Dict[str, Any], namespace), namespace)
