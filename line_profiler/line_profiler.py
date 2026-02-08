@@ -22,7 +22,6 @@ from datetime import datetime
 from os import PathLike
 from typing import (TYPE_CHECKING, IO, Callable, Literal, Mapping, Protocol,
                     Sequence, TypeVar, cast, Tuple)
-from functools import cached_property, partial, partialmethod
 
 try:
     from ._line_profiler import (LineProfiler as CLineProfiler,
@@ -41,7 +40,6 @@ from .toml_config import ConfigSource
 
 if TYPE_CHECKING:  # pragma: no cover
     from typing_extensions import ParamSpec, Self
-    from .profiler_mixin import CLevelCallable, UnparametrizedCallableLike
 
     class _IPythonLike(Protocol):
         def register_magics(self, magics: type) -> None:
@@ -52,7 +50,7 @@ if TYPE_CHECKING:  # pragma: no cover
     T = TypeVar('T')
     T_co = TypeVar('T_co', covariant=True)
 
-    ColumnLiterals = Literal['line', 'hits', 'time', 'perhit', 'percent']
+ColumnLiterals = Literal['line', 'hits', 'time', 'perhit', 'percent']
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
