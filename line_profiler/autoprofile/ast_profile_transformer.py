@@ -34,7 +34,7 @@ def ast_create_profile_node(
     """
     func = ast.Attribute(value=ast.Name(id=profiler_name, ctx=ast.Load()), attr=attr, ctx=ast.Load())
     names = modname.split('.')
-    value = ast.Name(id=names[0], ctx=ast.Load())
+    value: ast.expr = ast.Name(id=names[0], ctx=ast.Load())
     for name in names[1:]:
         value = ast.Attribute(attr=name, ctx=ast.Load(), value=value)
     expr = ast.Expr(value=ast.Call(func=func, args=[value], keywords=[]))
@@ -123,7 +123,8 @@ class AstProfileTransformer(ast.NodeTransformer):
         if not self._profile_imports:
             self.generic_visit(node)
             return node
-        visited = [cast(Union[ast.Import, ast.ImportFrom], self.generic_visit(node))]
+        this_visit = cast(Union[ast.Import, ast.ImportFrom], self.generic_visit(node))
+        visited: list[ast.Import | ast.ImportFrom | ast.Expr] = [this_visit]
         for names in node.names:
             node_name = names.name if names.asname is None else names.asname
             if node_name in self._profiled_imports:

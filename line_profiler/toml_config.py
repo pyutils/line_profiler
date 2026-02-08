@@ -236,15 +236,16 @@ class ConfigSource:
         if _result is None:
             if config:
                 if os.path.exists(config):
-                    Error = ValueError
-                else:
-                    Error = FileNotFoundError
-                raise Error(
-                    f'Cannot load configurations from {config!r}') from None
+                    raise ValueError(
+                        f'Cannot load configurations from {config!r}'
+                    ) from None
+                raise FileNotFoundError(
+                    f'Cannot load configurations from {config!r}'
+                ) from None
             return default_instance
         else:
             content, source = _result
-        conf = {}
+        conf: dict[str, Mapping[str, Any]] = {}
         try:
             for header in get_headers(default_instance.conf_dict):
                 # Get the top-level subtable
@@ -330,7 +331,7 @@ def find_and_read_config_file(
     return None
 
 
-def get_subtable(table: Mapping[K, V], keys: Sequence[K], *,
+def get_subtable(table: Mapping[K, Mapping], keys: Sequence[K], *,
                  allow_absence: bool = True) -> Mapping:
     """
     Arguments:
@@ -405,7 +406,7 @@ def get_headers(table: Mapping[K, Any], *,
         >>> assert get_headers({}) == set()
         >>> assert get_headers({'a': 1, 'b': 2}) == set()
     """
-    results = set()
+    results: set[tuple[K, ...]] = set()
     for key, value in table.items():
         if not isinstance(value, Mapping):
             continue

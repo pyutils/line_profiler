@@ -13,8 +13,13 @@ from .line_profiler_utils import StringEnum
 #: * Descend ingo sibling and descendant classes
 #:   (:py:attr:`ScopingPolicy.SIBLINGS`)
 #: * Don't descend into modules (:py:attr:`ScopingPolicy.EXACT`)
-DEFAULT_SCOPING_POLICIES = MappingProxyType(
-    {'func': 'siblings', 'class': 'siblings', 'module': 'exact'})
+DEFAULT_SCOPING_POLICIES: ScopingPolicyDict = {
+    'func': 'siblings',
+    'class': 'siblings',
+    'module': 'exact'
+}
+
+
 
 
 class ScopingPolicy(StringEnum):
@@ -186,8 +191,7 @@ class ScopingPolicy(StringEnum):
         object types.
 
         Args:
-            policies (Union[str, ScopingPolicy, \
-ScopingPolicyDict, None]):
+            policies (Union[str, ScopingPolicy, ScopingPolicyDict, None]):
                 :py:class:`ScopingPolicy`, string convertible thereto
                 (case-insensitive), or a mapping containing such values
                 and the keys as outlined in the return value;
@@ -195,8 +199,7 @@ ScopingPolicyDict, None]):
                 :py:data:`DEFAULT_SCOPING_POLICIES`.
 
         Returns:
-            normalized_policies (dict[Literal['func', 'class', \
-'module'], ScopingPolicy]):
+            normalized_policies (dict[Literal['func', 'class', 'module'], ScopingPolicy]):
                 Dictionary with the following key-value pairs:
 
                 ``'func'``
@@ -238,8 +241,11 @@ ScopingPolicyDict, None]):
             policies = DEFAULT_SCOPING_POLICIES
         if isinstance(policies, str):
             policy = cls(policies)
-            return _ScopingPolicyDict(
-                dict.fromkeys(['func', 'class', 'module'], policy))
+            return _ScopingPolicyDict({
+                'func': policy,
+                'class': policy,
+                'module': policy,
+            })
         return _ScopingPolicyDict({'func': cls(policies['func']),
                                    'class': cls(policies['class']),
                                    'module': cls(policies['module'])})
@@ -339,11 +345,13 @@ ScopingPolicyDict, None]):
 # the corresponding methods
 ScopingPolicy._check_class()
 
+
 ScopingPolicyDict = TypedDict(
     'ScopingPolicyDict',
     {'func': Union[str, ScopingPolicy],
      'class': Union[str, ScopingPolicy],
      'module': Union[str, ScopingPolicy]})
+
 _ScopingPolicyDict = TypedDict(
     '_ScopingPolicyDict',
     {'func': ScopingPolicy,
