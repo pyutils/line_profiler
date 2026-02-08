@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 def test_import():
     import line_profiler
     assert hasattr(line_profiler, 'LineProfiler')

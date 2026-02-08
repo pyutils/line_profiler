@@ -1,6 +1,7 @@
 """
 Tests for profiling Cython code.
 """
+from __future__ import annotations
 import math
 import os
 import shutil
@@ -62,16 +63,16 @@ def _install_cython_example(
         pip_install += ['--editable', str(tmp_path)]
     else:
         pip_install.append(str(tmp_path))
-    
+
     # Set environment variables to avoid isolated build environment issues
     # with Cython's compiled extensions
     env = os.environ.copy()
     env['PIP_NO_BINARY'] = 'Cython'
-    
+
     try:
         subprocess.run(pip_install, env=env).check_returncode()
         subprocess.run(pip + ['list'], env=env).check_returncode()
-        
+
         # For non-editable installs, we need to manually copy the .pyx file
         # to where find_cython_source_file() can find it, and yield that location
         actual_source = cython_source
@@ -82,7 +83,7 @@ def _install_cython_example(
                 installed_pyx = installed_so.parent / cython_source.name
                 shutil.copy2(cython_source, installed_pyx)
                 actual_source = installed_pyx
-        
+
         yield actual_source, module
     finally:
         pip_uninstall = pip + ['uninstall', '--verbose', '--yes', module]

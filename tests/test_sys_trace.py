@@ -10,6 +10,7 @@ Notes
 - However, there effects are isolated since each test is run in a
   separate Python subprocess.
 """
+from __future__ import annotations
 import concurrent.futures
 import functools
 import inspect

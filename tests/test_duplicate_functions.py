@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 def test_duplicate_function():
     """
     Test from https://github.com/pyutils/line_profiler/issues/232
