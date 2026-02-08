@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-import functools
 import importlib.resources
 import itertools
 import os
@@ -17,17 +16,22 @@ except ImportError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef] # noqa: F811
 from collections.abc import Mapping
 from os import PathLike
-from typing import Any, Mapping as TypingMapping, Sequence, TypeVar, cast
+from typing import Any, Sequence, TypeVar, cast, Tuple, Dict
 from typing_extensions import Self
 
 
 __all__ = ['ConfigSource']
 
 NAMESPACE = 'tool', 'line_profiler'
-TARGETS = 'line_profiler.toml', 'pyproject.toml'
+TARGETS = ['line_profiler.toml', 'pyproject.toml']
 ENV_VAR = 'LINE_PROFILER_RC'
 
 _DEFAULTS: ConfigSource | None = None
+
+
+Config = Tuple[Dict[str, Dict[str, Any]], pathlib.Path]
+K = TypeVar('K')
+V = TypeVar('V')
 
 
 @dataclasses.dataclass
@@ -37,7 +41,7 @@ class ConfigSource:
     read from.
 
     Attributes:
-        conf_dict (dict[str, Any])
+        conf_dict (Mapping[str, Any])
             The combination of the ``tool.line_profiler`` tables of the
             provided/looked-up config file (if any) and the default as a
             dictionary.
@@ -49,7 +53,7 @@ class ConfigSource:
             :py:attr:`~.ConfigSource.path`
             :py:attr:`~.ConfigSource.conf_dict` can be found.
     """
-    conf_dict: dict[str, Any]
+    conf_dict: Mapping[str, Any]
     path: pathlib.Path
     subtable: list[str]
 
@@ -203,8 +207,8 @@ class ConfigSource:
                 configuration (see
                 :py:meth:`~.ConfigSource.from_default`).
         """
-        def merge(template: dict[str, Any], supplied: dict[str, Any]):
-            if not (isinstance(template, dict) and isinstance(supplied, dict)):
+        def merge(template: Mapping[str, Any], supplied: Mapping[str, Any]):
+            if not (isinstance(template, Mapping) and isinstance(supplied, Mapping)):
                 return supplied
             result = {}
             for key, default in template.items():
@@ -225,13 +229,11 @@ class ConfigSource:
             # Promote to `Path` (and catch type errors) early
             config = pathlib.Path(config)
         if read_env:
-            get_conf = functools.partial(find_and_read_config_file,
-                                         config=config)
-        else:  # Shield the lookup from the environment
-            get_conf = functools.partial(find_and_read_config_file,
-                                         config=config, env_var=None)
-        result = get_conf()
-        if result is None:
+            _result = find_and_read_config_file(config=config)
+        else:
+            # Shield the lookup from the environment
+            _result = find_and_read_config_file(config=config, env_var=None)
+        if _result is None:
             if config:
                 if os.path.exists(config):
                     Error = ValueError
@@ -240,7 +242,8 @@ class ConfigSource:
                 raise Error(
                     f'Cannot load configurations from {config!r}') from None
             return default_instance
-        content, source = result
+        else:
+            content, source = _result
         conf = {}
         try:
             for header in get_headers(default_instance.conf_dict):
@@ -272,12 +275,6 @@ class ConfigSource:
         # pairs present in the default configs
         return cls(
             merge(default_instance.conf_dict, conf), source, list(NAMESPACE))
-
-
-Config = tuple[dict[str, dict[str, Any]], pathlib.Path]
-K = TypeVar('K')
-V = TypeVar('V')
-NestedTable = TypingMapping[K, 'NestedTable[K, V]' | V]
 
 
 def find_and_read_config_file(
@@ -333,8 +330,8 @@ def find_and_read_config_file(
     return None
 
 
-def get_subtable(table: NestedTable[K, V], keys: Sequence[K], *,
-                 allow_absence: bool = True) -> NestedTable[K, V]:
+def get_subtable(table: Mapping[K, V], keys: Sequence[K], *,
+                 allow_absence: bool = True) -> Mapping[K, V]:
     """
     Arguments:
         table (Mapping):
@@ -380,7 +377,7 @@ def get_subtable(table: NestedTable[K, V], keys: Sequence[K], *,
     return subtable
 
 
-def get_headers(table: NestedTable[K, Any], *,
+def get_headers(table: Mapping[K, Any], *,
                 include_implied: bool = False) -> set[tuple[K, ...]]:
     """
     Arguments:

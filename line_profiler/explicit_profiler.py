@@ -182,7 +182,6 @@ from .line_profiler import LineProfiler
 from .toml_config import ConfigSource
 
 F = TypeVar('F', bound=Callable[..., Any])
-ConfigArg = str | pathlib.PurePath | bool | None
 
 # The first process that enables profiling records its PID here. Child processes
 # created via multiprocessing (spawn/forkserver) inherit this environment value,

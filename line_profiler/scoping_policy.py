@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import auto
 from types import FunctionType, MappingProxyType, ModuleType
-from typing import Callable, Literal, TypedDict, cast, overload
+from typing import Callable, Literal, TypedDict, cast, overload, Union
 from .line_profiler_utils import StringEnum
 
 
@@ -341,9 +341,9 @@ ScopingPolicy._check_class()
 
 ScopingPolicyDict = TypedDict(
     'ScopingPolicyDict',
-    {'func': str | ScopingPolicy,
-     'class': str | ScopingPolicy,
-     'module': str | ScopingPolicy})
+    {'func': Union[str, ScopingPolicy],
+     'class': Union[str, ScopingPolicy],
+     'module': Union[str, ScopingPolicy]})
 _ScopingPolicyDict = TypedDict(
     '_ScopingPolicyDict',
     {'func': ScopingPolicy,
