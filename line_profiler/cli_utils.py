@@ -20,32 +20,10 @@ _BOOLEAN_VALUES = {**{k.casefold(): False
                    **{k.casefold(): True
                       for k in ('1', 'on', 'True', 'T', 'yes', 'Y')}}
 
-P_con = TypeVar('P_con', bound='ParserLike', contravariant=True)
-A_co = TypeVar('A_co', bound='ActionLike', covariant=True)
 
-
-class ActionLike(Protocol[P_con]):
-    def __call__(self, parser: P_con, namespace: argparse.Namespace,
-                 values: str | Sequence[object] | None,
-                 option_string: str | None = None) -> None:
-        ...
-
-    def format_usage(self) -> str:
-        ...
-
-
-class ParserLike(Protocol[A_co]):
-    def add_argument(self, arg: str, /, *args: str, **kwargs: object) -> A_co:
-        ...
-
-    @property
-    def prefix_chars(self) -> str:
-        ...
-
-
-def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
+def add_argument(parser_like, arg: str, /, *args: str,
                  hide_complementary_options: bool = True,
-                 **kwargs: object) -> A_co:
+                 **kwargs: object) -> argparse.Action:
     """
     Override the ``'store_true'`` and ``'store_false'`` actions so that
     they are turned into options which:
@@ -123,10 +101,9 @@ def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
         kwargs.setdefault(key, value)
     long_kwargs = kwargs.copy()
     short_kwargs = {**kwargs, 'action': 'store_const'}
-    for key, value in dict(
-            nargs='?',
-            type=functools.partial(boolean, invert=not const)).items():
-        long_kwargs.setdefault(key, value)
+
+    long_kwargs.setdefault('nargs', '?')
+    long_kwargs.setdefault('type', functools.partial(boolean, invert=not const))
 
     # Mention the short options in the long options' documentation, and
     # suppress the short options in the help
@@ -155,8 +132,8 @@ def add_argument(parser_like: ParserLike[A_co], arg: str, /, *args: str,
             long_kwargs['help'] = f'({additional_msg})'
         short_kwargs['help'] = argparse.SUPPRESS
 
-    long_action: A_co | None = None
-    short_action: A_co | None = None
+    long_action = None
+    short_action = None
     if long_flags:
         long_action = parser_like.add_argument(*long_flags, **long_kwargs)
         short_kwargs['dest'] = long_action.dest

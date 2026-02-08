@@ -21,7 +21,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from os import PathLike
 from typing import (TYPE_CHECKING, IO, Callable, Literal, Mapping, Protocol,
-                    Sequence, TypeVar, cast, overload, Tuple)
+                    Sequence, TypeVar, cast, Tuple)
 from functools import cached_property, partial, partialmethod
 
 try:
@@ -52,6 +52,8 @@ if TYPE_CHECKING:  # pragma: no cover
     T = TypeVar('T')
     T_co = TypeVar('T_co', covariant=True)
 
+    ColumnLiterals = Literal['line', 'hits', 'time', 'perhit', 'percent']
+
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '5.0.2'
@@ -59,11 +61,11 @@ __version__ = '5.0.2'
 
 @functools.lru_cache()
 def get_column_widths(
-        config: bool | str | PathLike[str] | None = False
-) -> Mapping[Literal['line', 'hits', 'time', 'perhit', 'percent'], int]:
+        config: bool | str | None = False
+) -> Mapping[ColumnLiterals, int]:
     """
     Arguments
-        config (bool | str | pathlib.PurePath | None)
+        config (bool | str | None)
             Passed to :py:meth:`.ConfigSource.from_config`.
     Note:
         * Results are cached.
@@ -73,8 +75,7 @@ def get_column_widths(
     subconf = (ConfigSource.from_config(config)
                .get_subconfig('show', 'column_widths'))
     return types.MappingProxyType(
-        cast(Mapping[Literal['line', 'hits', 'time', 'perhit', 'percent'], int],
-             subconf.conf_dict))
+        cast(Mapping[ColumnLiterals, int], subconf.conf_dict))
 
 
 def load_ipython_extension(ip: object) -> None:
@@ -107,8 +108,7 @@ def get_code_block(filename: os.PathLike[str] | str, lineno: int) -> list[str]:
         this repo since 2008 (`fb60664`_), so we will continue using it
         until we can't.
 
-        .. _fb60664: https://github.com/pyutils/line_profiler/commit/\
-fb60664135296ba6061cfaa2bb66d4ba77964c53
+        .. _fb60664: https://github.com/pyutils/line_profiler/commit/fb60664135296ba6061cfaa2bb66d4ba77964c53
 
 
     Example:
@@ -237,8 +237,6 @@ class LineStats(CLineStats):
         """
         Example:
             >>> from copy import deepcopy
-            >>>
-            >>>
             >>> stats1 = LineStats(
             ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
             ...      ('bar', 10, 'spam.py'):
@@ -418,45 +416,8 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         >>> func()
         >>> profile.print_stats()
     """
-    @overload
-    def __call__(self, func: CLevelCallable) -> CLevelCallable:
-        ...
 
-    @overload
-    def __call__(self, func: UnparametrizedCallableLike) -> UnparametrizedCallableLike:
-        ...
-
-    @overload
-    def __call__(self, func: type[T]) -> type[T]:
-        ...
-
-    @overload
-    def __call__(self, func: partial[T]) -> partial[T]:
-        ...
-
-    @overload
-    def __call__(self, func: partialmethod[T]) -> partialmethod[T]:
-        ...
-
-    @overload
-    def __call__(self, func: cached_property[T_co]) -> cached_property[T_co]:
-        ...
-
-    @overload
-    def __call__(self, func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
-        ...
-
-    @overload
-    def __call__(
-        self, func: classmethod[type[T], PS, T_co],
-    ) -> classmethod[type[T], PS, T_co]:
-        ...
-
-    @overload
-    def __call__(self, func: Callable) -> types.FunctionType:
-        ...
-
-    def __call__(self, func: object):
+    def __call__(self, func: Callable) -> Callable:
         """
         Decorate a function, method, :py:class:`property`,
         :py:func:`~functools.partial` object etc. to start the profiler
@@ -472,7 +433,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         self.add_callable(func)
         return self.wrap_callable(func)
 
-    def wrap_callable(self, func: object):
+    def wrap_callable(self, func: Callable) -> Callable:
         if is_c_level_callable(func):  # Non-profilable
             return func
         return super().wrap_callable(func)
@@ -894,6 +855,8 @@ def show_func(filename: str, start_lineno: int, func_name: str,
         sublines = [''] * nlines
 
     # Define minimum column sizes so text fits and usually looks consistent
+    if isinstance(config, os.PathLike):
+        config = os.fspath(config)
     conf_column_sizes = get_column_widths(config)
     default_column_sizes = {
         col: max(width, conf_column_sizes.get(col, width))
@@ -933,18 +896,18 @@ def show_func(filename: str, start_lineno: int, func_name: str,
         column_sizes['time'] = max(column_sizes['time'], max_timelen)
         column_sizes['perhit'] = max(column_sizes['perhit'], max_perhitlen)
 
-    col_order = ['line', 'hits', 'time', 'perhit', 'percent']
+    col_order: list[ColumnLiterals] = ['line', 'hits', 'time', 'perhit', 'percent']
     lhs_template = ' '.join(['%' + str(column_sizes[k]) + 's' for k in col_order])
     template = lhs_template + '  %-s'
 
-    linenos = range(start_lineno, start_lineno + len(sublines))
+    linenos = list(range(start_lineno, start_lineno + len(sublines)))
     empty = ('', '', '', '')
     header = ('Line #', 'Hits', 'Time', 'Per Hit', '% Time', 'Line Contents')
-    header = template % header
+    header_line = template % header
     stream.write('\n')
-    stream.write(header)
+    stream.write(header_line)
     stream.write('\n')
-    stream.write('=' * len(header))
+    stream.write('=' * len(header_line))
     stream.write('\n')
 
     if rich:
@@ -952,8 +915,8 @@ def show_func(filename: str, start_lineno: int, func_name: str,
         lhs_lines = []
         rhs_lines = []
         for lineno, line in zip(linenos, sublines):
-            nhits, time, per_hit, percent = display.get(lineno, empty)
-            txt = lhs_template % (lineno, nhits, time, per_hit, percent)
+            nhits_s, time_s, per_hit_s, percent_s = display.get(lineno, empty)
+            txt = lhs_template % (lineno, nhits_s, time_s, per_hit_s, percent_s)
             rhs_lines.append(line.rstrip('\n').rstrip('\r'))
             lhs_lines.append(txt)
 
@@ -991,16 +954,16 @@ def show_func(filename: str, start_lineno: int, func_name: str,
         stream.write('\n')
     else:
         for lineno, line in zip(linenos, sublines):
-            nhits, time, per_hit, percent = display.get(lineno, empty)
+            nhits_s, time_s, per_hit_s, percent_s = display.get(lineno, empty)
             line_ = line.rstrip('\n').rstrip('\r')
-            txt = template % (lineno, nhits, time, per_hit, percent, line_)
+            txt = template % (lineno, nhits_s, time_s, per_hit_s, percent_s, line_)
             try:
                 stream.write(txt)
             except UnicodeEncodeError:
                 # todo: better handling of windows encoding issue
                 # for now just work around it
                 line_ = 'UnicodeEncodeError - help wanted for a fix'
-                txt = template % (lineno, nhits, time, per_hit, percent, line_)
+                txt = template % (lineno, nhits_s, time_s, per_hit_s, percent_s, line_)
                 stream.write(txt)
 
             stream.write('\n')
@@ -1039,7 +1002,7 @@ def show_text(stats: _TimingsMap, unit: float,
         stats_order = sorted(stats.items(), key=lambda kv: sum(t[2] for t in kv[1]))
     else:
         # Default ordering
-        stats_order = stats.items()
+        stats_order = list(stats.items())
 
     # Pre-lookup the appropriate config file
     config = ConfigSource.from_config(config).path

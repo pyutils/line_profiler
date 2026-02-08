@@ -6,7 +6,7 @@ import types
 from functools import cached_property, partial, partialmethod
 from sys import version_info
 from typing import (TYPE_CHECKING, Any, Callable, Mapping, Protocol, TypeVar,
-                    overload, cast)
+                    cast)
 from warnings import warn
 from ._line_profiler import label
 from .scoping_policy import ScopingPolicy
@@ -193,35 +193,6 @@ class ByCountProfilerMixin:
     Used by :py:class:`line_profiler.line_profiler.LineProfiler` and
     :py:class:`kernprof.ContextualProfile`.
     """
-    @overload
-    def wrap_callable(self, func: CLevelCallable) -> CLevelCallable:
-        ...
-
-    @overload
-    def wrap_callable(
-        self, func: UnparametrizedCallableLike,
-    ) -> UnparametrizedCallableLike:
-        ...
-
-    @overload
-    def wrap_callable(self, func: type[T]) -> type[T]:
-        ...
-
-    @overload
-    def wrap_callable(self, func: partial[T]) -> partial[T]:
-        ...
-
-    @overload
-    def wrap_callable(self, func: partialmethod[T]) -> partialmethod[T]:
-        ...
-
-    @overload
-    def wrap_callable(self, func: cached_property[T_co]) -> cached_property[T_co]:
-        ...
-
-    @overload
-    def wrap_callable(self, func: staticmethod[PS, T_co]) -> staticmethod[PS, T_co]:
-        ...
 
     def enable_by_count(self) -> None:  # pragma: no cover - implemented in C
         raise NotImplementedError
@@ -229,7 +200,7 @@ class ByCountProfilerMixin:
     def disable_by_count(self) -> None:  # pragma: no cover - implemented in C
         raise NotImplementedError
 
-    def wrap_callable(self, func: object):
+    def wrap_callable(self, func: Callable) -> Callable:
         """
         Decorate a function to start the profiler on function entry and
         stop it on function exit.
