@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import List, cast, Any
+from typing import List, cast, Any, Union
 from .util_static import (modname_to_modpath, modpath_to_modname,
                           package_modpaths)
 
@@ -99,7 +99,7 @@ class ProfmodExtractor:
             if it fails, the item may point to an installed module rather than local script
             so we check if the item is path and whether that path exists, else skip the item.
             """
-            modpath = modname_to_modpath(mod, sys_path=cast(List[str | os.PathLike[Any]], new_sys_path))
+            modpath = modname_to_modpath(mod, sys_path=cast(List[Union[str, os.PathLike[Any]]], new_sys_path))
             if modpath is None:
                 """if cannot convert to modpath, check if already path and if invalid"""
                 if not os.path.exists(mod):
