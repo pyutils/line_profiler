@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from typing import cast, Union
+from typing import cast, Union, List
 
 
 def ast_create_profile_node(
@@ -149,7 +149,7 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return cast(Union[ast.Import, list[Union[ast.Import, ast.Expr]]],
+        return cast(Union[ast.Import, List[Union[ast.Import, ast.Expr]]],
                     self._visit_import(node))
 
     def visit_ImportFrom(
@@ -168,5 +168,5 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return cast(Union[ast.ImportFrom, list[Union[ast.ImportFrom, ast.Expr]]],
+        return cast(Union[ast.ImportFrom, List[Union[ast.ImportFrom, ast.Expr]]],
                     self._visit_import(node))
