@@ -9,5 +9,5 @@ ninja>=1.10.2
 
 cibuildwheel>=3.1.2    ; python_version < '4.0'  and python_version >= '3.11'    # Python 3.11+
 cibuildwheel>=3.1.2    ; python_version < '3.11' and python_version >= '3.10'    # Python 3.10
-cibuildwheel>=3.1.2    ; python_version < '3.10' and python_version >= '3.9'     # Python 3.9
-cibuildwheel>=3.1.2    ; python_version < '3.9'  and python_version >= '3.8'     # Python 3.8
+cibuildwheel>=2.19.2   ; python_version < '3.10' and python_version >= '3.9'     # Python 3.9
+cibuildwheel>=2.19.2   ; python_version < '3.9'  and python_version >= '3.8'     # Python 3.8
