@@ -23,6 +23,10 @@ exclude_lines =[
     "^ *pass *$",
     "if _debug:",
     "if __name__ == .__main__.:",
+    ".*if typing.TYPE_CHECKING:",
+    ".*if TYPE_CHECKING:",
+    "@typing.overload",
+    "@overload",
 ]
 
 omit =[
@@ -81,3 +85,10 @@ norecursedirs = ".git ignore build __pycache__ dev _skbuild docs agentx"
 filterwarnings = [
     "default",
 ]
+
+[[tool.ty.overrides]]
+# Apply the ignore unresolved rules to these files
+include = [
+  "line_profiler/line_profiler_utils.py",
+]
+rules = { unused-type-ignore-comment = "ignore" }

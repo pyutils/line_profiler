@@ -32,6 +32,7 @@ help mechanism::
 .. |lprun_all| replace:: :py:data:`%%lprun_all <LineProfilerMagics.lprun_all>`
 .. |builtins| replace:: :py:mod:`__builtins__ <builtins>`
 """
+from __future__ import annotations
 
 import ast
 import builtins
@@ -530,7 +531,7 @@ class LineProfilerMagics(Magics):
                 # - `prof.add_function()` might have replaced the code
                 #   object, so retrieve it back from the dummy function
                 mock_func = types.SimpleNamespace(__code__=code)
-                prof.add_function(mock_func)  # type: ignore[arg-type]
+                prof.add_function(mock_func)
                 code = mock_func.__code__
                 # Notes:
                 # - We don't define `ip.user_global_ns` and `ip.user_ns`

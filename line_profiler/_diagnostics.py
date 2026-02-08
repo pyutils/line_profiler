@@ -71,10 +71,10 @@ def _boolean_environ(
     """
     # (TODO: migrate to `line_profiler.cli_utils.boolean()` after
     # merging #335)
-    try:
-        value = os.environ.get(envvar).casefold()
-    except AttributeError:  # None
+    value = os.environ.get(envvar)
+    if value is None:
         return default
+    value = value.casefold()
     non_default_values = falsy if default else truey
     if value in {v.casefold() for v in non_default_values}:
         return not default

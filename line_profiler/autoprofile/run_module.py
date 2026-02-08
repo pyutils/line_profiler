@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import ast
 import os
+from typing import cast
 
 from .ast_tree_profiler import AstTreeProfiler
 from .util_static import modname_to_modpath, modpath_to_modname
 
 
-def get_module_from_importfrom(node, module):
+def get_module_from_importfrom(node: ast.ImportFrom, module: str) -> str:
     r"""Resolve the full path of a relative import.
 
     Args:
@@ -44,7 +47,7 @@ def get_module_from_importfrom(node, module):
     """
     level = node.level
     if not level:
-        return node.module
+        return node.module or ''
     chunks = module.split('.')[:-level]
     if node.module:
         chunks.append(node.module)
@@ -53,16 +56,18 @@ def get_module_from_importfrom(node, module):
 
 class ImportFromTransformer(ast.NodeTransformer):
     """Turn all the relative imports into absolute imports."""
-    def __init__(self, module):
+    def __init__(self, module: str) -> None:
         self.module = module
 
-    def visit_ImportFrom(self, node):
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
         level = node.level
         if not level:
-            return self.generic_visit(node)
+            self.generic_visit(node)
+            return node
         module = get_module_from_importfrom(node, self.module)
         new_node = ast.ImportFrom(module=module, names=node.names, level=0)
-        return self.generic_visit(ast.copy_location(new_node, node))
+        visited = self.generic_visit(ast.copy_location(new_node, node))
+        return cast(ast.ImportFrom, visited)
 
 
 class AstTreeModuleProfiler(AstTreeProfiler):
@@ -74,7 +79,7 @@ class AstTreeModuleProfiler(AstTreeProfiler):
     classes & modules in prof_mod to the profiler to be profiled.
     """
     @classmethod
-    def _get_script_ast_tree(cls, script_file):
+    def _get_script_ast_tree(cls, script_file: str) -> ast.Module:
         tree = super()._get_script_ast_tree(script_file)
         # Note: don't drop the `.__init__` or `.__main__` suffix, lest
         # the relative imports fail
@@ -83,11 +88,12 @@ class AstTreeModuleProfiler(AstTreeProfiler):
         return ImportFromTransformer(module).visit(tree)
 
     @staticmethod
-    def _is_main(fname):
+    def _is_main(fname: str) -> bool:
         return os.path.basename(fname) == '__main__.py'
 
     @classmethod
-    def _check_profile_full_script(cls, script_file, prof_mod):
+    def _check_profile_full_script(
+            cls, script_file: str, prof_mod: list[str]) -> bool:
         rp = os.path.realpath
         paths_to_check = {rp(script_file)}
         if cls._is_main(script_file):

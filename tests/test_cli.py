@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 from argparse import ArgumentParser, HelpFormatter
 from contextlib import nullcontext

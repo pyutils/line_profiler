@@ -1,6 +1,12 @@
 Changes
 =======
 
+
+5.0.1
+~~~~~
+* ENH: improved type annotations and moved them inline
+
+
 5.0.1
 ~~~~~
 * FIX: Prevented duplicate or inconsistent profiler output under Python 3.14 when multiprocessing is used.

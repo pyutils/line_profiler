@@ -1,7 +1,13 @@
 """
 Miscellaneous utilities that :py:mod:`line_profiler` uses.
 """
+from __future__ import annotations
+
 import enum
+import typing
+
+if typing.TYPE_CHECKING:
+    from typing_extensions import Self
 
 
 class _StrEnumBase(str, enum.Enum):
@@ -28,17 +34,17 @@ class _StrEnumBase(str, enum.Enum):
     ValueError: 'baz' is not a valid MyEnum
     """
     @staticmethod
-    def _generate_next_value_(name, *_, **__):
+    def _generate_next_value_(name: str, *_, **__) -> str:
         return name.lower()
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         return self.value == other
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.value
 
 
-class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):
+class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):  # type: ignore[misc]
     """
     Convenience wrapper around :py:class:`enum.StrEnum`.
 
@@ -65,7 +71,7 @@ class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):
     'bar'
     """
     @classmethod
-    def _missing_(cls, value):
+    def _missing_(cls, value: object) -> Self | None:
         if not isinstance(value, str):
             return None
         members = {name.casefold(): instance

@@ -5,6 +5,7 @@ Notes
 -----
 Most of the features are already covered by the doctests.
 """
+from __future__ import annotations
 import subprocess
 import sys
 from contextlib import ExitStack

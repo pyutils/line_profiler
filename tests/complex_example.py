@@ -47,6 +47,7 @@ PROFILE_TYPE=explicit LINE_PROFILE=0 python complex_example.py
 PROFILE_TYPE=custom python complex_example.py
 
 """
+from __future__ import annotations
 import os
 
 # The test will define how we expect the profile decorator to exist

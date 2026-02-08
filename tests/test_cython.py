@@ -1,6 +1,7 @@
 """
 Tests for profiling Cython code.
 """
+from __future__ import annotations
 import math
 import os
 import subprocess
