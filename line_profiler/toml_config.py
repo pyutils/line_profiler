@@ -220,6 +220,7 @@ class ConfigSource:
                 config = None
             else:
                 return default_instance
+        assert not isinstance(config, bool)
         if config is not None:
             # Promote to `Path` (and catch type errors) early
             config = pathlib.Path(config)
