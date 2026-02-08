@@ -479,7 +479,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
 
     def add_callable(
             self, func: object,
-            guard: Callable[[types.FunctionType], bool] | None = None,
+            guard: Callable[[Callable], bool] | None = None,
             name: str | None = None) -> Literal[0, 1]:
         """
         Register a function, method, :py:class:`property`,
@@ -489,7 +489,7 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         Args:
             func (...):
                 Function, class/static/bound method, property, etc.
-            guard (Optional[Callable[[types.FunctionType], bool]])
+            guard (Optional[Callable[[Callable], bool]])
                 Optional checker callable, which takes a function object
                 and returns true(-y) if it *should not* be passed to
                 :py:meth:`.add_function()`.  Defaults to checking
