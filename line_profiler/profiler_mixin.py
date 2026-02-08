@@ -263,7 +263,7 @@ class ByCountProfilerMixin:
 
     @classmethod
     def get_underlying_functions(
-            cls, func: object) -> list[types.FunctionType]:
+            cls, func: object) -> list[types.FunctionType | CythonCallable]:
         """
         Get the underlying function objects of a callable or an adjacent
         object.
@@ -271,8 +271,12 @@ class ByCountProfilerMixin:
         Returns:
             funcs (list[Callable])
         """
-        return [impl for impl in cls._get_underlying_functions(func)
-                if isinstance(impl, types.FunctionType)]
+        result = []
+        for impl in cls._get_underlying_functions(func):
+            # Include FunctionType and CythonCallable, but not type objects
+            if isinstance(impl, types.FunctionType) or is_cython_callable(impl):
+                result.append(impl)
+        return result
 
     @classmethod
     def _get_underlying_functions(

@@ -3,6 +3,7 @@ Tests for profiling Cython code.
 """
 import math
 import os
+import shutil
 import subprocess
 import sys
 from importlib import reload, import_module
@@ -56,7 +57,7 @@ def _install_cython_example(
             file_out.write_text(replace(file_in.read_text()))
     # There should only be one Cython source file
     cython_source, = tmp_path.glob('*.pyx')
-    pip_install = pip + ['install', '--verbose']
+    pip_install = pip + ['install', '--verbose', '--no-build-isolation']
     if editable:
         pip_install += ['--editable', str(tmp_path)]
     else:
@@ -65,13 +66,24 @@ def _install_cython_example(
     # Set environment variables to avoid isolated build environment issues
     # with Cython's compiled extensions
     env = os.environ.copy()
-    env['PIP_NO_BUILD_ISOLATION'] = '0'
     env['PIP_NO_BINARY'] = 'Cython'
     
     try:
         subprocess.run(pip_install, env=env).check_returncode()
         subprocess.run(pip + ['list'], env=env).check_returncode()
-        yield cython_source, module
+        
+        # For non-editable installs, we need to manually copy the .pyx file
+        # to where find_cython_source_file() can find it, and yield that location
+        actual_source = cython_source
+        if not editable:
+            spec = find_spec(module)
+            if spec and spec.origin:
+                installed_so = Path(spec.origin)
+                installed_pyx = installed_so.parent / cython_source.name
+                shutil.copy2(cython_source, installed_pyx)
+                actual_source = installed_pyx
+        
+        yield actual_source, module
     finally:
         pip_uninstall = pip + ['uninstall', '--verbose', '--yes', module]
         subprocess.run(pip_uninstall, env=env).check_returncode()
@@ -85,21 +97,19 @@ def cython_example(
     Install the example Cython module, yield the path to the Cython
     source file and the corresponding module, uninstall it at teardown.
     """
-    # With editable installs, we need to refresh `sys.meta_path` before
-    # the installed module is available. However, in some container environments
-    # with memory mapping restrictions, editable installs fail. Try editable first,
-    # then fall back to regular install.
+    # Try editable install first (preferred because it allows source location recovery)
+    # Fall back to regular install if editable fails due to environment issues
     for editable in [True, False]:
         try:
             for path, mod_name in _install_cython_example(tmp_path_factory, editable):
                 reload(import_module('site'))
                 yield (path, import_module(mod_name))
                 return
-        except ImportError:
-            if editable:
-                # Try non-editable install as fallback
+        except ImportError as e:
+            if editable and 'failed to map segment from shared object' in str(e):
+                # Container mmap limitation - try non-editable install instead
                 continue
-            # If non-editable also failed, re-raise
+            # Other import errors should be re-raised
             raise
 
 
