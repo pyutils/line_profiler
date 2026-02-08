@@ -42,18 +42,18 @@ import tempfile
 import textwrap
 import time
 import types
+from io import StringIO
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, TypeVar
-from typing_extensions import ParamSpec
 
 if TYPE_CHECKING:  # pragma: no cover
+    from typing_extensions import ParamSpec
     PS = ParamSpec('PS')
     PD = TypeVar('PD', bound='_PatchDict')
     DefNode = TypeVar('DefNode', ast.FunctionDef, ast.AsyncFunctionDef)
 
-from io import StringIO
 
 try:  # pragma: no cover - optional dependency
     import importlib

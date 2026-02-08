@@ -16,8 +16,13 @@ except ImportError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef] # noqa: F811
 from collections.abc import Mapping
 from os import PathLike
+import typing
 from typing import Any, Sequence, TypeVar, cast, Tuple, Dict
-from typing_extensions import Self
+
+if typing.TYPE_CHECKING:
+    Config = Tuple[Dict[str, Dict[str, Any]], pathlib.Path]
+    K = TypeVar('K')
+    V = TypeVar('V')
 
 
 __all__ = ['ConfigSource']
@@ -27,11 +32,6 @@ TARGETS = ['line_profiler.toml', 'pyproject.toml']
 ENV_VAR = 'LINE_PROFILER_RC'
 
 _DEFAULTS: ConfigSource | None = None
-
-
-Config = Tuple[Dict[str, Dict[str, Any]], pathlib.Path]
-K = TypeVar('K')
-V = TypeVar('V')
 
 
 @dataclasses.dataclass
@@ -57,7 +57,7 @@ class ConfigSource:
     path: pathlib.Path
     subtable: list[str]
 
-    def copy(self) -> Self:
+    def copy(self) -> ConfigSource:
         """
         Returns:
             Copy of the object.
@@ -66,7 +66,7 @@ class ConfigSource:
             copy.deepcopy(self.conf_dict), self.path, self.subtable.copy())
 
     def get_subconfig(self, *headers: str, allow_absence: bool = False,
-                      copy: bool = False) -> Self:
+                      copy: bool = False) -> ConfigSource:
         """
         Arguments:
             headers (str):
@@ -97,13 +97,13 @@ class ConfigSource:
             ...         is default.conf_dict['show']['column_widths'])
         """
         new_dict = cast(
-            dict[str, Any],
+            Dict[str, Any],
             get_subtable(self.conf_dict, headers, allow_absence=allow_absence))
         new_subtable = [*self.subtable, *headers]
         return type(self)(new_dict, self.path, new_subtable)
 
     @classmethod
-    def from_default(cls, *, copy: bool = True) -> Self:
+    def from_default(cls, *, copy: bool = True) -> ConfigSource:
         """
         Get the default TOML configuration that ships with the package.
 
@@ -141,16 +141,16 @@ class ConfigSource:
                     'Default configuration file could not be read')
             conf_dict, source = result
             conf_dict = cast(
-                dict[str, Any],
+                Dict[str, Any],
                 get_subtable(conf_dict, NAMESPACE, allow_absence=False))
             _DEFAULTS = cls(conf_dict, source, list(NAMESPACE))
         if not copy:
-            return cast(Self, _DEFAULTS)
-        return cast(Self, _DEFAULTS.copy())
+            return _DEFAULTS
+        return _DEFAULTS.copy()
 
     @classmethod
     def from_config(cls, config: str | PathLike | bool | None = None, *,
-                    read_env: bool = True) -> Self:
+                    read_env: bool = True) -> ConfigSource:
         """
         Create an instance by loading from a config file.
 
@@ -331,7 +331,7 @@ def find_and_read_config_file(
 
 
 def get_subtable(table: Mapping[K, V], keys: Sequence[K], *,
-                 allow_absence: bool = True) -> Mapping[K, V]:
+                 allow_absence: bool = True) -> Mapping:
     """
     Arguments:
         table (Mapping):

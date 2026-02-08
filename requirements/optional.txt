@@ -2,4 +2,3 @@
 # xdev availpkg rich
 rich>=12.3.0
 -r ipython.txt
-typing_extensions

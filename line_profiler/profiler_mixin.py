@@ -7,7 +7,6 @@ from functools import cached_property, partial, partialmethod
 from sys import version_info
 from typing import (TYPE_CHECKING, Any, Callable, Mapping, Protocol, TypeVar,
                     overload, cast)
-from typing_extensions import ParamSpec, TypeIs
 from warnings import warn
 from ._line_profiler import label
 from .scoping_policy import ScopingPolicy
@@ -33,14 +32,15 @@ C_LEVEL_CALLABLE_TYPES = (types.BuiltinFunctionType,
 # https://cython.readthedocs.io/en/latest/src/tutorial/profiling_tutorial.html
 _CANNOT_LINE_TRACE_CYTHON = (3, 12) <= version_info < (3, 13, 0, 'beta', 1)
 
-UnparametrizedCallableLike = TypeVar(
-    'UnparametrizedCallableLike',
-    types.FunctionType, property, types.MethodType)
-T = TypeVar('T')
-T_co = TypeVar('T_co', covariant=True)
-PS = ParamSpec('PS')
-
 if TYPE_CHECKING:
+    from typing_extensions import ParamSpec, TypeIs
+    UnparametrizedCallableLike = TypeVar(
+        'UnparametrizedCallableLike',
+        types.FunctionType, property, types.MethodType)
+    T = TypeVar('T')
+    T_co = TypeVar('T_co', covariant=True)
+    PS = ParamSpec('PS')
+
     class CythonCallable(Protocol[PS, T_co]):
         def __call__(self, *args: PS.args, **kwargs: PS.kwargs) -> T_co:
             ...

@@ -4,7 +4,10 @@ Miscellaneous utilities that :py:mod:`line_profiler` uses.
 from __future__ import annotations
 
 import enum
-from typing_extensions import Self
+import typing
+
+if typing.TYPE_CHECKING:
+    from typing_extensions import Self
 
 
 class _StrEnumBase(str, enum.Enum):

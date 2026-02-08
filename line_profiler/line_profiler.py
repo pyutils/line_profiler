@@ -21,8 +21,7 @@ from argparse import ArgumentParser
 from datetime import datetime
 from os import PathLike
 from typing import (TYPE_CHECKING, IO, Callable, Literal, Mapping, Protocol,
-                    Sequence, TypeVar, cast, overload)
-from typing_extensions import ParamSpec, Self
+                    Sequence, TypeVar, cast, overload, Tuple)
 from functools import cached_property, partial, partialmethod
 
 try:
@@ -41,20 +40,21 @@ from .scoping_policy import ScopingPolicy, ScopingPolicyDict
 from .toml_config import ConfigSource
 
 if TYPE_CHECKING:  # pragma: no cover
+    from typing_extensions import ParamSpec, Self
     from .profiler_mixin import CLevelCallable, UnparametrizedCallableLike
 
     class _IPythonLike(Protocol):
         def register_magics(self, magics: type) -> None:
             ...
 
+    PS = ParamSpec('PS')
+    _TimingsMap = Mapping[Tuple[str, int, str], list[Tuple[int, int, int]]]
+    T = TypeVar('T')
+    T_co = TypeVar('T_co', covariant=True)
+
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
 __version__ = '5.0.2'
-
-T = TypeVar('T')
-T_co = TypeVar('T_co', covariant=True)
-PS = ParamSpec('PS')
-_TimingsMap = Mapping[tuple[str, int, str], list[tuple[int, int, int]]]
 
 
 @functools.lru_cache()
