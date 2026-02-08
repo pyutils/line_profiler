@@ -315,7 +315,7 @@ def resolve_profiling_targets(
     dotted_paths |= recurse
     indirect_submods = set()
 
-    all_targets = {}
+    all_targets: dict[str, set[str | None]] = {}
     unknown_locs = []
     split_path = functools.partial(split_dotted_path, static=static)
     walk = walk_packages_static if static else walk_packages_import_sys
@@ -548,7 +548,9 @@ def write_eager_import_module(
         chunks = []
         if profile_whole_module:
             chunks.append(f'{adder_name}({module_name})')
-        for target in sorted(targets):
+
+        targets_ = sorted(t for t in targets if t is not None)
+        for target in sorted(targets_):
             path = f'{module}.{target}'
             chunks.append(strip(f"""
             try:

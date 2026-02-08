@@ -390,8 +390,8 @@ def _syspath_modname_to_modpath(modname, sys_path=None, exclude=None) -> str | N
             import pathlib
 
             for editable_pth in new_editable_pth_paths:
-                editable_pth = pathlib.Path(editable_pth)
-                target = editable_pth.read_text().strip().split("\n")[(-1)]
+                editable_pth_ = pathlib.Path(editable_pth)
+                target = editable_pth_.read_text().strip().split("\n")[(-1)]
                 if (not exclude) or (normalize(target) not in real_exclude):
                     modpath = check_dpath(target)
                     if modpath:
@@ -470,10 +470,10 @@ def modname_to_modpath(
         modpath = _syspath_modname_to_modpath(modname, sys_path)
     if modpath is None:
         return None
-    modpath = normalize_modpath(modpath, hide_init=hide_init, hide_main=hide_main)
+    modpath_ = normalize_modpath(modpath, hide_init=hide_init, hide_main=hide_main)
     if typing.TYPE_CHECKING:
-        modpath = typing.cast(str, modpath)
-    return modpath
+        modpath_ = typing.cast(str, modpath_)
+    return modpath_
 
 
 def split_modpath(modpath: str | os.PathLike, check: bool = True) -> tuple[(str, str)]:
@@ -644,8 +644,8 @@ def modpath_to_modname(
     if check and (relativeto is None):
         if not exists(modpath):
             raise ValueError("modpath={} does not exist".format(modpath))
-    modpath_ = abspath(expanduser(modpath))
-    modpath_ = normalize_modpath(modpath_, hide_init=hide_init, hide_main=hide_main)
+    modpath__ = abspath(expanduser(modpath))
+    modpath_ = normalize_modpath(modpath__, hide_init=hide_init, hide_main=hide_main)
     if relativeto:
         dpath = dirname(abspath(expanduser(relativeto)))
         rel_modpath = relpath(modpath_, dpath)

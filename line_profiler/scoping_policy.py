@@ -132,7 +132,7 @@ class ScopingPolicy(StringEnum):
     @overload
     def get_filter(
             self, namespace: type | ModuleType,
-            obj_type: Literal['func']) -> Callable[[FunctionType], bool]:
+            obj_type: Literal['func']) -> Callable[[Callable], bool]:
         ...
 
     @overload

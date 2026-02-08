@@ -45,8 +45,7 @@ def add_imported_function_or_module(
     Args:
         item (Union[Callable, Type, ModuleType]):
             Object to be profiled.
-        scoping_policy (Union[ScopingPolicy, str, ScopingPolicyDict, \
-None]):
+        scoping_policy (Union[ScopingPolicy, str, ScopingPolicyDict, None]):
             Whether (and how) to match the scope of members and decide
             on whether to add them:
 

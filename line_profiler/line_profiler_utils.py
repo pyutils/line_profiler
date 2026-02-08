@@ -44,7 +44,7 @@ class _StrEnumBase(str, enum.Enum):
         return self.value
 
 
-class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):
+class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):  # type: ignore[misc]
     """
     Convenience wrapper around :py:class:`enum.StrEnum`.
 

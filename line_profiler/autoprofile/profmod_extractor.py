@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import sys
-
+from typing import List, cast, Any
 from .util_static import (modname_to_modpath, modpath_to_modname,
                           package_modpaths)
 
@@ -99,7 +99,7 @@ class ProfmodExtractor:
             if it fails, the item may point to an installed module rather than local script
             so we check if the item is path and whether that path exists, else skip the item.
             """
-            modpath = modname_to_modpath(mod, sys_path=new_sys_path)
+            modpath = modname_to_modpath(mod, sys_path=cast(List[str | os.PathLike[Any]], new_sys_path))
             if modpath is None:
                 """if cannot convert to modpath, check if already path and if invalid"""
                 if not os.path.exists(mod):
@@ -210,7 +210,7 @@ class ProfmodExtractor:
                     value (str):
                         alias (or name if no alias used) of import
         """
-        modnames_found_in_tree = {}
+        modnames_found_in_tree: dict[int, str] = {}
         modname_added_list = []
         for i, module_dict in enumerate(module_dict_list):
             modname = module_dict['name']
@@ -222,8 +222,13 @@ class ProfmodExtractor:
             if modname not in modnames_to_profile and modname.rsplit('.', 1)[0] not in modnames_to_profile:
                 continue
             name = module_dict['alias'] or modname
+            if not isinstance(name, str):
+                raise TypeError('should have gotten a str')
             modname_added_list.append(modname)
-            modnames_found_in_tree[module_dict['tree_index']] = name
+            tree_index = module_dict['tree_index']
+            if not isinstance(tree_index, int):
+                raise TypeError('should have gotten an int')
+            modnames_found_in_tree[tree_index] = name
         return modnames_found_in_tree
 
     def run(self) -> dict[int, str]:

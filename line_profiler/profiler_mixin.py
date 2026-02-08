@@ -6,7 +6,7 @@ import types
 from functools import cached_property, partial, partialmethod
 from sys import version_info
 from typing import (TYPE_CHECKING, Any, Callable, Mapping, Protocol, TypeVar,
-                    cast)
+                    cast, Sequence)
 from warnings import warn
 from ._line_profiler import label
 from .scoping_policy import ScopingPolicy
@@ -253,7 +253,7 @@ class ByCountProfilerMixin:
     def _get_underlying_functions(
             cls, func: object, seen: set[int] | None = None,
             stop_at_classes: bool = False
-    ) -> list[types.FunctionType | type | CythonCallable]:
+    ) -> Sequence[Callable]:
         if seen is None:
             seen = set()
         # Extract inner functions
@@ -298,8 +298,8 @@ class ByCountProfilerMixin:
     def _get_underlying_functions_from_property(
             cls, prop: property, seen: set[int],
             stop_at_classes: bool
-    ) -> list[types.FunctionType | type | CythonCallable]:
-        result = []
+    ) -> Sequence[Callable]:
+        result: list[Callable] = []
         for impl in prop.fget, prop.fset, prop.fdel:
             if impl is not None:
                 result.extend(
@@ -310,8 +310,8 @@ class ByCountProfilerMixin:
     def _get_underlying_functions_from_type(
             cls, kls: type, seen: set[int],
             stop_at_classes: bool
-    ) -> list[types.FunctionType | type | CythonCallable]:
-        result = []
+    ) -> Sequence[Callable]:
+        result: list[Callable] = []
         get_filter = cls._class_scoping_policy.get_filter
         func_check = get_filter(kls, 'func')
         cls_check = get_filter(kls, 'class')

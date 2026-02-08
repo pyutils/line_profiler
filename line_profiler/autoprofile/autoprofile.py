@@ -52,7 +52,8 @@ import operator
 import sys
 import types
 from collections.abc import MutableMapping
-from typing import Any, cast, Dict
+from typing import Any, cast, Dict, Mapping
+from typing import ContextManager
 from .ast_tree_profiler import AstTreeProfiler
 from .run_module import AstTreeModuleProfiler
 from .line_profiler_utils import add_imported_function_or_module
@@ -106,7 +107,7 @@ def run(script_file: str, ns: MutableMapping[str, Any],
         def __init__(self, d: MutableMapping[str, Any], target=None):
             self.d = d
             self.target = target
-            self.copy: dict[str, Any] | None = None
+            self.copy: Mapping[str, Any] | None = None
 
         def __enter__(self):
             assert self.copy is None
@@ -118,6 +119,10 @@ def run(script_file: str, ns: MutableMapping[str, Any],
             if self.copy is not None:
                 self.d.update(self.copy)
             self.copy = None
+
+    Profiler: type[AstTreeModuleProfiler] | type[AstTreeProfiler]
+    namespace: MutableMapping[str, Any]
+    ctx: ContextManager
 
     if as_module:
         Profiler = AstTreeModuleProfiler
