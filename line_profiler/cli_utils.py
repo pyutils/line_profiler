@@ -2,6 +2,7 @@
 Shared utilities between the :command:`python -m line_profiler` and
 :command:`kernprof` CLI tools.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,15 +16,20 @@ from typing import Protocol, Sequence, TypeVar, cast
 from .toml_config import ConfigSource
 
 
-_BOOLEAN_VALUES = {**{k.casefold(): False
-                      for k in ('', '0', 'off', 'False', 'F', 'no', 'N')},
-                   **{k.casefold(): True
-                      for k in ('1', 'on', 'True', 'T', 'yes', 'Y')}}
+_BOOLEAN_VALUES = {
+    **{k.casefold(): False for k in ('', '0', 'off', 'False', 'F', 'no', 'N')},
+    **{k.casefold(): True for k in ('1', 'on', 'True', 'T', 'yes', 'Y')},
+}
 
 
-def add_argument(parser_like, arg: str, /, *args: str,
-                 hide_complementary_options: bool = True,
-                 **kwargs: object) -> argparse.Action:
+def add_argument(
+    parser_like,
+    arg: str,
+    /,
+    *args: str,
+    hide_complementary_options: bool = True,
+    **kwargs: object,
+) -> argparse.Action:
     """
     Override the ``'store_true'`` and ``'store_false'`` actions so that
     they are turned into options which:
@@ -66,6 +72,7 @@ def add_argument(parser_like, arg: str, /, *args: str,
           action's help text is updated to mention the corresponding
           short flag(s).
     """
+
     def negate_result(func):
         @functools.wraps(func)
         def negated(*args, **kwargs):
@@ -95,9 +102,9 @@ def add_argument(parser_like, arg: str, /, *args: str,
 
     kwargs['const'] = const = kwargs.pop('action') == 'store_true'
     for key, value in dict(
-            default=None,
-            metavar='Y[es] | N[o] | T[rue] | F[alse] '
-            '| on | off | 1 | 0').items():
+        default=None,
+        metavar='Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0',
+    ).items():
         kwargs.setdefault(key, value)
     long_kwargs = kwargs.copy()
     short_kwargs = {**kwargs, 'action': 'store_const'}
@@ -108,12 +115,13 @@ def add_argument(parser_like, arg: str, /, *args: str,
     # Mention the short options in the long options' documentation, and
     # suppress the short options in the help
     if (
-            long_flags
-            and short_flags
-            and long_kwargs.get('help') != argparse.SUPPRESS):
+        long_flags
+        and short_flags
+        and long_kwargs.get('help') != argparse.SUPPRESS
+    ):
         additional_msg = 'Short {}: {}'.format(
-            'form' if len(short_flags) == 1 else 'forms',
-            ', '.join(short_flags))
+            'form' if len(short_flags) == 1 else 'forms', ', '.join(short_flags)
+        )
         if long_kwargs.get('help'):
             raw_help = long_kwargs['help']
             help_text = raw_help if isinstance(raw_help, str) else str(raw_help)
@@ -124,7 +132,8 @@ def add_argument(parser_like, arg: str, /, *args: str,
                     help_text[:-1],
                     additional_msg[0].lower(),
                     additional_msg[1:],
-                    help_text[-1])
+                    help_text[-1],
+                )
             else:
                 help_text = f'{help_text} ({additional_msg})'
             long_kwargs['help'] = help_text
@@ -157,18 +166,24 @@ def add_argument(parser_like, arg: str, /, *args: str,
         falsy_help_text = 'Negate these flags: ' + ', '.join(args)
     parser_like.add_argument(
         *(flag[:2] + 'no-' + flag[2:] for flag in long_flags),
-        **{**long_kwargs,
-           'const': False,
-           'dest': action.dest,
-           'type': negate_result(action.type),
-           'help': falsy_help_text})
+        **{
+            **long_kwargs,
+            'const': False,
+            'dest': action.dest,
+            'type': negate_result(action.type),
+            'help': falsy_help_text,
+        },
+    )
     return action
 
 
 def get_cli_config(
-        subtable: str, /,
-        config: str | PathLike[str] | bool | None = None,
-        *, read_env: bool = True) -> ConfigSource:
+    subtable: str,
+    /,
+    config: str | PathLike[str] | bool | None = None,
+    *,
+    read_env: bool = True,
+) -> ConfigSource:
     """
     Get the ``tool.line_profiler.<subtable>`` configs and normalize
     its keys (``some-key`` -> ``some_key``).
@@ -186,10 +201,12 @@ def get_cli_config(
         instance
     """
     config_source = ConfigSource.from_config(
-        config, read_env=read_env).get_subconfig(subtable)
+        config, read_env=read_env
+    ).get_subconfig(subtable)
     config_source.conf_dict = {
         key.replace('-', '_'): value
-        for key, value in config_source.conf_dict.items()}
+        for key, value in config_source.conf_dict.items()
+    }
     return config_source
 
 
@@ -228,8 +245,9 @@ def positive_float(value: str) -> float:
     return val
 
 
-def boolean(value: str, *, fallback: bool | None = None,
-            invert: bool = False) -> bool:
+def boolean(
+    value: str, *, fallback: bool | None = None, invert: bool = False
+) -> bool:
     """
     Arguments:
         value (str)
@@ -284,9 +302,11 @@ def boolean(value: str, *, fallback: bool | None = None,
     else:
         return (not result) if invert else result
     if fallback is None:
-        raise ValueError(f'value = {value!r}: '
-                         'cannot be parsed into a boolean; valid values are'
-                         f'({{string: bool}}): {_BOOLEAN_VALUES!r}')
+        raise ValueError(
+            f'value = {value!r}: '
+            'cannot be parsed into a boolean; valid values are'
+            f'({{string: bool}}): {_BOOLEAN_VALUES!r}'
+        )
     return fallback
 
 

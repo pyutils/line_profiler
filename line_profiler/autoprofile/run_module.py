@@ -56,6 +56,7 @@ def get_module_from_importfrom(node: ast.ImportFrom, module: str) -> str:
 
 class ImportFromTransformer(ast.NodeTransformer):
     """Turn all the relative imports into absolute imports."""
+
     def __init__(self, module: str) -> None:
         self.module = module
 
@@ -78,13 +79,15 @@ class AstTreeModuleProfiler(AstTreeProfiler):
     and/or decorators to the AST that adds the specified functions/methods,
     classes & modules in prof_mod to the profiler to be profiled.
     """
+
     @classmethod
     def _get_script_ast_tree(cls, script_file: str) -> ast.Module:
         tree = super()._get_script_ast_tree(script_file)
         # Note: don't drop the `.__init__` or `.__main__` suffix, lest
         # the relative imports fail
-        module = modpath_to_modname(script_file,
-                                    hide_main=False, hide_init=False)
+        module = modpath_to_modname(
+            script_file, hide_main=False, hide_init=False
+        )
         return ImportFromTransformer(module).visit(tree)
 
     @staticmethod
@@ -93,7 +96,8 @@ class AstTreeModuleProfiler(AstTreeProfiler):
 
     @classmethod
     def _check_profile_full_script(
-            cls, script_file: str, prof_mod: list[str]) -> bool:
+        cls, script_file: str, prof_mod: list[str]
+    ) -> bool:
         rp = os.path.realpath
         paths_to_check = {rp(script_file)}
         if cls._is_main(script_file):

@@ -1,6 +1,7 @@
 """
 Tests for profiling Cython code.
 """
+
 from __future__ import annotations
 import math
 import os
@@ -18,9 +19,13 @@ from uuid import uuid4
 import pytest
 
 from line_profiler._line_profiler import (
-    CANNOT_LINE_TRACE_CYTHON, find_cython_source_file)
+    CANNOT_LINE_TRACE_CYTHON,
+    find_cython_source_file,
+)
 from line_profiler.line_profiler import (  # type:ignore[attr-defined]
-    get_code_block, LineProfiler)
+    get_code_block,
+    LineProfiler,
+)
 
 
 def propose_name(prefix: str) -> Generator[str, None, None]:
@@ -29,15 +34,16 @@ def propose_name(prefix: str) -> Generator[str, None, None]:
 
 
 def _install_cython_example(
-        tmp_path_factory: pytest.TempPathFactory,
-        editable: bool) -> Generator[Tuple[Path, str], None, None]:
+    tmp_path_factory: pytest.TempPathFactory, editable: bool
+) -> Generator[Tuple[Path, str], None, None]:
     """
     Install the example Cython module in a name-clash-free manner.
     """
     source = Path(__file__).parent / 'cython_example'
     assert source.is_dir()
-    module = next(name for name in propose_name('cython_example')
-                  if not find_spec(name))
+    module = next(
+        name for name in propose_name('cython_example') if not find_spec(name)
+    )
     replace = methodcaller('replace', 'cython_example', module)
     pip = [sys.executable, '-m', 'pip']
     tmp_path = tmp_path_factory.mktemp('cython_example')
@@ -49,14 +55,15 @@ def _install_cython_example(
             _, ext = os.path.splitext(fname)
             if ext not in {'.py', '.pyx', '.pxd', '.toml'}:
                 continue
-            dir_out = tmp_path.joinpath(*(
-                replace(part) for part in dir_in.relative_to(source).parts))
+            dir_out = tmp_path.joinpath(
+                *(replace(part) for part in dir_in.relative_to(source).parts)
+            )
             dir_out.mkdir(exist_ok=True)
             file_in = dir_in / fname
             file_out = dir_out / replace(fname)
             file_out.write_text(replace(file_in.read_text()))
     # There should only be one Cython source file
-    cython_source, = tmp_path.glob('*.pyx')
+    (cython_source,) = tmp_path.glob('*.pyx')
     pip_install = pip + ['install', '--verbose']
     if editable:
         pip_install += ['--editable', str(tmp_path)]
@@ -98,15 +105,18 @@ def test_recover_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
         assert source
         assert expected_source.samefile(source)
         source_lines = get_code_block(source, func.__code__.co_firstlineno)
-        for line, prefix in [(source_lines[0], '# Start: '),
-                             (source_lines[-1], '# End: ')]:
+        for line, prefix in [
+            (source_lines[0], '# Start: '),
+            (source_lines[-1], '# End: '),
+        ]:
             assert line.rstrip('\n').endswith(prefix + func.__name__)
 
 
 @pytest.mark.skipif(
     CANNOT_LINE_TRACE_CYTHON,
     reason='Cannot line-trace Cython code in version '
-    + '.'.join(str(v) for v in sys.version_info[:3]))
+    + '.'.join(str(v) for v in sys.version_info[:3]),
+)
 def test_profile_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
     """
     Check that calls to Cython functions (built with the appropriate
@@ -118,11 +128,13 @@ def test_profile_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
     _, module = cython_example
     cos = prof_cos(module.cos)
     sin = prof_sin(module.sin)
-    assert pytest.approx(cos(.125, 10)) == math.cos(.125)
-    assert pytest.approx(sin(2.5, 3)) == 2.5 - 2.5 ** 3 / 6 + 2.5 ** 5 / 120
+    assert pytest.approx(cos(0.125, 10)) == math.cos(0.125)
+    assert pytest.approx(sin(2.5, 3)) == 2.5 - 2.5**3 / 6 + 2.5**5 / 120
 
     for prof, func, expected_nhits in [
-            (prof_cos, 'cos', 10), (prof_sin, 'sin', 3)]:
+        (prof_cos, 'cos', 10),
+        (prof_sin, 'sin', 3),
+    ]:
         with StringIO() as fobj:
             prof.print_stats(fobj)
             result = fobj.getvalue()

@@ -28,9 +28,10 @@ def parser():
     -c -> c
     """
     parser = ArgumentParser(
-        formatter_class=partial(HelpFormatter,
-                                max_help_position=float('inf'),
-                                width=float('inf')))
+        formatter_class=partial(
+            HelpFormatter, max_help_position=float('inf'), width=float('inf')
+        )
+    )
     # Normal boolean flag (w/2 short forms)
     # -> adds 3 actions (long, short, long-negated)
     add_argument(parser, '-f', '-F', '--foo', action='store_true')
@@ -39,19 +40,26 @@ def parser():
     add_argument(parser, '-b', '--bar', action='store_true', help='Set `bar`')
     # Boolean flag w/parenthetical remark in help text
     # -> adds 3 actions (long, short, long-negated)
-    add_argument(parser, '-B', '--baz',
-                 action='store_true', help='Set `baz` (BAZ)')
+    add_argument(
+        parser, '-B', '--baz', action='store_true', help='Set `baz` (BAZ)'
+    )
     # Negative boolean flag
     # -> adds 1 action (long-negated)
-    add_argument(parser, '--no-spam',
-                 action='store_false', dest='spam', help='Set `spam` to false')
+    add_argument(
+        parser,
+        '--no-spam',
+        action='store_false',
+        dest='spam',
+        help='Set `spam` to false',
+    )
     # Boolean flag w/o short form
     # -> adds 2 actions (long, long-negated)
     add_argument(parser, '--ham', action='store_true', help='Set `ham`')
     # Short-form-only boolean flag
     # -> adds 1 action (short)
-    add_argument(parser, '-e',
-                 action='store_true', dest='eggs', help='Set `eggs`')
+    add_argument(
+        parser, '-e', action='store_true', dest='eggs', help='Set `eggs`'
+    )
     yield parser
 
 
@@ -65,41 +73,59 @@ def test_boolean_argument_help_text(parser):
         parser.print_help(sio)
         help_text = sio.getvalue()
     matches = partial(re.search, string=help_text, flags=re.MULTILINE)
-    assert matches(r'^  --foo \[.*\] +'
-                   + re.escape('(Short forms: -f, -F)')
-                   + '$')
-    assert matches(r'^  --bar \[.*\] +'
-                   + re.escape('Set `bar` (Short form: -b)')
-                   + '$')
-    assert matches(r'^  --baz \[.*\] +'
-                   + re.escape('Set `baz` (BAZ; short form: -B)')
-                   + '$')
-    assert matches(r'^  --no-spam \[.*\] +'
-                   + re.escape('Set `spam` to false')
-                   + '$')
-    assert matches(r'^  --ham \[.*\] +'
-                   + re.escape('Set `ham`')
-                   + '$')
-    assert matches(r'^  -e +'
-                   + re.escape('Set `eggs`')
-                   + '$')
+    assert matches(
+        r'^  --foo \[.*\] +' + re.escape('(Short forms: -f, -F)') + '$'
+    )
+    assert matches(
+        r'^  --bar \[.*\] +' + re.escape('Set `bar` (Short form: -b)') + '$'
+    )
+    assert matches(
+        r'^  --baz \[.*\] +'
+        + re.escape('Set `baz` (BAZ; short form: -B)')
+        + '$'
+    )
+    assert matches(
+        r'^  --no-spam \[.*\] +' + re.escape('Set `spam` to false') + '$'
+    )
+    assert matches(r'^  --ham \[.*\] +' + re.escape('Set `ham`') + '$')
+    assert matches(r'^  -e +' + re.escape('Set `eggs`') + '$')
 
 
 @pytest.mark.parametrize(
     ('args', 'foo', 'bar', 'baz', 'spam', 'ham', 'eggs', 'expect_error'),
-    [('--foo q', *((None,) * 6), True),  # Can't parse `q` into boolean
-     ('-fbB'  # Test short-flag concatenation
-      ' --ham=',  # Empty string -> set to false
-      True, True, True, None, False, None, False),
-     ('--foo'  # No-arg -> set to true
-      ' --bar=0'  # Falsy arg -> set to false
-      ' --no-baz'  # No-arg (negated flag) -> set to false
-      ' --no-spam=no'  # Falsy arg (negated flag) -> set to true
-      ' --ham=on'  # Truey arg -> set to true
-      ' -e',  # No-arg -> set to true
-      True, False, False, True, True, True, False)])
+    [
+        ('--foo q', *((None,) * 6), True),  # Can't parse `q` into boolean
+        (
+            '-fbB'  # Test short-flag concatenation
+            ' --ham=',  # Empty string -> set to false
+            True,
+            True,
+            True,
+            None,
+            False,
+            None,
+            False,
+        ),
+        (
+            '--foo'  # No-arg -> set to true
+            ' --bar=0'  # Falsy arg -> set to false
+            ' --no-baz'  # No-arg (negated flag) -> set to false
+            ' --no-spam=no'  # Falsy arg (negated flag) -> set to true
+            ' --ham=on'  # Truey arg -> set to true
+            ' -e',  # No-arg -> set to true
+            True,
+            False,
+            False,
+            True,
+            True,
+            True,
+            False,
+        ),
+    ],
+)
 def test_boolean_argument_parsing(
-        parser, capsys, args, foo, bar, baz, spam, ham, eggs, expect_error):
+    parser, capsys, args, foo, bar, baz, spam, ham, eggs, expect_error
+):
     """
     Test the handling of boolean flags.
     """
@@ -131,7 +157,7 @@ def test_cli():
     """
     # Create a dummy source file
     code = ub.codeblock(
-        '''
+        """
         @profile
         def my_inefficient_function():
             a = 0
@@ -142,7 +168,8 @@ def test_cli():
 
         if __name__ == '__main__':
             my_inefficient_function()
-        ''')
+        """
+    )
     with TemporaryDirectory() as tmp_dpath:
         tmp_src_fpath = join(tmp_dpath, 'foo.py')
         with open(tmp_src_fpath, 'w') as file:
@@ -155,8 +182,11 @@ def test_cli():
         tmp_lprof_fpath = join(tmp_dpath, 'foo.py.lprof')
         tmp_lprof_fpath
 
-        info = ub.cmd(f'{executable} -m line_profiler {tmp_lprof_fpath}',
-                      cwd=tmp_dpath, verbose=3)
+        info = ub.cmd(
+            f'{executable} -m line_profiler {tmp_lprof_fpath}',
+            cwd=tmp_dpath,
+            verbose=3,
+        )
         assert info['ret'] == 0
         # Check for some patterns that should be in the output
         assert '% Time' in info['out']
@@ -168,6 +198,7 @@ def test_multiple_lprof_files(capsys):
     Test that we can aggregate profiling results with
     ``python -m line_profiler``.
     """
+
     def sum_n(n: int) -> int:
         x = 0
         for n in range(1, n + 1):
@@ -180,18 +211,23 @@ def test_multiple_lprof_files(capsys):
             x += n * n  # Loop: sum_nsq
         return x  # Return: sum_nsq
 
-    profs = {0: LineProfiler(sum_n),
-             1: LineProfiler(sum_nsq),
-             2: LineProfiler(sum_n, sum_nsq)}
+    profs = {
+        0: LineProfiler(sum_n),
+        1: LineProfiler(sum_nsq),
+        2: LineProfiler(sum_n, sum_nsq),
+    }
 
     with TemporaryDirectory() as tmp_dpath:
         # Write several profiling output files
         stats_files = []
         nhits = {}
-        for i, (func, n, expected) in enumerate([
+        for i, (func, n, expected) in enumerate(
+            [
                 (sum_n, 10, 10 * 11 // 2),
                 (sum_nsq, 20, 20 * 21 * 41 // 6),
-                (sum_n, 30, 30 * 31 // 2)]):
+                (sum_n, 30, 30 * 31 // 2),
+            ]
+        ):
             prof = profs[i]
             with prof:
                 assert func(n) == expected
@@ -218,7 +254,7 @@ def test_multiple_lprof_files(capsys):
             checks[f'  # {comment}: {func.__name__}'] = n
     for line in out.splitlines():
         try:
-            suffix, = (suffix for suffix in checks if line.endswith(suffix))
+            (suffix,) = (suffix for suffix in checks if line.endswith(suffix))
         except ValueError:  # No match
             continue
         assert int(line.split()[1]) == checks.pop(suffix)

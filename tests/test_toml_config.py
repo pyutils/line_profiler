@@ -1,6 +1,7 @@
 """
 Test the handling of TOML configs.
 """
+
 from __future__ import annotations
 import os
 import re
@@ -22,7 +23,8 @@ def write_text(path: Path, text: str, /, *args, **kwargs) -> int:
 
 @pytest.fixture(autouse=True)
 def fresh_curdir(
-    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Generator[Path, None, None]:
     """
     Ensure that the tests start on a clean slate: they shouldn't see
@@ -54,7 +56,8 @@ def test_default_config_deep_copy() -> None:
     copy of the default config.
     """
     default_1, default_2 = (
-        ConfigSource.from_default().conf_dict for _ in (1, 2))
+        ConfigSource.from_default().conf_dict for _ in (1, 2)
+    )
     assert default_1 == default_2
     assert default_1 is not default_2
     # Sublist
@@ -77,14 +80,17 @@ def test_table_normalization(fresh_curdir: Path) -> None:
     """
     default_config = ConfigSource.from_default().conf_dict
     toml = fresh_curdir / 'foo.toml'
-    write_text(toml, """
+    write_text(
+        toml,
+        """
     [unrelated.table]
     foo = 'foo'  # This should be ignored
 
     [tool.line_profiler.write]
     output_prefix = 'my_prefix'  # This is parsed and retained
     nonexistent_key = 'nonexistent_value'  # This should be ignored
-    """)
+    """,
+    )
     loaded = ConfigSource.from_config(toml)
     assert loaded.path.samefile(toml)
     assert loaded.conf_dict['write']['output_prefix'] == 'my_prefix'
@@ -100,18 +106,24 @@ def test_malformed_table(fresh_curdir: Path) -> None:
     non-subtable value taking the place of a supposed subtable.
     """
     toml = fresh_curdir / 'foo.toml'
-    write_text(toml, """
+    write_text(
+        toml,
+        """
     [tool.line_profiler]
     write = [{lprof = true}]  # This shouldn't be a list
-    """)
-    with pytest.raises(ValueError,
-                       match=r"config = .*: expected .* keys.*:"
-                       r".*'tool\.line_profiler\.write'"):
+    """,
+    )
+    with pytest.raises(
+        ValueError,
+        match=r'config = .*: expected .* keys.*:'
+        r".*'tool\.line_profiler\.write'",
+    ):
         ConfigSource.from_config(toml)
 
 
-def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
-                                 fresh_curdir: Path) -> None:
+def test_config_lookup_hierarchy(
+    monkeypatch: pytest.MonkeyPatch, fresh_curdir: Path
+) -> None:
     """
     Test the hierarchy according to which we load config files.
     """
@@ -147,8 +159,9 @@ def test_config_lookup_hierarchy(monkeypatch: pytest.MonkeyPatch,
     with pytest.raises(FileNotFoundError):
         ConfigSource.from_config(highest_priority)
     highest_priority.touch()
-    assert (ConfigSource.from_config(highest_priority)
-            .path.samefile(highest_priority))
+    assert ConfigSource.from_config(highest_priority).path.samefile(
+        highest_priority
+    )
     # Also test that `True` is equivalent to the default behavior
     # (`None`), and `False` to disabling all lookup
     assert ConfigSource.from_config(True).path.samefile(high_priority)
@@ -167,9 +180,8 @@ def test_importlib_resources_deprecation() -> None:
 
     print(ConfigSource.from_default())
     """)
-    command = [sys.executable,
-               '-W', 'always::DeprecationWarning',
-               '-c', code]
+    command = [sys.executable, '-W', 'always::DeprecationWarning', '-c', code]
     proc = run(command, check=True, capture_output=True, text=True)
-    assert not re.search('DeprecationWarning.*importlib[-_]?resources',
-                         proc.stderr), proc.stderr
+    assert not re.search(
+        'DeprecationWarning.*importlib[-_]?resources', proc.stderr
+    ), proc.stderr

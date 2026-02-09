@@ -2,6 +2,7 @@
 Tools for eagerly pre-importing everything as specified in
 ``line_profiler.autoprof.run(prof_mod=...)``.
 """
+
 from __future__ import annotations
 
 import ast
@@ -15,11 +16,18 @@ from textwrap import dedent, indent as indent_
 from warnings import warn
 from typing import Any, Generator, NamedTuple, TextIO
 from .util_static import (
-    modname_to_modpath, modpath_to_modname, package_modpaths)
+    modname_to_modpath,
+    modpath_to_modname,
+    package_modpaths,
+)
 
 
-__all__ = ('is_dotted_path', 'split_dotted_path',
-           'resolve_profiling_targets', 'write_eager_import_module')
+__all__ = (
+    'is_dotted_path',
+    'split_dotted_path',
+    'resolve_profiling_targets',
+    'write_eager_import_module',
+)
 
 
 def is_dotted_path(obj: Any) -> bool:
@@ -58,7 +66,8 @@ def get_expression(obj: Any) -> ast.Expression | None:
 
 
 def split_dotted_path(
-        dotted_path: str, static: bool = True) -> tuple[str, str | None]:
+    dotted_path: str, static: bool = True
+) -> tuple[str, str | None]:
     """
     Arguments:
         dotted_path (str):
@@ -114,9 +123,11 @@ def split_dotted_path(
         ['foo.bar.baz', 'foo.bar', 'foo']
     """
     if not is_dotted_path(dotted_path):
-        raise TypeError(f'dotted_path = {dotted_path!r}: '
-                        'expected a dotted path '
-                        '(string of period-joined identifiers)')
+        raise TypeError(
+            f'dotted_path = {dotted_path!r}: '
+            'expected a dotted path '
+            '(string of period-joined identifiers)'
+        )
     chunks = dotted_path.split('.')
     checked_locs = []
     check = modname_to_modpath if static else find_spec
@@ -131,9 +142,11 @@ def split_dotted_path(
             checked_locs.append(module)
             continue
         return module, target
-    raise ModuleNotFoundError(f'dotted_path = {dotted_path!r}: '
-                              'none of the below looks like an importable '
-                              f'module: {checked_locs!r}')
+    raise ModuleNotFoundError(
+        f'dotted_path = {dotted_path!r}: '
+        'none of the below looks like an importable '
+        f'module: {checked_locs!r}'
+    )
 
 
 def strip(s: str) -> str:
@@ -166,6 +179,7 @@ class LoadedNameFinder(ast.NodeVisitor):
         >>> names = LoadedNameFinder.find(ast.parse(module))
         >>> assert names == {'bar', 'foobar', 'a', 'str'}, names
     """
+
     def __init__(self) -> None:
         self.names: set[str] = set()
         self.contexts: list[set[str]] = []
@@ -178,13 +192,14 @@ class LoadedNameFinder(ast.NodeVisitor):
             self.names.add(node.id)
 
     def _visit_func_def(
-            self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
     ) -> None:
         args = node.args
         arg_names = {
             arg.arg
             for arg_list in (args.posonlyargs, args.args, args.kwonlyargs)
-            for arg in arg_list}
+            for arg in arg_list
+        }
         if args.vararg:
             arg_names.add(args.vararg.arg)
         if args.kwarg:
@@ -227,22 +242,24 @@ def propose_names(prefixes: Collection[str]) -> Generator[str, None, None]:
     """
     prefixes = list(dict.fromkeys(prefixes))  # Preserve order
     if not all(is_dotted_path(p) and '.' not in p for p in prefixes):
-        raise TypeError(f'prefixes = {prefixes!r}: '
-                        'expected string identifiers')
+        raise TypeError(f'prefixes = {prefixes!r}: expected string identifiers')
     # Yield all the provided prefixes
     yield from prefixes
     # Yield the prefixes in order with numeric suffixes
     prefixes_and_patterns = [
         (prefix, ('{}{}' if len(prefix) == 1 else '{}_{}').format)
-        for prefix in prefixes]
+        for prefix in prefixes
+    ]
     for i in itertools.count():
         for prefix, pattern in prefixes_and_patterns:
             yield pattern(prefix, i)
 
 
 def resolve_profiling_targets(
-        dotted_paths: Collection[str], static: bool = True,
-        recurse: Collection[str] | bool = False) -> ResolvedResult:
+    dotted_paths: Collection[str],
+    static: bool = True,
+    recurse: Collection[str] | bool = False,
+) -> ResolvedResult:
     """
     Arguments:
         dotted_paths (Collection[str]):
@@ -286,6 +303,7 @@ def resolve_profiling_targets(
         ``dotted_paths`` and ``recurse`` to be imported (and hence alter
         the state of :py:data:`sys.modules`.
     """
+
     def walk_packages_static(pkg):
         # Note: this probably can't handle namespace packages
         path = modname_to_modpath(pkg)
@@ -335,11 +353,14 @@ def resolve_profiling_targets(
 
 
 def write_eager_import_module(
-        dotted_paths: Collection[str], stream: TextIO | None = None, *,
-        static: bool = True,
-        recurse: Collection[str] | bool = False,
-        adder: str = 'profile.add_imported_function_or_module',
-        indent: str = '    ') -> None:
+    dotted_paths: Collection[str],
+    stream: TextIO | None = None,
+    *,
+    static: bool = True,
+    recurse: Collection[str] | bool = False,
+    adder: str = 'profile.add_imported_function_or_module',
+    indent: str = '    ',
+) -> None:
     r"""
     Write a module which autoprofiles all its imports.
 
@@ -465,9 +486,11 @@ def write_eager_import_module(
         else:
             AdderError = ValueError
     if AdderError:
-        raise AdderError(f'adder = {adder!r}: '
-                         'expected a single-line string parsable to a single '
-                         'expression')
+        raise AdderError(
+            f'adder = {adder!r}: '
+            'expected a single-line string parsable to a single '
+            'expression'
+        )
     if not isinstance(indent, str):
         IndentError = TypeError
     elif len(indent.splitlines()) == 1 and indent.isspace():
@@ -475,8 +498,9 @@ def write_eager_import_module(
     else:
         IndentError = ValueError
     if IndentError:
-        raise IndentError(f'indent = {indent!r}: '
-                          'expected a single-line non-empty whitespace string')
+        raise IndentError(
+            f'indent = {indent!r}: expected a single-line non-empty whitespace string'
+        )
 
     # Get the names loaded by `adder`;
     # these names are not allowed in the namespace
@@ -487,28 +511,35 @@ def write_eager_import_module(
     # - One for a list of failed targets
     # - One for the imported module
     adder_name = next(
-        name for name in propose_names(['add', 'add_func', 'a', 'f'])
-        if name not in forbidden_names)
+        name
+        for name in propose_names(['add', 'add_func', 'a', 'f'])
+        if name not in forbidden_names
+    )
     forbidden_names.add(adder_name)
     failures_name = next(
         name
         for name in propose_names(['failures', 'failed_targets', 'f', '_'])
-        if name not in forbidden_names)
+        if name not in forbidden_names
+    )
     forbidden_names.add(failures_name)
     module_name = next(
-        name for name in propose_names(['module', 'mod', 'imported', 'm', '_'])
-        if name not in forbidden_names)
+        name
+        for name in propose_names(['module', 'mod', 'imported', 'm', '_'])
+        if name not in forbidden_names
+    )
 
     # Figure out the import targets to profile
     resolved = resolve_profiling_targets(
-        dotted_paths, static=static, recurse=recurse)
+        dotted_paths, static=static, recurse=recurse
+    )
 
     # Warn against failed imports
     if resolved.unresolved:
         msg = '{} import target{} cannot be resolved: {!r}'.format(
             len(resolved.unresolved),
             '' if len(resolved.unresolved) == 1 else 's',
-            resolved.unresolved)
+            resolved.unresolved,
+        )
         warn(msg, stacklevel=2)
 
     # Do the imports and add them with `adder`
@@ -537,14 +568,16 @@ def write_eager_import_module(
             on_error = f'{failures_name}.append({module!r})'
         else:
             on_error = 'pass'
-        write('\n'
-              + strip(f"""
+        write(
+            '\n'
+            + strip(f"""
             try:
             {indent}import {module} as {module_name}
             except {allowed_error}:
             {indent}{on_error}
             else:
-                """))
+                """)
+        )
         chunks = []
         if profile_whole_module:
             chunks.append(f'{adder_name}({module_name})')
@@ -552,18 +585,21 @@ def write_eager_import_module(
         targets_ = sorted(t for t in targets if t is not None)
         for target in sorted(targets_):
             path = f'{module}.{target}'
-            chunks.append(strip(f"""
+            chunks.append(
+                strip(f"""
             try:
             {indent}{adder_name}({module_name}.{target})
             except AttributeError:
             {indent}{failures_name}.append({path!r})
-            """))
+            """)
+            )
         for chunk in chunks:
             write(indent_(chunk, indent))
     # Issue a warning if any of the targets doesn't exist
     if resolved.targets:
         write('\n')
-        write(strip(f"""
+        write(
+            strip(f"""
         if {failures_name}:
         {indent}import warnings
 
@@ -572,7 +608,8 @@ def write_eager_import_module(
         {indent * 2}'' if len({failures_name}) == 1 else 's',
         {indent * 2}{failures_name})
         {indent}warnings.warn(msg, stacklevel=2)
-        """))
+        """)
+        )
 
 
 class ResolvedResult(NamedTuple):
