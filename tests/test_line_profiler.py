@@ -330,8 +330,30 @@ def test_async_gen_decorator(gc):
             results.append(i)
         return results
 
+    def has_refcount_bug():
+        """
+        Apparently 3.12 introduced a refcount bug involving async
+        generators (CPython issue GH-100964), which is *finally*
+        patched in CPython GitHub PR #141112.
+        As such, we have to check the patch versions to determine
+        whether refcount inconsistencies are to be expected;
+        alternatively, inspect `test.test_generators.FinalizationTest`
+        for the test method `.test_exhausted_generator_frame_cycle()`;
+        but that seems even more fragile than checking the versions...
+        """
+        version = sys.version_info[:2]
+        patch = sys.version_info[2]
+        if version == (3, 12):  # 3.12.x all bugged
+            return True
+        if version == (3, 13):  # Fix backported to 3.13.12...
+            return patch < 12
+        if version == (3, 14):  # ... and 3.14.3
+            return patch < 3
+        return False
+
     profile = LineProfiler()
     ag_wrapped = profile(ag)
+    xfail_refcount = has_refcount_bug() and not gc
     assert inspect.isasyncgenfunction(ag_wrapped)
     assert ag in profile.functions
 
@@ -341,12 +363,8 @@ def test_async_gen_decorator(gc):
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_simple(1, 2, 3)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
-    # FIXME: why does `use_agen_complex()` need the `gc.collect()` to
-    # not fail in Python 3.12+? Doesn't seem to matter which
-    # ${LINE_PROFILER_CORE} we're using either...
     with contextlib.ExitStack() as stack:
-        xfail_312 = hasattr(sys, 'monitoring') and not gc
-        if xfail_312:  # Python 3.12+
+        if xfail_refcount:
             excinfo = stack.enter_context(
                 pytest.raises(AssertionError, match=r'ag\(\): ref count')
             )
@@ -358,7 +376,7 @@ def test_async_gen_decorator(gc):
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_complex(1, 2, 3, None, 4)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
-    if xfail_312:
+    if xfail_refcount:
         pytest.xfail(
             '\nsys.version={!r}..., gc={}:\n{}'.format(
                 sys.version.strip().split()[0], gc, excinfo.getrepr(style='no')
