@@ -126,6 +126,11 @@ jobs:
         # explicitly here.
         os:
         - ubuntu-latest
+        # Overhead of building ARM wheels on Intel Linux nodes is
+        # unreasonably high (20s build time per wheel vs 3m);
+        # it's better to just spin another runner up to build them
+        # natively
+        - ubuntu-24.04-arm
         - macOS-latest
         - windows-latest
         cibw_skip:
@@ -140,6 +145,8 @@ jobs:
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
+    # Note: Since we're building Linux wheels on their native
+    # architectures, we don't need QEMU
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
@@ -153,7 +160,6 @@ jobs:
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
         CIBW_TEST_SKIP: '*-win_arm64'
-        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         CIBW_ENVIRONMENT: PYTHONUTF8=1
         PYTHONUTF8: '1'
         VSCMD_ARG_TGT_ARCH: ''
@@ -222,6 +228,10 @@ jobs:
           arch: auto
         - python-version: '3.8'
           install-extras: tests-strict,runtime-strict
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests-strict,runtime-strict
           os: macOS-latest
           arch: auto
         - python-version: '3.8'
@@ -234,6 +244,10 @@ jobs:
           arch: auto
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
           os: macOS-latest
           arch: auto
         - python-version: '3.13'
@@ -243,6 +257,14 @@ jobs:
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-11-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: ubuntu-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests
@@ -283,6 +305,34 @@ jobs:
         - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
+          arch: auto
+        - python-version: '3.8'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.14'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.8'
           install-extras: tests,optional
@@ -364,6 +414,8 @@ jobs:
       if: ${{ startsWith(matrix.os, 'windows-') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
+    # Note: Since we're testing Linux wheels on their native
+    # architectures, we don't need QEMU
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3.0.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
