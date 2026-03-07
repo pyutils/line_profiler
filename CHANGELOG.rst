@@ -1,8 +1,14 @@
 Changes
 =======
 
+5.0.3
+-----
+* FIX: Make sure that the profiled code is run in the
+  ``sys.modules['__main__']`` namespace to avoid issues w/e.g. pickling
+  (#423)
 
-5.0.1
+
+5.0.2
 ~~~~~
 * ENH: improved type annotations and moved them inline
 

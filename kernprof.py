@@ -207,7 +207,7 @@ from pathlib import Path
 from pprint import pformat
 from shlex import quote
 from textwrap import indent, dedent
-from types import MethodType, SimpleNamespace
+from types import MethodType, ModuleType, SimpleNamespace
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
@@ -1331,6 +1331,7 @@ def _main_profile(options, module=False, exit_on_error=True):
     after initial parsing of options; not to be invoked on its own.
     """
     script_file, prof = _pre_profile(options, module, exit_on_error)
+    call = functools.partial(_call_with_diagnostics, options)
     try:
         rmod = functools.partial(
             run_module, run_name='__main__', alter_sys=True
@@ -1345,8 +1346,7 @@ def _main_profile(options, module=False, exit_on_error=True):
         if options.prof_mod and options.line_by_line:
             from line_profiler.autoprofile import autoprofile
 
-            _call_with_diagnostics(
-                options,
+            call(
                 autoprofile.run,
                 script_file,
                 ns,
@@ -1355,21 +1355,34 @@ def _main_profile(options, module=False, exit_on_error=True):
                 as_module=module is not None,
             )
         else:
+            # Note: to reduce complications (e.g. whenever something
+            # needs to be pickled), regardless of whether the code is to
+            # be run as a module, we always create a mock module object
+            # for `sys.modules['__main__']` and execute the code in its
+            # context;
+            # similar handling is already used for
+            # `~.autoprofile.autoprofile.run()`, and we do the same for
+            # the other execution modes here.
+            module_obj = ModuleType('__main__')
+            module_ns = vars(module_obj)
+            module_ns.update(ns)
             if module:
                 runner, target = 'rmod', options.script
             else:
                 runner, target = 'execfile', script_file
-            assert runner in ns
-            if options.builtin:
-                _call_with_diagnostics(options, ns[runner], target, ns)
-            else:
-                _call_with_diagnostics(
-                    options,
-                    prof.runctx,
-                    f'{runner}({target!r}, globals())',
-                    ns,
-                    ns,
-                )
+            assert runner in module_ns
+
+            with _restore.mapping(sys.modules):
+                sys.modules['__main__'] = module_obj
+                if options.builtin:
+                    call(module_ns[runner], target, module_ns)
+                else:
+                    call(
+                        prof.runctx,
+                        f'{runner}({target!r}, globals())',
+                        module_ns,
+                        module_ns,
+                    )
     finally:
         _post_profile(options, prof)
 

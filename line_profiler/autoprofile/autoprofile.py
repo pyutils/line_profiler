@@ -46,10 +46,7 @@ profiles it with autoprofile.
 """
 
 from __future__ import annotations
-import contextlib
-import functools
 import importlib.util
-import operator
 import sys
 import types
 from collections.abc import MutableMapping
@@ -112,15 +109,13 @@ def run(
     """
 
     class restore_dict:
-        def __init__(self, d: MutableMapping[str, Any], target=None):
+        def __init__(self, d: MutableMapping[str, Any]):
             self.d = d
-            self.target = target
             self.copy: Mapping[str, Any] | None = None
 
         def __enter__(self):
             assert self.copy is None
             self.copy = dict(self.d)
-            return self.target
 
         def __exit__(self, *_, **__):
             self.d.clear()
@@ -129,8 +124,6 @@ def run(
             self.copy = None
 
     Profiler: type[AstTreeModuleProfiler] | type[AstTreeProfiler]
-    namespace: MutableMapping[str, Any]
-    ctx: ContextManager
 
     if as_module:
         Profiler = AstTreeModuleProfiler
@@ -141,28 +134,23 @@ def run(
             )
 
         module_obj = types.ModuleType(module_name)
-        namespace = vars(module_obj)
-        namespace.update(ns)
-
         # Set the `__spec__` correctly
         module_obj.__spec__ = importlib.util.find_spec(module_name)
-
-        # Set the module object to `sys.modules` via a callback, and
-        # then restore it via the context manager
-        callback = functools.partial(
-            operator.setitem, sys.modules, '__main__', module_obj
-        )
-        ctx = restore_dict(sys.modules, callback)
     else:
         Profiler = AstTreeProfiler
-        namespace = ns
-        ctx = contextlib.nullcontext(lambda: None)
+        module_obj = types.ModuleType('__main__')
+
+    namespace: MutableMapping[str, Any] = vars(module_obj)
+    namespace.update(ns)
 
     profiler = Profiler(script_file, prof_mod, profile_imports)
     tree_profiled = profiler.profile()
 
     _extend_line_profiler_for_profiling_imports(ns[PROFILER_LOCALS_NAME])
     code_obj = compile(tree_profiled, script_file, 'exec')
-    with ctx as callback:
-        callback()
+    with restore_dict(sys.modules):
+        # Always set the module object to `sys.modules['__main__']` and
+        # then restore it via the context manager, so that the executed
+        # code is run as `__main__`
+        sys.modules['__main__'] = module_obj
         exec(code_obj, cast(Dict[str, Any], namespace), namespace)
