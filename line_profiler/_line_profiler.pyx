@@ -1139,14 +1139,35 @@ datamodel.html#user-defined-functions
         code_hashes = []
         if any(co_code):  # Normal Python functions
             # Figure out how much padding we need and strip the bytecode
+            # Notes:
+            # - Profiled function are always padded, so as to
+            #   distinguish between them and unprofiled bytecode twins
+            # - `npad` is strictly increasing, except when the function
+            #   has already been padded -- we assume that is solely
+            #   because a (could be the same) profiler instance has seen
+            #   it
             base_co_code: bytes
-            npad_code: int
-            base_co_code, npad_code = multibyte_rstrip(co_code)
-            try:
-                npad = self._all_paddings[base_co_code]
-            except KeyError:
-                npad = 0
-            self._all_paddings[base_co_code] = max(npad, npad_code) + 1
+            npad: int
+            is_padded: int
+            base_co_code, is_padded = multibyte_rstrip(co_code)
+            if not is_padded:
+                try:
+                    npad = self._all_paddings[base_co_code]
+                except KeyError:
+                    npad = 1
+                self._all_paddings[base_co_code] = npad + 1
+                # Code hash already exists, so there must be a duplicate
+                # function (on some instance);
+                # (re-)pad with no-op
+                co_code = base_co_code + NOP_BYTES * npad
+                code = _code_replace(func, co_code)
+                try:
+                    func.__code__ = code
+                except AttributeError as e:
+                    func.__func__.__code__ = code
+            # XXX: if we no longer re-pad the bytecode, do we still need
+            # to do bookkeeping on which profiler instances follow which
+            # function objects?
             try:
                 profilers_to_update = self._all_instances_by_funcs[func_id]
                 profilers_to_update.add(self)
@@ -1158,18 +1179,6 @@ datamodel.html#user-defined-functions
                 self.dupes_map[base_co_code].append(code)
             except KeyError:
                 self.dupes_map[base_co_code] = [code]
-            if npad > npad_code:
-                # Code hash already exists, so there must be a duplicate
-                # function (on some instance);
-                # (re-)pad with no-op
-                co_code = base_co_code + NOP_BYTES * npad
-                code = _code_replace(func, co_code)
-                try:
-                    func.__code__ = code
-                except AttributeError as e:
-                    func.__func__.__code__ = code
-            else:  # No re-padding -> no need to update the other profs
-                profilers_to_update = {self}
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over

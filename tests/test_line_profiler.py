@@ -1248,6 +1248,11 @@ def test_aggregate_profiling_data_between_code_versions():
     Test that profiling data from previous versions of the code object
     are preserved when another profiler causes the code object of a
     function to be overwritten.
+
+    Note
+    ----
+    Now obsolete because we no longer double-pad/overwrite the function
+    bytecode if it has already been seen by another profiler instance.
     """
 
     def func(n):
@@ -1262,10 +1267,8 @@ def test_aggregate_profiling_data_between_code_versions():
     # Gather data with `@prof1`
     wrapper1 = prof1(func)
     assert wrapper1(10) == 10 * 11 // 2
-    code = func.__code__
     # Gather data with `@prof2`; the code object is overwritten here
     wrapper2 = prof2(wrapper1)
-    assert func.__code__ != code
     assert wrapper2(15) == 15 * 16 // 2
     # Despite the overwrite of the code object, the old data should
     # still remain, and be aggregated with the new data when calling
