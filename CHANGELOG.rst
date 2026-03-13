@@ -7,6 +7,9 @@ Changes
   ``sys.modules['__main__']`` namespace to avoid issues w/e.g. pickling
   (#423)
 * CHANGE: Drop support for Python 3.8 and Python 3.9
+* FIX: ``ScopingPolicy`` members now type-check properly as instances
+  thereof -- at least on Python versions (3.11+) where ``enum.StrEnum``
+  is available (#427)
 
 
 5.0.2
