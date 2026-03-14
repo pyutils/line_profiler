@@ -34,7 +34,7 @@ omit =[
 ]
 
 [tool.cibuildwheel]
-build = "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
 # XXX: since `tests.yml` already defines `matrix.cibw_skip` for
 # `build_binpy_wheels`, can we deduplicate and just use that?
 # Or do we need these when building wheels for release, which may run on
@@ -59,13 +59,13 @@ archs = ['AMD64', 'ARM64']
 ignore_missing_imports = true
 
 [tool.xcookie]
-tags = [ "pyutils", "binpy", "github",]
+tags = [ "pyutils", "binpy", "github", "mypy", "binpy-ubuntu-arm"]
 mod_name = "line_profiler"
 repo_name = "line_profiler"
 rel_mod_parent_dpath = "."
 os = [ "all", "linux", "osx", "win",]
 main_python = '3.13'
-min_python = '3.8'
+min_python = '3.9'
 max_python = '3.14'
 author = "Robert Kern"
 author_email = "robert.kern@enthought.com"
@@ -102,7 +102,7 @@ rules = { unused-type-ignore-comment = "ignore" }
 
 [tool.ruff]
 line-length = 80
-target-version = "py38"
+target-version = "py39"
 
 [tool.ruff.lint]
 # Enable Flake8 (E, F) and isort (I) rules.
@@ -119,3 +119,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = false
+
+[tool.ty.rules]
+unused-ignore-comment = "ignore"
+unused-type-ignore-comment = "ignore"
+unresolved-import = "ignore"

@@ -6,7 +6,7 @@
 import logging
 from abc import ABC, abstractmethod
 import sys
-from typing import ClassVar
+from typing import ClassVar, cast
 from logging import INFO, DEBUG, ERROR, WARNING, CRITICAL  # NOQA
 
 
@@ -168,7 +168,7 @@ class _StdlibLogBackend(_LogBackend):
             'path': None,
             'format': '%(asctime)s : [file] %(levelname)s : %(message)s',
         }
-        streaminfo = {
+        streaminfo: dict[str, bool | None | str] = {
             '__enable__': None,  # will be determined below
             'format': '%(levelname)s: %(message)s',
         }
@@ -195,7 +195,7 @@ class _StdlibLogBackend(_LogBackend):
 
         # Add a stream handler if enabled
         if streaminfo['__enable__']:
-            streamformat = streaminfo.get('format')
+            streamformat = cast(str, streaminfo.get('format'))
             sh = logging.StreamHandler(sys.stdout)
             sh.setFormatter(logging.Formatter(streamformat))
             self.logger.addHandler(sh)

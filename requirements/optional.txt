@@ -1,4 +1,4 @@
 # Add requirements here, use the script for help 
 # xdev availpkg rich
-rich>=12.3.0
+rich>=13.9.0
 -r ipython.txt

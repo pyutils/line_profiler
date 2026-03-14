@@ -12,11 +12,11 @@ import pathlib
 import shutil
 import sys
 from os import PathLike
-from typing import Protocol, Sequence, TypeVar, cast
+from typing import cast
 from .toml_config import ConfigSource
 
 
-_BOOLEAN_VALUES = {
+_BOOLEAN_VALUES: dict[str, bool] = {
     **{k.casefold(): False for k in ('', '0', 'off', 'False', 'F', 'no', 'N')},
     **{k.casefold(): True for k in ('1', 'on', 'True', 'T', 'yes', 'Y')},
 }

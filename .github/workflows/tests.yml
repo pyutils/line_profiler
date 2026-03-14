@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - name: Set up Python 3.13 for linting
       uses: actions/setup-python@v5.6.0
       with:
@@ -34,12 +34,14 @@ jobs:
       run: |-
         # stop the build if there are Python syntax errors or undefined names
         flake8 ./line_profiler --count --select=E9,F63,F7,F82 --show-source --statistics
-    - name: Typecheck with mypy
+    - name: Typecheck
       run: |-
         python -m pip install mypy
         pip install -r requirements/runtime.txt
-        mypy --install-types --non-interactive ./line_profiler
         mypy ./line_profiler
+        python -m pip install ty
+        pip install -r requirements/runtime.txt
+        ty check ./line_profiler
   build_and_test_sdist:
     ##
     # Build the binary package from source and test it in the same
@@ -49,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - name: Set up Python 3.13
       uses: actions/setup-python@v5.6.0
       with:
@@ -57,8 +59,8 @@ jobs:
     - name: Upgrade pip
       run: |-
         python -m pip install pip uv -U
-        python -m uv pip install -r requirements/tests.txt
-        python -m uv pip install -r requirements/runtime.txt
+        python -m pip install --prefer-binary -r requirements/tests.txt
+        python -m pip install --prefer-binary -r requirements/runtime.txt
     - name: Build sdist
       shell: bash
       run: |-
@@ -69,7 +71,7 @@ jobs:
     - name: Install sdist
       run: |-
         ls -al wheelhouse
-        python -m uv pip install wheelhouse/line_profiler*.tar.gz -v
+        python -m pip install --prefer-binary wheelhouse/line_profiler*.tar.gz -v
     - name: Test minimal loose sdist
       env:
         COVERAGE_CORE: ctrace
@@ -103,7 +105,7 @@ jobs:
         echo "MOD_DPATH = $MOD_DPATH"
         python -m pytest --verbose --cov=line_profiler $MOD_DPATH ../tests
         cd ..
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v6.0.0
       name: Upload sdist artifact
       with:
         name: sdist_wheels
@@ -126,41 +128,35 @@ jobs:
         # explicitly here.
         os:
         - ubuntu-latest
-        # Overhead of building ARM wheels on Intel Linux nodes is
-        # unreasonably high (20s build time per wheel vs 3m);
-        # it's better to just spin another runner up to build them
-        # natively
-        - ubuntu-24.04-arm
         - macOS-latest
         - windows-latest
+        - ubuntu-24.04-arm
         cibw_skip:
         - '*-win32 cp3{9,10}-win_arm64 cp313-musllinux_i686'
         arch:
         - auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
-    # Note: Since we're building Linux wheels on their native
-    # architectures, we don't need QEMU
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.0.0
+      uses: docker/setup-qemu-action@v3.7.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v3.1.2
+      uses: pypa/cibuildwheel@v3.3.1
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
       env:
         CIBW_SKIP: ${{ matrix.cibw_skip }}
         CIBW_TEST_SKIP: '*-win_arm64'
-        CIBW_ENVIRONMENT: PYTHONUTF8=1
+        CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         PYTHONUTF8: '1'
         VSCMD_ARG_TGT_ARCH: ''
     - name: Show built files
@@ -186,7 +182,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v5.4.3
+    - uses: codecov/codecov-action@v5.5.2
       name: Codecov Upload
       env:
         HAVE_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
@@ -195,12 +191,12 @@ jobs:
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
-    - uses: codecov/codecov-action@v5.4.3
+    - uses: codecov/codecov-action@v5.5.2
       name: Codecov Upload
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v6.0.0
       name: Upload wheels artifact
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.arch }}
@@ -222,29 +218,25 @@ jobs:
         # Xcookie generates an explicit list of environments that will be used
         # for testing instead of using the more concise matrix notation.
         include:
-        - python-version: '3.8'
+        - python-version: '3.9'
           install-extras: tests-strict,runtime-strict
           os: ubuntu-latest
           arch: auto
-        - python-version: '3.8'
-          install-extras: tests-strict,runtime-strict
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.8'
+        - python-version: '3.9'
           install-extras: tests-strict,runtime-strict
           os: macOS-latest
           arch: auto
-        - python-version: '3.8'
+        - python-version: '3.9'
           install-extras: tests-strict,runtime-strict
           os: windows-latest
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests-strict,runtime-strict
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: ubuntu-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
@@ -253,6 +245,10 @@ jobs:
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
           os: windows-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests-strict,runtime-strict,optional-strict
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests-strict,runtime-strict,optional-strict
@@ -260,28 +256,20 @@ jobs:
           arch: auto
         - python-version: '3.13'
           install-extras: tests
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests
           os: macOS-latest
           arch: auto
         - python-version: '3.13'
           install-extras: tests
           os: windows-latest
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.13'
           install-extras: tests
           os: windows-11-arm
           arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
         - python-version: '3.9'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -305,38 +293,6 @@ jobs:
         - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.9'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests,optional
-          os: ubuntu-24.04-arm
-          arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: macOS-latest
           arch: auto
         - python-version: '3.9'
           install-extras: tests,optional
@@ -362,10 +318,6 @@ jobs:
           install-extras: tests,optional
           os: macOS-latest
           arch: auto
-        - python-version: '3.8'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
         - python-version: '3.9'
           install-extras: tests,optional
           os: windows-latest
@@ -389,6 +341,30 @@ jobs:
         - python-version: '3.14'
           install-extras: tests,optional
           os: windows-latest
+          arch: auto
+        - python-version: '3.9'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.10'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.11'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.12'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.13'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
+          arch: auto
+        - python-version: '3.14'
+          install-extras: tests,optional
+          os: ubuntu-24.04-arm
           arch: auto
         - python-version: '3.11'
           install-extras: tests,optional
@@ -408,16 +384,14 @@ jobs:
           arch: auto
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - name: Enable MSVC 64bit
       uses: ilammy/msvc-dev-cmd@v1
       if: ${{ startsWith(matrix.os, 'windows-') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
-    # Note: Since we're testing Linux wheels on their native
-    # architectures, we don't need QEMU
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.0.0
+      uses: docker/setup-qemu-action@v3.7.0
       if: runner.os == 'Linux' && matrix.arch != 'auto'
       with:
         platforms: all
@@ -443,28 +417,35 @@ jobs:
         echo "Installing helpers: setuptools"
         python -m uv pip install setuptools>=0.8 setuptools_scm wheel build -U
         echo "Installing helpers: tomli and pkginfo"
-        python -m uv pip install tomli pkginfo
+        python -m uv pip install tomli pkginfo packaging
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
+            from packaging import tags
+            from packaging.utils import parse_wheel_filename
             dist_dpath = pathlib.Path('wheelhouse')
-            candidates = list(dist_dpath.glob('line_profiler*.whl'))
-            candidates += list(dist_dpath.glob('line_profiler*.tar.gz'))
-            fpath = sorted(candidates)[-1]
+            wheels = sorted(dist_dpath.glob('line_profiler*.whl'))
+            if wheels:
+                sys_tags = set(tags.sys_tags())
+                matching = []
+                for w in wheels:
+                    try:
+                        _, _, _, wheel_tags = parse_wheel_filename(w.name)
+                    except Exception:
+                        continue
+                    if any(t in sys_tags for t in wheel_tags):
+                        matching.append(w)
+                fpath = sorted(matching or wheels)[-1]
+            else:
+                sdists = sorted(dist_dpath.glob('line_profiler*.tar.gz'))
+                if not sdists:
+                    raise SystemExit('No wheel artifacts found in wheelhouse')
+                fpath = sdists[-1]
             print(str(fpath).replace(chr(92), chr(47)))
-        ")
-        export MOD_VERSION=$(python -c "if 1:
-            from pkginfo import Wheel, SDist
-            import pathlib
-            fpath = '$WHEEL_FPATH'
-            cls = Wheel if fpath.endswith('.whl') else SDist
-            item = cls(fpath)
-            print(item.version)
         ")
         echo "WHEEL_FPATH=$WHEEL_FPATH"
         echo "INSTALL_EXTRAS=$INSTALL_EXTRAS"
         echo "UV_RESOLUTION=$UV_RESOLUTION"
-        echo "MOD_VERSION=$MOD_VERSION"
-        python -m uv pip install "line_profiler[$INSTALL_EXTRAS]==$MOD_VERSION" -f wheelhouse
+        python -m pip install --prefer-binary "${WHEEL_FPATH}[${INSTALL_EXTRAS}]"
         echo "Install finished."
     - name: Test wheel ${{ matrix.install-extras }}
       shell: bash
@@ -513,7 +494,7 @@ jobs:
         echo '### The cwd should now have a coverage.xml'
         ls -altr
         pwd
-    - uses: codecov/codecov-action@v5.4.3
+    - uses: codecov/codecov-action@v5.5.2
       name: Codecov Upload
       with:
         file: ./coverage.xml
@@ -527,7 +508,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - uses: actions/download-artifact@v4.1.8
       name: Download wheels
       with:
@@ -584,7 +565,7 @@ jobs:
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
         twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
         name: deploy_artifacts
@@ -603,7 +584,7 @@ jobs:
     - build_binpy_wheels
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - uses: actions/download-artifact@v4.1.8
       name: Download wheels
       with:
@@ -660,7 +641,7 @@ jobs:
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
         twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
-    - uses: actions/upload-artifact@v4.4.0
+    - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
         name: deploy_artifacts
@@ -680,7 +661,7 @@ jobs:
     - live_deploy
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v6.0.2
     - uses: actions/download-artifact@v4.1.8
       name: Download artifacts
       with:

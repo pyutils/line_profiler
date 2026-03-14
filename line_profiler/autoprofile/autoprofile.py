@@ -153,4 +153,4 @@ def run(
         # then restore it via the context manager, so that the executed
         # code is run as `__main__`
         sys.modules['__main__'] = module_obj
-        exec(code_obj, cast(Dict[str, Any], namespace), namespace)
+        exec(code_obj, cast(Dict[str, Any], namespace), namespace)  # type: ignore[redundant-cast]
