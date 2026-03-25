@@ -1043,72 +1043,16 @@ def _write_tempfile(source, content, options):
         )
 
 
-def _gather_preimport_targets(options, exclude):
-    """
-    Used in _write_preimports
-    """
-    from line_profiler.autoprofile.util_static import modpath_to_modname
-    from line_profiler.autoprofile.eager_preimports import is_dotted_path
-
-    filtered_targets = []
-    recurse_targets = []
-    invalid_targets = []
-    for target in options.prof_mod:
-        if is_dotted_path(target):
-            modname = target
-        else:
-            # Paths already normalized by
-            # `_normalize_profiling_targets()`
-            if not os.path.exists(target):
-                invalid_targets.append(target)
-                continue
-            if any(os.path.samefile(target, excluded) for excluded in exclude):
-                # Ignore the script to be run in eager importing
-                # (`line_profiler.autoprofile.autoprofile.run()` will
-                # handle it)
-                continue
-            modname = modpath_to_modname(target, hide_init=False)
-        if modname is None:  # Not import-able
-            invalid_targets.append(target)
-            continue
-        if modname.endswith('.__init__'):
-            modname = modname.rpartition('.')[0]
-            filtered_targets.append(modname)
-        else:
-            recurse_targets.append(modname)
-    if invalid_targets:
-        invalid_targets = sorted(set(invalid_targets))
-        msg = (
-            '{} profile-on-import target{} cannot be converted to '
-            'dotted-path form: {!r}'.format(
-                len(invalid_targets),
-                '' if len(invalid_targets) == 1 else 's',
-                invalid_targets,
-            )
-        )
-        warnings.warn(msg)
-        diagnostics.log.warning(msg)
-
-    return filtered_targets, recurse_targets
-
-
 def _write_preimports(prof, options, exclude):
     """
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
     """
-    from line_profiler.autoprofile.eager_preimports import (
-        write_eager_import_module,
-    )
     from line_profiler.autoprofile.autoprofile import (
         _extend_line_profiler_for_profiling_imports as upgrade_profiler,
     )
+    from line_profiler.curated_profiling import ClassifiedPreimportTargets 
 
-    filtered_targets, recurse_targets = _gather_preimport_targets(
-        options, exclude
-    )
-    if not (filtered_targets or recurse_targets):
-        return
     # We could've done everything in-memory with `io.StringIO` and `exec()`,
     # but that results in indecipherable tracebacks should anything goes wrong;
     # so we write to a tempfile and `execfile()` it
@@ -1116,26 +1060,14 @@ def _write_preimports(prof, options, exclude):
     temp_mod_path = _touch_tempfile(
         dir=options.tmpdir, prefix='kernprof-eager-preimports-', suffix='.py'
     )
-    write_module_kwargs = {
-        'dotted_paths': filtered_targets,
-        'recurse': recurse_targets,
-        'static': options.static,
-    }
-    temp_file = open(temp_mod_path, mode='w')
-    if options.debug:
-        with StringIO() as sio:
-            write_eager_import_module(stream=sio, **write_module_kwargs)
-            code = sio.getvalue()
-        with temp_file as fobj:
-            print(code, file=fobj)
-        diagnostics.log.debug(
-            'Wrote temporary module for pre-imports to '
-            f'{short_string_path(temp_mod_path)!r}'
+    with open(temp_mod_path, mode='w') as fobj:
+        preimports = ClassifiedPreimportTargets.from_targets(
+            options.prof_mod, exclude,
         )
-    else:
-        with temp_file as fobj:
-            write_eager_import_module(stream=fobj, **write_module_kwargs)
-    if not options.dryrun:
+        preimports.write_preimport_module(
+            fobj, debug=options.debug, static=options.static,
+        )
+    if preimports and not options.dryrun:
         ns = {}  # Use a fresh namespace
         execfile(temp_mod_path, ns, ns)
     # Delete the tempfile ASAP if its execution succeeded
