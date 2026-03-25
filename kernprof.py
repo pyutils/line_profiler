@@ -1363,8 +1363,7 @@ def _post_profile(options, prof):
     for _ in range(prof.enable_count):
         prof.disable_by_count()
     # Restore the state of the global `@line_profiler.profile`
-    if options.global_profiler:
-        options.install_profiler(None)
+    options.install_profiler(None)
 
 
 if __name__ == '__main__':
