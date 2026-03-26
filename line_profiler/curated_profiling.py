@@ -4,24 +4,27 @@ the use of :py:mod:`kernprof`).
 """
 from __future__ import annotations
 
+import builtins
 import dataclasses
+import functools
 import os
 import warnings
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from io import StringIO
 from textwrap import indent
-from typing import TextIO
+from typing import Any, TextIO
 from typing_extensions import Self
 
-from . import _diagnostics as diagnostics
+from . import _diagnostics as diagnostics, profile as _global_profiler
 from .autoprofile.util_static import modpath_to_modname
 from .autoprofile.eager_preimports import (
     is_dotted_path, write_eager_import_module,
 )
 from .cli_utils import short_string_path
+from .profiler_mixin import ByCountProfilerMixin
 
 
-__all__ = ('ClassifiedPreimportTargets',)
+__all__ = ('ClassifiedPreimportTargets', 'CuratedProfilerContext')
 
 
 @dataclasses.dataclass
@@ -138,3 +141,75 @@ class ClassifiedPreimportTargets:
             else:
                 recurse_targets.append(modname)
         return cls(filtered_targets, recurse_targets, invalid_targets)
+
+
+class CuratedProfilerContext:
+    """
+    Context manager for handling various bookkeeping tasks when setting
+    up and tearing down profiling:
+
+    - Slipping ``prof`` into the builtin namespace (if
+      ``insert_builtin`` is true) and :py::deco:`~.profile`
+    - At exit, clearing the ``enable_count`` of ``prof``, properly
+      disabling it
+
+    Note:
+        The attributes on this object are to be considered
+        implementation details, but not its methods and their
+        signatures.
+    """
+    def __init__(
+        self,
+        prof: ByCountProfilerMixin,
+        insert_builtin: bool = False,
+        builtin_loc: str = 'profile',
+    ) -> None:
+        self.prof = prof
+        self.insert_builtin = insert_builtin
+        self.builtin_loc = builtin_loc
+        self._installed = False
+        self._global_install = _global_profiler._kernprof_overwrite
+
+    def install(self) -> None:
+        def del_builtin_profile() -> None:
+            delattr(builtins, self.builtin_loc)
+
+        def set_builtin_profile(old: Any) -> None:
+            setattr(builtins, self.builtin_loc, old)
+
+        if self._installed:
+            return
+        # Overwrite the explicit profiler (`@line_profiler.profile`)
+        self._global_install(self.prof)  # type: ignore[arg-type]
+        # Set up hooks to deal with inserting `.prof` as a builtin name
+        if self.insert_builtin:
+            try:
+                old = getattr(builtins, self.builtin_loc)
+            except AttributeError:
+                self._restore: Callable[[], None] = del_builtin_profile
+            else:
+                self._restore = functools.partial(set_builtin_profile, old)
+            set_builtin_profile(self.prof)
+        self._installed = True
+
+    def uninstall(self) -> None:
+        if not self._installed:
+            return
+        # Restore the `builtins` namespace
+        if (
+            self.insert_builtin
+            and getattr(builtins, self.builtin_loc, None) is self.prof
+        ):
+            self._restore()
+        # Fully disable the profiler
+        for _i in range(getattr(self.prof, 'enable_count', 0)):
+            self.prof.disable_by_count()
+        # Restore the state of the global `@line_profiler.profile`
+        self._global_install(None)  # type: ignore[arg-type]
+        self._installed = False
+
+    def __enter__(self) -> None:
+        self.install()
+
+    def __exit__(self, *_, **__) -> None:
+        self.uninstall()

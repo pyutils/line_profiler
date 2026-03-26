@@ -187,7 +187,6 @@ NOTE:
 """  # noqa: E501
 
 import atexit
-import builtins
 import functools
 import os
 import sys
@@ -198,9 +197,7 @@ import contextlib
 import shutil
 import tempfile
 import time
-import warnings
 from argparse import ArgumentParser
-from io import StringIO
 from operator import methodcaller
 from runpy import run_module
 from pathlib import Path
@@ -1163,12 +1160,41 @@ def _call_with_diagnostics(options, func, *args, **kwargs):
     return func(*args, **kwargs)
 
 
-def _pre_profile(options, module, exit_on_error):
+class _manage_profiler:
     """
     Prepare the environment to execute profiling with requested options.
 
     Note:
         modifies ``options`` with extra attributes.
+    """
+    def __init__(self, options, module, exit_on_error):
+        self.options = options
+        self.module = module
+        self.exit_on_error = exit_on_error
+
+    def __enter__(self):
+        from line_profiler.curated_profiling import CuratedProfilerContext
+
+        self.prof = _prepare_profiler(
+            self.options, self.module, self.exit_on_error,
+        )
+        self._ctx = CuratedProfilerContext(
+            self.prof, insert_builtin=self.options.builtin,
+        )
+        self._ctx.install()
+        script_file = _prepare_exec_script(
+            self.options, self.module, self.prof, self.exit_on_error,
+        )
+        return self.prof, script_file
+
+    def __exit__(self, *_, **__):
+        _post_profile(self.options, self.prof)
+        self._ctx.uninstall()
+
+
+def _prepare_profiler(options, module, exit_on_error):
+    """
+    Set up the appropriate profiler instance.
     """
     if not options.outfile:
         extension = 'lprof' if options.line_by_line else 'prof'
@@ -1199,24 +1225,21 @@ def _pre_profile(options, module, exit_on_error):
             execfile(setup_file, ns, ns)
 
     if options.line_by_line:
-        prof = line_profiler.LineProfiler()
         options.builtin = True
+        return line_profiler.LineProfiler()
     elif Profile.__module__ == 'profile':
         raise RuntimeError(
             'non-line-by-line profiling depends on cProfile, '
             'which is not available on this platform'
         )
     else:
-        prof = ContextualProfile()
+        return ContextualProfile()
 
-    # Overwrite the explicit decorator
-    global_profiler = line_profiler.profile
-    install_profiler = global_profiler._kernprof_overwrite
-    install_profiler(prof)
 
-    if options.builtin:
-        builtins.__dict__['profile'] = prof
-
+def _prepare_exec_script(options, module, prof, exit_on_error):
+    """
+    Set up the script to be executed among other things.
+    """
     if module:
         script_file = find_module_script(
             options.script, static=options.static, exit_on_error=exit_on_error
@@ -1245,8 +1268,6 @@ def _pre_profile(options, module, exit_on_error):
         exclude = set() if module else {script_file}
         _write_preimports(prof, options, exclude)
 
-    options.global_profiler = global_profiler
-    options.install_profiler = install_profiler
     if options.output_interval and not options.dryrun:
         options.rt = RepeatedTimer(
             max(options.output_interval, 1), prof.dump_stats, options.outfile
@@ -1254,7 +1275,7 @@ def _pre_profile(options, module, exit_on_error):
     else:
         options.rt = None
     options.original_stdout = sys.stdout
-    return script_file, prof
+    return script_file
 
 
 def _main_profile(options, module=False, exit_on_error=True):
@@ -1262,9 +1283,10 @@ def _main_profile(options, module=False, exit_on_error=True):
     Called by :py:func:`main()` for the actual execution and profiling of code
     after initial parsing of options; not to be invoked on its own.
     """
-    script_file, prof = _pre_profile(options, module, exit_on_error)
     call = functools.partial(_call_with_diagnostics, options)
-    try:
+    with _manage_profiler(
+        options, module, exit_on_error,
+    ) as (prof, script_file):
         rmod = functools.partial(
             run_module, run_name='__main__', alter_sys=True
         )
@@ -1315,8 +1337,6 @@ def _main_profile(options, module=False, exit_on_error=True):
                         module_ns,
                         module_ns,
                     )
-    finally:
-        _post_profile(options, prof)
 
 
 def _post_profile(options, prof):
@@ -1359,11 +1379,6 @@ def _post_profile(options, prof):
             f'{quote(py_exe)} -m {show_mod} '
             f'{quote(short_outfile)}'
         )
-    # Fully disable the profiler
-    for _ in range(prof.enable_count):
-        prof.disable_by_count()
-    # Restore the state of the global `@line_profiler.profile`
-    options.install_profiler(None)
 
 
 if __name__ == '__main__':
