@@ -40,8 +40,11 @@ class LineProfilingCache:
     profiling_targets: Collection[str] = dataclasses.field(
         default_factory=list,
     )
+    profile_imports: bool = False
     preimports_module: os.PathLike[str] | str | None = None
     main_pid: int = dataclasses.field(default_factory=os.getpid)
+    # Note: if we're using the line profiler, `kernprof` always set
+    # `builtin` to true
     insert_builtin: bool = True
     _cleanup_stack: list[Callable[[], Any]] = dataclasses.field(
         default_factory=list, init=False,

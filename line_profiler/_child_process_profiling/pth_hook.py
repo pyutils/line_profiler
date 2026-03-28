@@ -5,17 +5,17 @@ to therein.
 Note:
     - The current implementation writes temporary .pth files to the
       site-packages directory, which are executed for all Python
-      processes referring to the same `lib/`. However, only processes
-      originating from a parent which set the requisite environment
-      variables will execute to the profiling code.
+      processes referring to the same :path:`lib/`. However, only
+      processes originating from a parent which set the requisite
+      environment variables will execute to the profiling code.
     - Said .pth file always import this module; hence, this file is kept
       intentionally lean to reduce overhead:
       - Imports in this file are deferred to being as late as possible.
       - Type annotations are replaced with type comments.
       - Non-essential functionalities are split into small separate
         submodules (e.g. :py:mod:`~.cache`).
-    - Inspired by similar code in `coverage.control` and
-      `pytest_autoprofile.startup_hook`.
+    - Inspired by similar code in :py:mod:`coverage.control` and
+      :py:mod:`pytest_autoprofile.startup_hook`.
 """
 from typing import TYPE_CHECKING
 
@@ -50,6 +50,8 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         - To be called in the main process.
         - The ``cache`` is responsible for deleting the written .pth
           file via the registered cleanup callback.
+        - For convenience, we also wrap :py:func:`os.fork` when this
+          function is called.
     """
     import os
     from pathlib import Path  # noqa: F811
@@ -77,6 +79,9 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         raise
     finally:  # Not closing the handle causes issues on Windows
         os.close(handle)
+
+    _wrap_os_fork(cache)
+
     return fpath
 
 
@@ -166,12 +171,21 @@ def _setup_in_child_process(cache, wrap_os_fork=True):
     import os
     from atexit import register
     from tempfile import mkstemp
+    from ..autoprofile.autoprofile import (
+        # Note: we need this to equip the profiler with the
+        # `.add_imported_function_or_module()` pseudo-method
+        # (see `kernprof.py::_write_preimports()`), which is required
+        # for the preimports to work
+        _extend_line_profiler_for_profiling_imports as upgrade_profiler,
+    )
     from ..curated_profiling import CuratedProfilerContext
     from ..line_profiler import LineProfiler
+    from .meta_path_finder import RewritingFinder
 
     # Create a profiler instance and manage it with
     # `CuratedProfilerContext`
     prof = LineProfiler()
+    upgrade_profiler(prof)
     ctx = CuratedProfilerContext(prof, insert_builtin=cache.insert_builtin)
     ctx.install()
     cache.add_cleanup(ctx.uninstall)
@@ -182,8 +196,10 @@ def _setup_in_child_process(cache, wrap_os_fork=True):
             code = compile(fobj.read(), cache.preimports_module, 'exec')
             exec(code, {})  # Use a fresh, empty namespace
 
-    # Set up the importer for rewriting `__main__` (TODO)
-    ...
+    # Set up the importer for rewriting `__main__`
+    finder = RewritingFinder(prof, cache)
+    finder.install()
+    cache.add_cleanup(finder.uninstall)
 
     # Occupy a tempfile slot in `cache.cache_dir` and set the profiler
     # up to write thereto when the process terminates
