@@ -100,8 +100,7 @@ class LineProfilingCache:
         """
         pid = os.environ[INHERITED_PID_ENV_VARNAME]
         cache_dir = os.environ[f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}']
-        with open(cls._get_filename(cache_dir), mode='rb') as fobj:
-            return cls(**pickle.load(fobj))
+        return cls._from_path(cls._get_filename(cache_dir))
 
     def dump(self) -> None:
         """
@@ -116,6 +115,11 @@ class LineProfilingCache:
             pickle.dump(
                 self._get_init_args(), fobj, protocol=HIGHEST_PROTOCOL,
             )
+
+    @classmethod
+    def _from_path(cls, fname: os.PathLike[str] | str) -> Self:
+        with open(cls._get_filename(fname), mode='rb') as fobj:
+            return cls(**pickle.load(fobj))
 
     def _get_init_args(self) -> dict[str, Any]:
         init_fields = [
