@@ -11,11 +11,15 @@ try:
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
 from collections.abc import Collection, Callable
-from functools import partial
+from functools import partial, cached_property
+from operator import setitem
+from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
-from typing import Any
+from typing import Any, cast
 from typing_extensions import Self, ParamSpec
 
+from .. import _diagnostics as diagnostics
+from ..line_profiler import LineStats
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
 # hook, which must run with minimal overhead when a Python process isn't
@@ -60,8 +64,11 @@ class LineProfilingCache:
             callback = callbacks.pop()
             try:
                 callback()
-            except Exception:
-                pass
+            except Exception as e:
+                msg = f'Cleanup failed: {callback}: {type(e).__name__}: {e}'
+            else:
+                msg = f'Cleanup succeeded: {callback}'
+            self._debug(msg)
 
     def add_cleanup(
         self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
@@ -73,6 +80,7 @@ class LineProfilingCache:
         if args or kwargs:
             callback = partial(callback, *args, **kwargs)
         self._cleanup_stack.append(callback)
+        self._debug(f'Cleanup callback added: {callback}')
 
     def copy(
         self, *, inherit_cleanups: bool = False, **replacements
@@ -99,7 +107,13 @@ class LineProfilingCache:
         These should have been set from an ancestral Python process.
         """
         pid = os.environ[INHERITED_PID_ENV_VARNAME]
-        cache_dir = os.environ[f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}']
+        cache_varname = f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}'
+        cache_dir = os.environ[cache_varname]
+        msg = (
+            f'PID {os.getpid()} (from {pid}): '
+            f'Loading instance from ${{{cache_varname}}} = {cache_dir}'
+        )
+        diagnostics.log.debug(msg)
         return cls._from_path(cls._get_filename(cache_dir))
 
     def dump(self) -> None:
@@ -111,14 +125,59 @@ class LineProfilingCache:
         Note:
             Cleanup callbacks are not serialized.
         """
+        content = self._get_init_args()
+        msg = f'Dumping instance data to {self.filename}: {content!r}'
+        self._debug(msg)
         with open(self.filename, mode='wb') as fobj:
-            pickle.dump(
-                self._get_init_args(), fobj, protocol=HIGHEST_PROTOCOL,
-            )
+            pickle.dump(content, fobj, protocol=HIGHEST_PROTOCOL)
+
+    def gather_stats(self, glob_pattern: str = '*.lprof') -> LineStats:
+        """
+        Gather the profiling output files matching ``glob_pattern`` from
+        :py:attr:`~.cache_dir`, consolidating them into a single
+        :py:class:`LineStats` object.
+        """
+        fnames = list(Path(self.cache_dir).glob(glob_pattern))
+        self._debug(
+            'Loading results from {} child profiling file(s): {!r}'
+            .format(len(fnames), fnames)
+        )
+        if not fnames:
+            return LineStats.get_empty_instance()
+        return LineStats.from_files(*fnames, on_defective='ignore')
+
+    def inject_env_vars(
+        self, env: dict[str, str] | None = None,
+    ) -> None:
+        """
+        Inject the :py:attr:`~.environ` variables into ``env`` and add
+        cleanup callbacks to reverse them.
+
+        Args:
+            env (dict[str, str] | None):
+                Dictionary in the format of :py:data:`os.environ`;
+                default is to use that
+        """
+        if env is None:
+            env = cast(dict[str, str], os.environ)
+        for name, value in self.environ.items():
+            try:
+                old = env[name]
+            except KeyError:
+                self.add_cleanup(env.pop, name, None)
+                change = f'{value!r} (new)'
+            else:
+                self.add_cleanup(setitem, env, name, old)
+                change = f'{old!r} -> {value!r}'
+            self._debug(f'Injecting env var ${{{name}}}: {change}')
+            env[name] = value
+
+    def _debug(self, msg: str) -> None:
+        diagnostics.log.debug(f'{self._debug_message_header}: {msg}')
 
     @classmethod
     def _from_path(cls, fname: os.PathLike[str] | str) -> Self:
-        with open(cls._get_filename(fname), mode='rb') as fobj:
+        with open(fname, mode='rb') as fobj:
             return cls(**pickle.load(fobj))
 
     def _get_init_args(self) -> dict[str, Any]:
@@ -147,3 +206,10 @@ class LineProfilingCache:
     @property
     def filename(self) -> str:
         return self._get_filename(self.cache_dir)
+
+    @cached_property
+    def _debug_message_header(self) -> str:
+        pid = os.getpid()
+        if self.main_pid == pid:
+            return f'PID {pid} (main process)'
+        return f'PID {pid} (from {self.main_pid})'
