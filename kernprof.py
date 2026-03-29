@@ -79,6 +79,7 @@ which displays:
                     [-s SETUP] [-p {path/to/script | object.dotted.path}[,...]]
                     [--preimports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [--prof-imports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
+                    [--prof-child-procs [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-o OUTFILE] [-v] [-q]
                     [--rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]]
                     [-u UNIT]
@@ -151,7 +152,7 @@ which displays:
       -q, --quiet           Decrease verbosity level (default: 0). At level -1, disable
                             helpful messages (e.g. "Wrote profile results to <...>"); at
                             level -2, silence the stdout; at level -3, silence the stderr.
-      --rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
+--rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             Use rich formatting if viewing output. (Default: False; short
                             form: -r)
       -u, --unit UNIT       Output unit (in seconds) in which the timing info is
@@ -226,6 +227,7 @@ from line_profiler.cli_utils import (
     short_string_path,
 )
 from line_profiler.profiler_mixin import ByCountProfilerMixin
+from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._logger import Logger
 from line_profiler import _diagnostics as diagnostics
 
@@ -327,6 +329,7 @@ def find_module_script(module_name, *, static=True, exit_on_error=True):
         fname = mod_spec.origin  # type: str | None
         if fname and os.path.exists(fname):
             return fname
+        return None
 
     get_module_path = modname_to_modpath if static else resolve_module_path
 
@@ -678,6 +681,14 @@ def _add_core_parser_arguments(parser):
         'Only works with line profiling (`-l`/`--line-by-line`). '
         f'(Default: {default.conf_dict["prof_imports"]})',
     )
+    add_argument(
+        prof_opts,
+        '--prof-child-procs',
+        action='store_true',
+        help='Extend profiling into child Python processes. '
+        'Only works with line profiling (`-l`/`--line-by-line`). '
+        f'(Default: {default.conf_dict["prof_child_procs"]})',
+    )
     out_opts = parser.add_argument_group('output options')
     if default.conf_dict['outfile']:
         def_outfile = repr(default.conf_dict['outfile'])
@@ -800,8 +811,8 @@ def _build_parsers(args=None):
         # We've already consumed the `-m <module>`, so we need a dummy
         # parser for generating the help text;
         # but the real parser should not consume the `options.script`
-        # positional arg, and it it got the `--help` option, it should
-        # hand off the the dummy parser
+        # positional arg, and if it got the `--help` option, it should
+        # hand off to the dummy parser
         real_parser = ArgumentParser(add_help=False, **parser_kwargs)
         real_parser.add_argument('-h', '--help', action='store_true')
         help_parser = ArgumentParser(**parser_kwargs)
@@ -1040,7 +1051,7 @@ def _write_tempfile(source, content, options):
         )
 
 
-def _write_preimports(prof, options, exclude):
+def _write_preimports(prof, options, exclude, keep=False):
     """
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
@@ -1068,8 +1079,9 @@ def _write_preimports(prof, options, exclude):
         ns = {}  # Use a fresh namespace
         execfile(temp_mod_path, ns, ns)
     # Delete the tempfile ASAP if its execution succeeded
-    if not diagnostics.KEEP_TEMPDIRS:
+    if not (keep or diagnostics.KEEP_TEMPDIRS):
         _remove(temp_mod_path)
+    return temp_mod_path
 
 
 def _remove(path, *, recursive=False, missing_ok=False):
@@ -1083,9 +1095,8 @@ def _remove(path, *, recursive=False, missing_ok=False):
         path.unlink(missing_ok=missing_ok)
 
 
-def _dump_filtered_stats(tmpdir, prof, filename):
+def _dump_filtered_stats(tmpdir, prof, filename, extra_line_stats=None):
     import os
-    import pickle
 
     # Build list of known temp file paths
     tempfile_paths = [
@@ -1103,21 +1114,25 @@ def _dump_filtered_stats(tmpdir, prof, filename):
         prof.dump_stats(filename)
         return
 
+    line_stats = prof.get_stats()
+    if extra_line_stats is not None:
+        line_stats += extra_line_stats
+    _dump_filtered_line_stats(line_stats, tempfile_paths, filename)
+
+
+def _dump_filtered_line_stats(stats, exclude, filename):
     # Filter the filenames to remove data from tempfiles, which will
     # have been deleted by the time the results are viewed in a
     # separate process
-    stats = prof.get_stats()
     timings = stats.timings
     for key in set(timings):
         fname = key[0]
         try:
-            if any(os.path.samefile(fname, tmp) for tmp in tempfile_paths):
+            if any(os.path.samefile(fname, tmp) for tmp in exclude):
                 del timings[key]
         except OSError:
             del timings[key]
-
-    with open(filename, 'wb') as f:
-        pickle.dump(stats, f, protocol=pickle.HIGHEST_PROTOCOL)
+    stats.to_file(filename)
 
 
 def _format_call_message(func, *args, **kwargs):
@@ -1167,6 +1182,8 @@ class _manage_profiler:
     Note:
         modifies ``options`` with extra attributes.
     """
+    cache: LineProfilingCache
+
     def __init__(self, options, module, exit_on_error):
         self.options = options
         self.module = module
@@ -1182,14 +1199,36 @@ class _manage_profiler:
             self.prof, insert_builtin=self.options.builtin,
         )
         self._ctx.install()
-        script_file = _prepare_exec_script(
-            self.options, self.module, self.prof, self.exit_on_error,
+        # Keep the generated pre-imports file to be reused in child
+        # processes
+        script_file, preimports_file = _prepare_exec_script(
+            self.options, self.module, self.prof,
+            exit_on_error=self.exit_on_error,
+            keep_preimports_file=self.set_up_child_profiling,
         )
+        if self.set_up_child_profiling:
+            self.cache = _prepare_child_profiling_cache(
+                self.options, self.prof, preimports_file,
+            )
         return self.prof, script_file
 
     def __exit__(self, *_, **__):
-        _post_profile(self.options, self.prof)
-        self._ctx.uninstall()
+        try:
+            extra_stats = None
+            if self.set_up_child_profiling:
+                try:
+                    extra_stats = self.cache.gather_stats()
+                finally:
+                    self.cache.cleanup()
+            _post_profile(self.options, self.prof, extra_stats)
+        finally:
+            self._ctx.uninstall()
+
+    @property
+    def set_up_child_profiling(self):
+        return bool(
+            self.options.line_by_line and self.options.prof_child_procs
+        )
 
 
 def _prepare_profiler(options, module, exit_on_error):
@@ -1236,7 +1275,12 @@ def _prepare_profiler(options, module, exit_on_error):
         return ContextualProfile()
 
 
-def _prepare_exec_script(options, module, prof, exit_on_error):
+def _prepare_exec_script(
+    options, module, prof,
+    *,
+    exit_on_error=False,
+    keep_preimports_file=False,
+):
     """
     Set up the script to be executed among other things.
     """
@@ -1259,6 +1303,8 @@ def _prepare_exec_script(options, module, prof, exit_on_error):
         options.prof_mod = _normalize_profiling_targets(options.prof_mod)
     if not options.prof_mod:
         options.preimports = False
+
+    preimports_file = None
     if options.line_by_line and options.preimports:
         # We assume most items in `.prof_mod` to be import-able without
         # significant side effects, but the same cannot be said if it
@@ -1266,7 +1312,9 @@ def _prepare_exec_script(options, module, prof, exit_on_error):
         # even have a `if __name__ == '__main__': ...` guard. So don't
         # eager-import it.
         exclude = set() if module else {script_file}
-        _write_preimports(prof, options, exclude)
+        preimports_file = _write_preimports(
+            prof, options, exclude, keep=keep_preimports_file,
+        )
 
     if options.output_interval and not options.dryrun:
         options.rt = RepeatedTimer(
@@ -1275,7 +1323,60 @@ def _prepare_exec_script(options, module, prof, exit_on_error):
     else:
         options.rt = None
     options.original_stdout = sys.stdout
-    return script_file
+    return script_file, preimports_file
+
+
+def _prepare_child_profiling_cache(options, prof, preimports_file):
+    """
+    Handle the (line-)profiling of spawned/forked child Python
+    processes.
+    """
+    from line_profiler._child_process_profiling import (
+        pth_hook, multiprocessing_patches,
+    )
+
+    # Create the cache dir and cache file here; the cache instance will
+    # be responsible for managing their lifetimes, while derivative
+    # instances in child processes will merely inherit and use them
+    cache = LineProfilingCache(
+        tempfile.mkdtemp(),
+        options.prof_mod,
+        options.prof_imports,
+        preimports_file,
+        insert_builtin=options.builtin,
+    )
+    cache.add_cleanup(
+        _remove, cache.cache_dir, recursive=True, missing_ok=True,
+    )
+    cache.dump()
+    cache.add_cleanup(_remove, cache.filename, missing_ok=True)
+
+    # This file is handed to us at the end of
+    # `_manage_profiler.__enter__()`;
+    # normally it is deleted before `.__enter__()` returns, but when
+    # child-process profiling is used, it is to persist for the lifetime
+    # of the cache (so that child processes can do the same preimports)
+    if preimports_file is not None:
+        cache.add_cleanup(_remove, preimports_file, missing_ok=True)
+
+    # Note: the following functions/methods all clean up after
+    # themselves, so there is no need to explicitly call
+    # `cache.add_cleanup()`
+
+    # Inject environment variables so that child Python processes can
+    # inherit them and resume profiling
+    cache.inject_env_vars()
+
+    # Create the .pth file which allows for setting up profiling in all
+    # the child Python processes (e.g. those created by `os.system()` or
+    # `subprocess.run()`
+    pth_hook.write_pth_hook(cache)
+
+    # Patch `multiprocessing` so that child processes are properly
+    # handled across all "start methods"
+    multiprocessing_patches.apply(cache.filename, lp_cache=cache)
+
+    return cache
 
 
 def _main_profile(options, module=False, exit_on_error=True):
@@ -1339,14 +1440,16 @@ def _main_profile(options, module=False, exit_on_error=True):
                     )
 
 
-def _post_profile(options, prof):
+def _post_profile(options, prof, extra_line_stats=None):
     """
     Cleanup setup after executing a main profile
     """
     if options.rt is not None:
         options.rt.stop()
     if not options.dryrun:
-        _dump_filtered_stats(options.tmpdir, prof, options.outfile)
+        _dump_filtered_stats(
+            options.tmpdir, prof, options.outfile, extra_line_stats,
+        )
     short_outfile = short_string_path(options.outfile)
     diagnostics.log.info(
         (
@@ -1357,9 +1460,15 @@ def _post_profile(options, prof):
         + f'to {short_outfile!r}'
     )
     if options.verbose > 0 and not options.dryrun:
-        kwargs = {}
-        if not isinstance(prof, ContextualProfile):
-            kwargs.update(
+        if isinstance(prof, ContextualProfile):
+            _call_with_diagnostics(options, prof.print_stats)
+        else:
+            stats = prof.get_stats()
+            if extra_line_stats is not None:
+                stats += extra_line_stats
+            _call_with_diagnostics(
+                options,
+                stats.print,
                 output_unit=options.unit,
                 stripzeros=options.skip_zero,
                 summarize=options.summarize,
@@ -1367,7 +1476,6 @@ def _post_profile(options, prof):
                 stream=options.original_stdout,
                 config=options.config,
             )
-        _call_with_diagnostics(options, prof.print_stats, **kwargs)
     else:
         py_exe = _python_command()
         if isinstance(prof, ContextualProfile):
