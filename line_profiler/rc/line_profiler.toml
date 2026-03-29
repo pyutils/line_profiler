@@ -94,6 +94,9 @@ preimports = true
 #   - `prof-imports` (bool):
 #     `--prof-imports` (true) or `--no-prof-imports` (false)
 prof-imports = false
+#   - `prof-child-procs` (bool):
+#     `--prof-child-procs` (true) or `--no-prof-child-procs` (false)
+prof-child-procs = false
 
 # - Misc flags
 #   - `verbose` (count):
