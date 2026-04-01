@@ -50,6 +50,7 @@ class LineProfilingCache:
     # Note: if we're using the line profiler, `kernprof` always set
     # `builtin` to true
     insert_builtin: bool = True
+    debug: bool = diagnostics.DEBUG
     _cleanup_stack: list[Callable[[], Any]] = dataclasses.field(
         default_factory=list, init=False,
     )
@@ -68,7 +69,7 @@ class LineProfilingCache:
                 msg = f'Cleanup failed: {callback}: {type(e).__name__}: {e}'
             else:
                 msg = f'Cleanup succeeded: {callback}'
-            self._debug(msg)
+            self._debug_output(msg)
 
     def add_cleanup(
         self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
@@ -80,7 +81,7 @@ class LineProfilingCache:
         if args or kwargs:
             callback = partial(callback, *args, **kwargs)
         self._cleanup_stack.append(callback)
-        self._debug(f'Cleanup callback added: {callback}')
+        self._debug_output(f'Cleanup callback added: {callback}')
 
     def copy(
         self, *, inherit_cleanups: bool = False, **replacements
@@ -127,7 +128,7 @@ class LineProfilingCache:
         """
         content = self._get_init_args()
         msg = f'Dumping instance data to {self.filename}: {content!r}'
-        self._debug(msg)
+        self._debug_output(msg)
         with open(self.filename, mode='wb') as fobj:
             pickle.dump(content, fobj, protocol=HIGHEST_PROTOCOL)
 
@@ -138,7 +139,7 @@ class LineProfilingCache:
         :py:class:`LineStats` object.
         """
         fnames = list(Path(self.cache_dir).glob(glob_pattern))
-        self._debug(
+        self._debug_output(
             'Loading results from {} child profiling file(s): {!r}'
             .format(len(fnames), fnames)
         )
@@ -169,11 +170,20 @@ class LineProfilingCache:
             else:
                 self.add_cleanup(setitem, env, name, old)
                 change = f'{old!r} -> {value!r}'
-            self._debug(f'Injecting env var ${{{name}}}: {change}')
+            self._debug_output(f'Injecting env var ${{{name}}}: {change}')
             env[name] = value
 
-    def _debug(self, msg: str) -> None:
-        diagnostics.log.debug(f'{self._debug_message_header}: {msg}')
+    def _debug_output(self, msg: str) -> None:
+        msg = f'{self._debug_message_header}: {msg}'
+        diagnostics.log.debug(msg)
+        try:
+            with self._debug_log.open(mode='a') as fobj:
+                print(msg, file=fobj)
+        except (
+            AttributeError,  # `._debug_log` is None in non-debug mode
+            OSError,  # Cache dir may have been removed during cleanup
+        ):
+            pass
 
     @classmethod
     def _from_path(cls, fname: os.PathLike[str] | str) -> Self:
@@ -206,6 +216,13 @@ class LineProfilingCache:
     @property
     def filename(self) -> str:
         return self._get_filename(self.cache_dir)
+
+    @property
+    def _debug_log(self) -> Path | None:
+        if not self.debug:
+            return None
+        fname = f'debug_log_{self.main_pid}_{os.getpid()}.log'
+        return Path(self.cache_dir) / fname
 
     @cached_property
     def _debug_message_header(self) -> str:

@@ -1344,20 +1344,21 @@ def _prepare_child_profiling_cache(options, prof, preimports_file):
         options.prof_imports,
         preimports_file,
         insert_builtin=options.builtin,
+        debug=options.debug,
     )
-    cache.add_cleanup(
-        _remove, cache.cache_dir, recursive=True, missing_ok=True,
-    )
+    clean_up = functools.partial(cache.add_cleanup, _remove)
+    if not diagnostics.KEEP_TEMPDIRS:
+        clean_up(cache.cache_dir, recursive=True, missing_ok=True)
     cache.dump()
-    cache.add_cleanup(_remove, cache.filename, missing_ok=True)
+    clean_up(cache.filename, missing_ok=True)
 
     # This file is handed to us at the end of
     # `_manage_profiler.__enter__()`;
     # normally it is deleted before `.__enter__()` returns, but when
     # child-process profiling is used, it is to persist for the lifetime
     # of the cache (so that child processes can do the same preimports)
-    if preimports_file is not None:
-        cache.add_cleanup(_remove, preimports_file, missing_ok=True)
+    if not (preimports_file is None or diagnostics.KEEP_TEMPDIRS):
+        clean_up(preimports_file, missing_ok=True)
 
     # Note: the following functions/methods all clean up after
     # themselves, so there is no need to explicitly call
