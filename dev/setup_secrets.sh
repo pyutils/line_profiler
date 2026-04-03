@@ -162,6 +162,22 @@ setup_package_environs_github_pyutils(){
     #' | python -c "import sys; from textwrap import dedent; print(dedent(sys.stdin.read()).strip(chr(10)))" > dev/secrets_configuration.sh
 }
 
+resolve_secret_value_from_varname_ptr(){
+    local secret_varname_ptr="$1"
+    local secret_name="$2"
+    local secret_varname="${!secret_varname_ptr}"
+    if [[ "$secret_varname" == "" ]]; then
+        echo "Skipping $secret_name because $secret_varname_ptr is unset" >&2
+        return 1
+    fi
+    local secret_value="${!secret_varname}"
+    if [[ "$secret_value" == "" ]]; then
+        echo "Skipping $secret_name because $secret_varname is unset or empty" >&2
+        return 1
+    fi
+    printf '%s' "$secret_value"
+}
+
 upload_github_secrets(){
     load_secrets
     unset GITHUB_TOKEN
@@ -169,13 +185,14 @@ upload_github_secrets(){
     if ! gh auth status ; then
         gh auth login
     fi
+    local secret_value
     source dev/secrets_configuration.sh
-    gh secret set "TWINE_USERNAME" -b"${!VARNAME_TWINE_USERNAME}"
-    gh secret set "TEST_TWINE_USERNAME" -b"${!VARNAME_TEST_TWINE_USERNAME}"
+    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) && gh secret set "TWINE_USERNAME" -b"$secret_value"
+    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_USERNAME TEST_TWINE_USERNAME) && gh secret set "TEST_TWINE_USERNAME" -b"$secret_value"
     toggle_setx_enter
-    gh secret set "CI_SECRET" -b"${!VARNAME_CI_SECRET}"
-    gh secret set "TWINE_PASSWORD" -b"${!VARNAME_TWINE_PASSWORD}"
-    gh secret set "TEST_TWINE_PASSWORD" -b"${!VARNAME_TEST_TWINE_PASSWORD}"
+    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) && gh secret set "CI_SECRET" -b"$secret_value"
+    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_PASSWORD TWINE_PASSWORD) && gh secret set "TWINE_PASSWORD" -b"$secret_value"
+    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_PASSWORD TEST_TWINE_PASSWORD) && gh secret set "TEST_TWINE_PASSWORD" -b"$secret_value"
     toggle_setx_exit
 }
 

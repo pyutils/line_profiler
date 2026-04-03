@@ -34,12 +34,12 @@ omit =[
 ]
 
 [tool.cibuildwheel]
-build = "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 # XXX: since `tests.yml` already defines `matrix.cibw_skip` for
 # `build_binpy_wheels`, can we deduplicate and just use that?
 # Or do we need these when building wheels for release, which may run on
 # separate pipelines?
-skip = ["*-win32", "cp3{9,10}-win_arm64", "cp313-musllinux_i686"]
+skip = ["*-win32", "cp3{10}-win_arm64", "cp313-musllinux_i686"]
 build-frontend = "build"
 build-verbosity = 1
 test-command = "python {project}/run_tests.py"
@@ -65,7 +65,7 @@ repo_name = "line_profiler"
 rel_mod_parent_dpath = "."
 os = [ "all", "linux", "osx", "win",]
 main_python = '3.13'
-min_python = '3.9'
+min_python = '3.10'
 max_python = '3.14'
 author = "Robert Kern"
 author_email = "robert.kern@enthought.com"
@@ -102,7 +102,7 @@ rules = { unused-type-ignore-comment = "ignore" }
 
 [tool.ruff]
 line-length = 80
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 # Enable Flake8 (E, F) and isort (I) rules.
