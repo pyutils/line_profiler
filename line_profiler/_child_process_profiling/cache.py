@@ -51,8 +51,8 @@ class LineProfilingCache:
     # `builtin` to true
     insert_builtin: bool = True
     debug: bool = diagnostics.DEBUG
-    _cleanup_stack: list[Callable[[], Any]] = dataclasses.field(
-        default_factory=list, init=False,
+    _cleanup_stacks: dict[float, list[Callable[[], Any]]] = dataclasses.field(
+        default_factory=dict, init=False,
     )
 
     def cleanup(self) -> None:
@@ -60,16 +60,17 @@ class LineProfilingCache:
         Pop all the cleanup callbacks from the internal stack added via
         :py:meth:`~.add_cleanup` and call them in order.
         """
-        callbacks = self._cleanup_stack
-        while callbacks:
-            callback = callbacks.pop()
-            try:
-                callback()
-            except Exception as e:
-                msg = f'Cleanup failed: {callback}: {type(e).__name__}: {e}'
-            else:
-                msg = f'Cleanup succeeded: {callback}'
-            self._debug_output(msg)
+        for priority in sorted(self._cleanup_stacks):
+            callbacks = self._cleanup_stacks.pop(priority)
+            while callbacks:
+                callback = callbacks.pop()
+                try:
+                    callback()
+                except Exception as e:
+                    msg = f'failed: {callback}: {type(e).__name__}: {e}'
+                else:
+                    msg = f'succeeded: {callback}'
+                self._debug_output('Cleanup ' + msg)
 
     def add_cleanup(
         self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
@@ -78,10 +79,19 @@ class LineProfilingCache:
         Add a cleanup callback to the internal stack; they can be later
         called by :py:meth:`~.cleanup`.
         """
+        self._add_cleanup(callback, 0, *args, **kwargs)
+
+    def _add_cleanup(
+        self, callback: Callable[PS, Any], priority: float,
+        *args: PS.args, **kwargs: PS.kwargs,
+    ) -> None:
         if args or kwargs:
             callback = partial(callback, *args, **kwargs)
-        self._cleanup_stack.append(callback)
-        self._debug_output(f'Cleanup callback added: {callback}')
+        self._cleanup_stacks.setdefault(priority, []).append(callback)
+        header = 'Cleanup callback added'
+        if priority:
+            header = f'{header} (priority: {priority})'
+        self._debug_output(f'{header}: {callback}')
 
     def copy(
         self, *, inherit_cleanups: bool = False, **replacements
@@ -96,7 +106,10 @@ class LineProfilingCache:
             init_args[field] = replacements.get(field, value)
         copy = type(self)(**init_args)
         if inherit_cleanups:
-            copy._cleanup_stack[:] = self._cleanup_stack
+            copy._cleanup_stacks = {
+                priority: list(callbacks)
+                for priority, callbacks in self._cleanup_stacks.items()
+            }
         return copy
 
     @classmethod
@@ -176,13 +189,12 @@ class LineProfilingCache:
     def _debug_output(self, msg: str) -> None:
         msg = f'{self._debug_message_header}: {msg}'
         diagnostics.log.debug(msg)
+        if not self._debug_log:
+            return
         try:
             with self._debug_log.open(mode='a') as fobj:
                 print(msg, file=fobj)
-        except (
-            AttributeError,  # `._debug_log` is None in non-debug mode
-            OSError,  # Cache dir may have been removed during cleanup
-        ):
+        except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
 
     @classmethod

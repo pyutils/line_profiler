@@ -156,6 +156,7 @@ def apply(
         return
     if lp_cache is None:
         lp_cache = LineProfilingCache._from_path(cache_path)
+        lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
         _setup_in_child_process(lp_cache)
 
     vanilla: Callable[..., Any] | None

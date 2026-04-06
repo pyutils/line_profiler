@@ -114,7 +114,10 @@ def load_pth_hook(ppid):  # type: (int) -> None
     if getattr(load_pth_hook, 'called', False):
         return
     try:
-        _setup_in_child_process(LineProfilingCache.load())
+        cache = LineProfilingCache.load()
+        cache._debug_output(f'cache {id(cache):#x} setting up (pth)...')
+        _setup_in_child_process(cache, True)
+        # _setup_in_child_process(LineProfilingCache.load())
     except Exception as e:
         if DEBUG:
             msg = f'{type(e)}: {e}'
@@ -148,14 +151,15 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
     def wrapper():
         result = fork()
         if not result:  # In the fork
-            _setup_in_child_process(cache.copy(), False)
+            cache._debug_output(f'cache {id(cache):#x} setting up (fork)...')
+            _setup_in_child_process(cache.copy())
         return result
 
     os.fork = wrapper
     cache.add_cleanup(setattr, os, 'fork', fork)
 
 
-def _setup_in_child_process(cache, wrap_os_fork=True):
+def _setup_in_child_process(cache, wrap_os_fork=False):
     # type: (LineProfilingCache, bool) -> None
     """
     Set up shop in a forked/spawned child process so that
@@ -204,12 +208,13 @@ def _setup_in_child_process(cache, wrap_os_fork=True):
     # Occupy a tempfile slot in `cache.cache_dir` and set the profiler
     # up to write thereto when the process terminates
     handle, prof_outfile = mkstemp(
-        prefix='line-profiler-child-prof-output-',
+        prefix='child-prof-output-{}-{}-{:#x}-'
+        .format(cache.main_pid, os.getpid(), id(prof)),
         suffix='.lprof',
         dir=cache.cache_dir,
     )
-    try:
-        cache.add_cleanup(prof.dump_stats, prof_outfile)
+    try:  # Whatever else we do, write the profiling stats first
+        cache._add_cleanup(prof.dump_stats, -1, prof_outfile)
     finally:
         os.close(handle)
 
