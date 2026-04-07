@@ -156,8 +156,18 @@ def apply(
         return
     if lp_cache is None:
         lp_cache = LineProfilingCache._from_path(cache_path)
+        # Hack to retrieve the `.load()`-ed instance if one exists
+        loaded_cache = LineProfilingCache._loaded_instance
+        if (
+            loaded_cache is not None
+            and loaded_cache._get_init_args() == lp_cache._get_init_args()
+        ):
+            lp_cache = loaded_cache
         lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
-        _setup_in_child_process(lp_cache)
+        has_set_up = _setup_in_child_process(lp_cache)
+        lp_cache._debug_output('cache {:#x} setup {}'.format(
+            id(lp_cache), 'done' if has_set_up else 'aborted',
+        ))
 
     vanilla: Callable[..., Any] | None
 

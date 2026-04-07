@@ -15,11 +15,11 @@ from functools import partial, cached_property
 from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from typing_extensions import Self, ParamSpec
 
 from .. import _diagnostics as diagnostics
-from ..line_profiler import LineStats
+from ..line_profiler import LineProfiler, LineStats
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
 # hook, which must run with minimal overhead when a Python process isn't
@@ -51,9 +51,12 @@ class LineProfilingCache:
     # `builtin` to true
     insert_builtin: bool = True
     debug: bool = diagnostics.DEBUG
+
+    profiler: LineProfiler | None = dataclasses.field(default=None, init=False)
     _cleanup_stacks: dict[float, list[Callable[[], Any]]] = dataclasses.field(
         default_factory=dict, init=False,
     )
+    _loaded_instance: ClassVar[Self | None] = None
 
     def cleanup(self) -> None:
         """
@@ -94,12 +97,27 @@ class LineProfilingCache:
         self._debug_output(f'{header}: {callback}')
 
     def copy(
-        self, *, inherit_cleanups: bool = False, **replacements
+        self, *,
+        inherit_cleanups: bool = False,
+        inherit_profiler: bool = False,
+        **replacements
     ) -> Self:
         """
-        Make a copy with optionally replaced fields;
-        if ``inherit_cleanups`` is set to true, the copy also makes a
-        (shallow) copy of the clean-callback stack.
+        Make a copy with optionally replaced fields.
+
+        Args:
+            inherit_cleanups (bool):
+                If true, the copy also makes a (shallow) copy of the
+                cleanup-callback stack.
+            inherit_profiler (bool):
+                If true, the copy also gets a reference to
+                :py:attr:`~.profiler`
+            **replacements (Any):
+                Optional fields to replace
+
+        Return:
+            inst (LineProfilingCache):
+                New instance
         """
         init_args: dict[str, Any] = {}
         for field, value in self._get_init_args().items():
@@ -110,6 +128,8 @@ class LineProfilingCache:
                 priority: list(callbacks)
                 for priority, callbacks in self._cleanup_stacks.items()
             }
+        if inherit_profiler:
+            copy.profiler = self.profiler
         return copy
 
     @classmethod
@@ -119,16 +139,24 @@ class LineProfilingCache:
         :env:`LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_PID` and
         :env:`LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_DIR_<PID>`.
         These should have been set from an ancestral Python process.
+
+        Note:
+            If a previously :py:meth:`.~.load`-ed instance exists, it is
+            returned instead of a new instance.
         """
-        pid = os.environ[INHERITED_PID_ENV_VARNAME]
-        cache_varname = f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}'
-        cache_dir = os.environ[cache_varname]
-        msg = (
-            f'PID {os.getpid()} (from {pid}): '
-            f'Loading instance from ${{{cache_varname}}} = {cache_dir}'
-        )
-        diagnostics.log.debug(msg)
-        return cls._from_path(cls._get_filename(cache_dir))
+        instance = cls._loaded_instance
+        if instance is None:
+            pid = os.environ[INHERITED_PID_ENV_VARNAME]
+            cache_varname = f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}'
+            cache_dir = os.environ[cache_varname]
+            msg = (
+                f'PID {os.getpid()} (from {pid}): '
+                f'Loading instance from ${{{cache_varname}}} = {cache_dir}'
+            )
+            diagnostics.log.debug(msg)
+            instance = cls._from_path(cls._get_filename(cache_dir))
+            cls._loaded_instance = instance
+        return instance
 
     def dump(self) -> None:
         """
