@@ -11,19 +11,31 @@ import ast
 import os
 import sys
 from collections.abc import Callable
+from functools import partial
 from importlib.abc import MetaPathFinder, SourceLoader
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import CodeType, ModuleType
 from typing import TYPE_CHECKING
 
-from .. import _diagnostics as diagnostics
 from ..autoprofile.run_module import AstTreeModuleProfiler
 from ..line_profiler import LineProfiler
 from .cache import LineProfilingCache
 
 
 __all__ = ('RewritingFinder',)
+
+
+def _check_module_name(name: str, spec: ModuleSpec) -> bool:
+    return spec.name == name
+
+
+def _check_module_origin(
+    path: os.PathLike[str] | str, spec: ModuleSpec,
+) -> bool:
+    if spec.origin is None:
+        return False
+    return os.path.samefile(path, spec.origin)
 
 
 class RewritingFinder(MetaPathFinder, SourceLoader):
@@ -33,6 +45,7 @@ class RewritingFinder(MetaPathFinder, SourceLoader):
     :py:func:`line_profiler.autoprofile.autoprofile.run` does.
     """
     _cached_code_obj: CodeType
+    _checks: list[Callable[[ModuleSpec], bool]]
 
     def __init__(
         self,
@@ -42,7 +55,12 @@ class RewritingFinder(MetaPathFinder, SourceLoader):
     ) -> None:
         self.prof = prof
         self.lp_cache = lp_cache
-        self.module_to_rewrite = module_to_rewrite
+        self._checks = []
+        self._checks.append(partial(_check_module_name, module_to_rewrite))
+        if lp_cache.rewrite_module:
+            self._checks.append(
+                partial(_check_module_origin, lp_cache.rewrite_module)
+            )
 
     def install(self, *, index: int = 0) -> None:
         """
@@ -146,22 +164,25 @@ class RewritingFinder(MetaPathFinder, SourceLoader):
         count = prof.object_count
         exec(self.get_code(spec), namespace, namespace)
         if prof.object_count > count:
-            msg = (
-                'main PID = {} / child PID = {}: '
-                'profiled {} code object{} in the `{}` module'
-            ).format(
-                self.lp_cache.main_pid,
-                os.getpid(),
+            msg = '{}: profiled {} code object{} in the `{}` module'.format(
+                type(self).__name__,
                 prof.object_count,
                 '' if prof.object_count == 1 else 's',
-                self.module_to_rewrite,
+                spec.name,
             )
-            diagnostics.log.debug(msg)
+            self.lp_cache._debug_output(msg)
 
     def find_spec(self, *args, **kwargs) -> ModuleSpec | None:
         spec = self.find_spec_by_path(*args, **kwargs)
-        if (spec is not None and spec.name == self.module_to_rewrite):
-            return spec
+        if spec is None:
+            return None
+        for check in self._checks:
+            try:
+                if check(spec):
+                    spec.loader = self
+                    return spec
+            except Exception:
+                pass
         return None
 
     @staticmethod

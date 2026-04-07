@@ -44,6 +44,7 @@ class LineProfilingCache:
     profiling_targets: Collection[str] = dataclasses.field(
         default_factory=list,
     )
+    rewrite_module: os.PathLike[str] | str | None = None
     profile_imports: bool = False
     preimports_module: os.PathLike[str] | str | None = None
     main_pid: int = dataclasses.field(default_factory=os.getpid)

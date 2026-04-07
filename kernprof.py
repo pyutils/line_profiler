@@ -1208,7 +1208,7 @@ class _manage_profiler:
         )
         if self.set_up_child_profiling:
             self.cache = _prepare_child_profiling_cache(
-                self.options, self.prof, preimports_file,
+                self.options, self.prof, preimports_file, script_file,
             )
         return self.prof, script_file
 
@@ -1326,7 +1326,7 @@ def _prepare_exec_script(
     return script_file, preimports_file
 
 
-def _prepare_child_profiling_cache(options, prof, preimports_file):
+def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     """
     Handle the (line-)profiling of spawned/forked child Python
     processes.
@@ -1339,10 +1339,11 @@ def _prepare_child_profiling_cache(options, prof, preimports_file):
     # be responsible for managing their lifetimes, while derivative
     # instances in child processes will merely inherit and use them
     cache = LineProfilingCache(
-        tempfile.mkdtemp(),
-        options.prof_mod,
-        options.prof_imports,
-        preimports_file,
+        cache_dir=tempfile.mkdtemp(),
+        profiling_targets=options.prof_mod,
+        rewrite_module=script_file,
+        profile_imports=options.prof_imports,
+        preimports_module=preimports_file,
         insert_builtin=options.builtin,
         debug=options.debug,
     )
