@@ -201,7 +201,7 @@ def _setup_in_child_process(cache, wrap_os_fork=False):
     )
     from ..curated_profiling import CuratedProfilerContext
     from ..line_profiler import LineProfiler
-    from .meta_path_finder import RewritingFinder
+    from .import_machinery import RewritingFinder
 
     # Create a profiler instance and manage it with
     # `CuratedProfilerContext`
