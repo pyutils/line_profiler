@@ -102,8 +102,7 @@ def get_preparation_data(
     """
     Wrap around :py:func:`multiprocessing.spawn.get_preparation_data`,
     slipping a :py:class:`PickleHook` into the returned dictionary so
-    that profiling is
-    triggered upon unpickling.
+    that profiling is triggered upon unpickling.
 
     Args:
         vanilla_impl
