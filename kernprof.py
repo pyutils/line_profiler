@@ -1376,7 +1376,10 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
 
     # Patch `multiprocessing` so that child processes are properly
     # handled across all "start methods"
-    multiprocessing_patches.apply(cache.filename, lp_cache=cache)
+    multiprocessing_patches.apply(cache)
+
+    # Set up the cache instance to be the default one `.load()`-ed
+    cache._replace_loaded_instance()
 
     return cache
 
