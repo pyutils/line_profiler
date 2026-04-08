@@ -1098,25 +1098,30 @@ def _remove(path, *, recursive=False, missing_ok=False):
 def _dump_filtered_stats(tmpdir, prof, filename, extra_line_stats=None):
     import os
 
-    # Build list of known temp file paths
-    tempfile_paths = [
-        os.path.join(dirpath, fname)
-        for dirpath, _, fnames in os.walk(tmpdir)
-        for fname in fnames
-    ]
-
-    if not tempfile_paths or isinstance(prof, ContextualProfile):
-        # - No tempfiles written -> no function lives in tempfiles
-        #   -> no need to filter anything
+    if isinstance(prof, ContextualProfile):
         # - Not using `line_profiler`
         #   -> doesn't matter if the source lines can't be retrieved
         #   -> no need to filter anything
         prof.dump_stats(filename)
         return
 
+    # Remember to incorporate extra stats where available
     line_stats = prof.get_stats()
     if extra_line_stats is not None:
         line_stats += extra_line_stats
+
+    # Build list of known temp file paths
+    tempfile_paths = [
+        os.path.join(dirpath, fname)
+        for dirpath, _, fnames in os.walk(tmpdir)
+        for fname in fnames
+    ]
+    if not tempfile_paths:
+        # - No tempfiles written -> no function lives in tempfiles
+        #   -> no need to filter anything
+        line_stats.to_file(filename)
+        return
+
     _dump_filtered_line_stats(line_stats, tempfile_paths, filename)
 
 
@@ -1378,8 +1383,11 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     # handled across all "start methods"
     multiprocessing_patches.apply(cache)
 
-    # Set up the cache instance to be the default one `.load()`-ed
+    # Misc. setup:
+    # - Set up the cache instance to be the default one `.load()`-ed
     cache._replace_loaded_instance()
+    # - Set `cache.profiler`
+    cache.profiler = prof
 
     return cache
 
