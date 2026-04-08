@@ -59,7 +59,7 @@ def bootstrap(
     vanilla_impl: Callable[
         Concatenate[multiprocessing.process.BaseProcess, PS], T
     ],
-    lp_cache: LineProfilingCache,
+    lp_cache: LineProfilingCache | None,
     /,
     *args: PS.args,
     **kwargs: PS.kwargs
@@ -74,8 +74,10 @@ def bootstrap(
             :py:class:`~.BaseProcess`
         vanilla_impl (Callable)
             Vanilla :py:meth:`~.BaseProcess._bootstrap`
-        lp_cache (LineProfilingCache)
-            Cache recovered by :py:meth:`~.LineProfilingCache.load`
+        lp_cache (LineProfilingCache | None)
+            Cache recovered by :py:meth:`~.LineProfilingCache.load`;
+            if :py:const:`None`, the ``.load()`` is deferred to after
+            ``vanilla_impl()`` is run
         *args
         **kwargs
             Passed to :py:meth:`~.BaseProcess._bootstrap`
@@ -89,6 +91,8 @@ def bootstrap(
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:  # Write profiling results
+        if lp_cache is None:
+            lp_cache = LineProfilingCache.load()
         lp_cache.cleanup()
 
 
@@ -155,13 +159,8 @@ def apply(
         return
     if lp_cache is None:
         lp_cache = LineProfilingCache._from_path(cache_path)
-        # Hack to retrieve the `.load()`-ed instance if one exists
-        loaded_cache = LineProfilingCache._loaded_instance
-        if (
-            loaded_cache is not None
-            and loaded_cache._get_init_args() == lp_cache._get_init_args()
-        ):
-            lp_cache = loaded_cache
+        if lp_cache._consistent_with_loaded_instance:
+            lp_cache = LineProfilingCache.load()
         lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
         has_set_up = _setup_in_child_process(lp_cache)
         lp_cache._debug_output('cache {:#x} setup {}'.format(
@@ -173,8 +172,11 @@ def apply(
     # Patch `multiprocessing.process.BaseProcess._bootstrap()`
     Proc = multiprocessing.process.BaseProcess
     vanilla = Proc._bootstrap  # type: ignore[attr-defined]
-    Proc._bootstrap = (  # type: ignore[attr-defined]
-        partialmethod(bootstrap, vanilla, lp_cache)
+    Proc._bootstrap = partialmethod(  # type: ignore[attr-defined]
+        bootstrap, vanilla,
+        # Always defer to the `.load()`-ed instance where possible
+        # (helps with keeping forked processes consistent)
+        None if lp_cache._consistent_with_loaded_instance else lp_cache,
     )
     lp_cache.add_cleanup(setattr, Proc, '_bootstrap', vanilla)
 

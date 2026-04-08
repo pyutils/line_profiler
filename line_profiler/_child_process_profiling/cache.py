@@ -226,6 +226,12 @@ class LineProfilingCache:
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
 
+    def _replace_loaded_instance(self) -> bool:
+        if self._consistent_with_loaded_instance:
+            type(self)._loaded_instance = self
+            return True
+        return False
+
     @classmethod
     def _from_path(cls, fname: os.PathLike[str] | str) -> Self:
         with open(fname, mode='rb') as fobj:
@@ -271,3 +277,7 @@ class LineProfilingCache:
         if self.main_pid == pid:
             return f'PID {pid} (main process)'
         return f'PID {pid} (from {self.main_pid})'
+
+    @cached_property
+    def _consistent_with_loaded_instance(self) -> bool:
+        return type(self).load()._get_init_args() == self._get_init_args()
