@@ -206,7 +206,6 @@ def _setup_in_child_process(cache, wrap_os_fork=False):
     )
     from ..curated_profiling import CuratedProfilerContext
     from ..line_profiler import LineProfiler
-    from .import_machinery import RewritingFinder
 
     # Create a profiler instance and manage it with
     # `CuratedProfilerContext`
@@ -222,11 +221,6 @@ def _setup_in_child_process(cache, wrap_os_fork=False):
         with open(cache.preimports_module, mode='rb') as fobj:
             code = compile(fobj.read(), cache.preimports_module, 'exec')
             exec(code, {})  # Use a fresh, empty namespace
-
-    # Set up the importer for rewriting `__main__`
-    finder = RewritingFinder(prof, cache)
-    finder.install()
-    cache.add_cleanup(finder.uninstall)
 
     # Occupy a tempfile slot in `cache.cache_dir` and set the profiler
     # up to write thereto when the process terminates
