@@ -20,8 +20,11 @@ Note:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .cache import LineProfilingCache  # noqa: F401
+    from collections.abc import Callable  # noqa: F401
     from pathlib import Path  # noqa: F401
+    from typing import Any  # noqa: F401
+    from ..line_profiler import LineProfiler  # noqa: F401
+    from .cache import LineProfilingCache  # noqa: F401
 
 
 __all__ = (
@@ -151,7 +154,7 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
         return
 
     @wraps(fork)
-    def wrapper():
+    def wrapper():  # type: () -> int
         result = fork()
         if result:
             return result
@@ -162,8 +165,11 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
                 f'cache {id(forked):#x} in fork '
                 'superseded cached `.load()`-ed instance'
             )
+        # Note: we can reuse the profiler instance in the fork, but it
+        # needs to go through setup so that the separate profiling
+        # results are dumped into another output file
         forked._debug_output(f'cache {id(forked):#x} setting up (fork)...')
-        has_set_up = _setup_in_child_process(forked)
+        has_set_up = _setup_in_child_process(forked, prof=cache.profiler)
         forked._debug_output('cache {:#x} setup {}'.format(
             id(forked), 'done' if has_set_up else 'aborted',
         ))
@@ -173,8 +179,8 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
     cache.add_cleanup(setattr, os, 'fork', fork)
 
 
-def _setup_in_child_process(cache, wrap_os_fork=False):
-    # type: (LineProfilingCache, bool) -> bool
+def _setup_in_child_process(cache, wrap_os_fork=False, prof=None):
+    # type: (LineProfilingCache, bool, LineProfiler | None) -> bool
     """
     Set up shop in a forked/spawned child process so that
     (line-)profiling can extend therein.
@@ -205,11 +211,13 @@ def _setup_in_child_process(cache, wrap_os_fork=False):
         _extend_line_profiler_for_profiling_imports as upgrade_profiler,
     )
     from ..curated_profiling import CuratedProfilerContext
-    from ..line_profiler import LineProfiler
+    from ..line_profiler import LineProfiler  # noqa: F811
 
     # Create a profiler instance and manage it with
     # `CuratedProfilerContext`
-    cache.profiler = prof = LineProfiler()
+    if prof is None:
+        prof = LineProfiler()
+    cache.profiler = prof
     upgrade_profiler(prof)
     ctx = CuratedProfilerContext(prof, insert_builtin=cache.insert_builtin)
     ctx.install()

@@ -22,6 +22,7 @@ from typing_extensions import Concatenate, ParamSpec
 
 from .cache import LineProfilingCache
 from .pth_hook import _setup_in_child_process
+from .runpy_patches import create_runpy_wrapper
 
 
 __all__ = ('apply',)
@@ -150,26 +151,50 @@ def apply(lp_cache: LineProfilingCache) -> None:
 def _apply_mp_patches(
     lp_cache: LineProfilingCache, add_cleanup: Callable[..., None],
 ) -> None:
-    vanilla: Callable[..., Any] | None
+    def replace(
+        obj: Any, attr: str, value: Any, obj_name: str | None = None,
+    ) -> None:
+        try:
+            old = getattr(obj, attr)
+        except AttributeError:
+            add_cleanup(setattr, obj, attr, old)
+        else:
+            add_cleanup(delattr, obj, attr)
+        setattr(obj, attr, value)
+        if obj_name is None:
+            obj_name = repr(obj)
+        lp_cache._debug_output('cache {:#x}: patched `{}.{}` -> `{}`'.format(
+            id(lp_cache), obj_name, attr, value,
+        ))
 
     # Patch `multiprocessing.process.BaseProcess._bootstrap()`
     Proc = multiprocessing.process.BaseProcess
-    vanilla = Proc._bootstrap  # type: ignore[attr-defined]
-    Proc._bootstrap = partialmethod(  # type: ignore[attr-defined]
-        bootstrap, vanilla,
+    bootstrap_wrapper = partialmethod(
+        bootstrap,
+        Proc._bootstrap,  # type: ignore[attr-defined]
     )
-    add_cleanup(setattr, Proc, '_bootstrap', vanilla)
+    replace(
+        Proc, '_bootstrap', bootstrap_wrapper,
+        f'{Proc.__module__}.{Proc.__qualname__}',
+    )
 
-    # Patch `multiprocessing.spawn.get_preparation_data()`
+    # Patch `multiprocessing.spawn`
     try:
         from multiprocessing import spawn
     except ImportError:  # Incompatible platforms
         pass
     else:
-        vanilla = getattr(spawn, 'get_preparation_data', None)
-        if vanilla:
-            spawn.get_preparation_data = partial(get_preparation_data, vanilla)
-            add_cleanup(setattr, spawn, 'get_preparation_data', vanilla)
+        # Patch `get_preparation_data()`
+        gpd_wrapper = partial(  # type: ignore[call-arg]
+            get_preparation_data, spawn.get_preparation_data,
+        )
+        replace(spawn, 'get_preparation_data', gpd_wrapper, spawn.__name__)
+        # Patch `runpy` (do it locally instead of tempering with the
+        # global `runpy` mmodule)
+        if hasattr(spawn, 'runpy'):
+            replace(
+                spawn, 'runpy', create_runpy_wrapper(lp_cache), spawn.__name__,
+            )
 
     # Mark `multiprocessing` as having been patched
     setattr(multiprocessing, _PATCHED_MARKER, True)
