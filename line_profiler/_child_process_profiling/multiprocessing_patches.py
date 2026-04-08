@@ -17,7 +17,7 @@ from __future__ import annotations
 import multiprocessing.process
 from collections.abc import Callable
 from functools import partial, partialmethod
-from typing import Any, TypedDict, TypeVar
+from typing import Any, TypeVar
 from typing_extensions import Concatenate, ParamSpec
 
 from .cache import LineProfilingCache
@@ -30,9 +30,7 @@ __all__ = ('apply',)
 T = TypeVar('T')
 PS = ParamSpec('PS')
 
-
-class _HookState(TypedDict):
-    cache_path: str  # Cache to be loaded from here
+_PATCHED_MARKER = '_line_profiler_patched_multiprocessing'
 
 
 class PickleHook:
@@ -43,15 +41,24 @@ class PickleHook:
     See also:
         :py:class:`coverage.multiproc.Stowaway`
     """
-    def __init__(self, cache_path: str) -> None:
-        self.cache_path = cache_path
+    def __getstate__(_) -> int:
+        # Cannot return `None`, or nothing will be pickled and
+        # `.__getstate__()` will not be invoked in the child
+        return 1
 
-    def __getstate__(self) -> _HookState:
-        return {'cache_path': self.cache_path}
-
-    def __setstate__(self, state: _HookState) -> None:
-        self.cache_path = path = state['cache_path']
-        apply(path)
+    def __setstate__(*_) -> None:
+        # We're in a child process created by `multiprocessing`, so set
+        # up shop here...
+        lp_cache = LineProfilingCache.load()
+        lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
+        has_set_up = _setup_in_child_process(lp_cache)
+        lp_cache._debug_output('cache {:#x} setup {}'.format(
+            id(lp_cache), 'done' if has_set_up else 'aborted',
+        ))
+        # ... and we don't care about polluting the `multiprocessing`
+        # namespace either, so don't bother with cleanup
+        if not getattr(multiprocessing, _PATCHED_MARKER, False):
+            _apply_mp_patches(lp_cache, _no_op)
 
 
 def bootstrap(
@@ -59,7 +66,6 @@ def bootstrap(
     vanilla_impl: Callable[
         Concatenate[multiprocessing.process.BaseProcess, PS], T
     ],
-    lp_cache: LineProfilingCache | None,
     /,
     *args: PS.args,
     **kwargs: PS.kwargs
@@ -74,10 +80,6 @@ def bootstrap(
             :py:class:`~.BaseProcess`
         vanilla_impl (Callable)
             Vanilla :py:meth:`~.BaseProcess._bootstrap`
-        lp_cache (LineProfilingCache | None)
-            Cache recovered by :py:meth:`~.LineProfilingCache.load`;
-            if :py:const:`None`, the ``.load()`` is deferred to after
-            ``vanilla_impl()`` is run
         *args
         **kwargs
             Passed to :py:meth:`~.BaseProcess._bootstrap`
@@ -91,14 +93,11 @@ def bootstrap(
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:  # Write profiling results
-        if lp_cache is None:
-            lp_cache = LineProfilingCache.load()
-        lp_cache.cleanup()
+        LineProfilingCache.load().cleanup()
 
 
 def get_preparation_data(
     vanilla_impl: Callable[PS, dict[str, Any]],
-    cache_path: str,
     /,
     *args: PS.args,
     **kwargs: PS.kwargs
@@ -112,9 +111,6 @@ def get_preparation_data(
         vanilla_impl
             Vanilla
             :py:func:`multiprocessing.spawn.get_preparation_data`
-        cache_path
-            File from which the :py:class:`LineProfilingCache` should be
-            loaded
         *args
         **kwargs
             Passed to
@@ -127,25 +123,18 @@ def get_preparation_data(
     key = 'line_profiler_pickle_hook'  # Doesn't matter
     data = vanilla_impl(*args, **kwargs)
     assert key not in data
-    data[key] = PickleHook(cache_path)
+    data[key] = PickleHook()
     return data
 
 
-def apply(
-    cache_path: str, *, lp_cache: LineProfilingCache | None = None,
-) -> None:
+def apply(lp_cache: LineProfilingCache) -> None:
     """
     Set up profiling in :py:mod:`multiprocessing` child processes by
     applying patches to the module.
 
     Args:
-        cache_path
-            Path to the file whence a :py:class:`LineProfilingCache`
-            object can be loaded
-        lp_cache
-            Optional :py:class:`LineProfilingCache` instance;
-            if not provided, it is loaded from `cache_path`, and
-            profiling is set up therefrom in the (sub-)process
+        lp_cache (LineProfilingCache)
+            Cache instance governing the profiling run
 
     Side effects:
         - :py:mod:`multiprocessing` marked as having been set up
@@ -154,19 +143,13 @@ def apply(
         - :py:func:`multiprocessing.spawn.get_preparation_data` patched
         - Cleanup callbacks registered via `lp_cache.add_cleanup()`
     """
-    patched_marker = '_line_profiler_patched_multiprocessing'
-    if getattr(multiprocessing, patched_marker, False):
-        return
-    if lp_cache is None:
-        lp_cache = LineProfilingCache._from_path(cache_path)
-        if lp_cache._consistent_with_loaded_instance:
-            lp_cache = LineProfilingCache.load()
-        lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
-        has_set_up = _setup_in_child_process(lp_cache)
-        lp_cache._debug_output('cache {:#x} setup {}'.format(
-            id(lp_cache), 'done' if has_set_up else 'aborted',
-        ))
+    if not getattr(multiprocessing, _PATCHED_MARKER, False):
+        _apply_mp_patches(lp_cache, lp_cache.add_cleanup)
 
+
+def _apply_mp_patches(
+    lp_cache: LineProfilingCache, add_cleanup: Callable[..., None],
+) -> None:
     vanilla: Callable[..., Any] | None
 
     # Patch `multiprocessing.process.BaseProcess._bootstrap()`
@@ -174,11 +157,8 @@ def apply(
     vanilla = Proc._bootstrap  # type: ignore[attr-defined]
     Proc._bootstrap = partialmethod(  # type: ignore[attr-defined]
         bootstrap, vanilla,
-        # Always defer to the `.load()`-ed instance where possible
-        # (helps with keeping forked processes consistent)
-        None if lp_cache._consistent_with_loaded_instance else lp_cache,
     )
-    lp_cache.add_cleanup(setattr, Proc, '_bootstrap', vanilla)
+    add_cleanup(setattr, Proc, '_bootstrap', vanilla)
 
     # Patch `multiprocessing.spawn.get_preparation_data()`
     try:
@@ -188,13 +168,13 @@ def apply(
     else:
         vanilla = getattr(spawn, 'get_preparation_data', None)
         if vanilla:
-            spawn.get_preparation_data = partial(
-                get_preparation_data, vanilla, cache_path,
-            )
-            lp_cache.add_cleanup(
-                setattr, spawn, 'get_preparation_data', vanilla,
-            )
+            spawn.get_preparation_data = partial(get_preparation_data, vanilla)
+            add_cleanup(setattr, spawn, 'get_preparation_data', vanilla)
 
     # Mark `multiprocessing` as having been patched
-    setattr(multiprocessing, patched_marker, True)
-    lp_cache.add_cleanup(vars(multiprocessing).pop, patched_marker, None)
+    setattr(multiprocessing, _PATCHED_MARKER, True)
+    add_cleanup(vars(multiprocessing).pop, _PATCHED_MARKER, None)
+
+
+def _no_op(*_, **__) -> None:
+    pass
