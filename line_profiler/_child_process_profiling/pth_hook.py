@@ -118,11 +118,7 @@ def load_pth_hook(ppid):  # type: (int) -> None
         return
     try:
         cache = LineProfilingCache.load()
-        cache._debug_output(f'cache {id(cache):#x} setting up (pth)...')
-        has_set_up = _setup_in_child_process(cache, True)
-        cache._debug_output('cache {:#x} setup {}'.format(
-            id(cache), 'done' if has_set_up else 'aborted',
-        ))
+        _setup_in_child_process(cache, True, 'pth')
         # _setup_in_child_process(LineProfilingCache.load())
     except Exception as e:
         if DEBUG:
@@ -162,42 +158,47 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
         forked = cache.copy()
         if forked._replace_loaded_instance():
             forked._debug_output(
-                f'cache {id(forked):#x} in fork '
-                'superseded cached `.load()`-ed instance'
+                'Superseded cached `.load()`-ed instance in forked process'
             )
         # Note: we can reuse the profiler instance in the fork, but it
         # needs to go through setup so that the separate profiling
         # results are dumped into another output file
-        forked._debug_output(f'cache {id(forked):#x} setting up (fork)...')
-        has_set_up = _setup_in_child_process(forked, prof=cache.profiler)
-        forked._debug_output('cache {:#x} setup {}'.format(
-            id(forked), 'done' if has_set_up else 'aborted',
-        ))
+        _setup_in_child_process(forked, False, 'fork', cache.profiler)
         return result
 
     os.fork = wrapper
     cache.add_cleanup(setattr, os, 'fork', fork)
 
 
-def _setup_in_child_process(cache, wrap_os_fork=False, prof=None):
-    # type: (LineProfilingCache, bool, LineProfiler | None) -> bool
+def _setup_in_child_process(cache, wrap_os_fork=False, context='', prof=None):
+    # type: (LineProfilingCache, bool, str, LineProfiler | None) -> bool
     """
     Set up shop in a forked/spawned child process so that
     (line-)profiling can extend therein.
 
     Args:
-        cache (:py:class:`~.LineProfilingCache`):
+        cache (LineProfilingCache):
             Cache object
         wrap_os_fork (bool):
             Whether to wrap :py:func:`os.fork` which handles profiling;
             already-forked child processes should set this to false
+        context (str):
+            Optional context from which the function is called, to be
+            used in log messages
+        prof (LineProfiler | None):
+            Optional profiler instance to associate with the cache;
+            if not provided, an instance is created
 
     Returns:
         has_set_up (bool):
             False is ``cache`` has already been set up prior to calling
             this function, true otherwise
     """
+    if not context:
+        context = '...'
+    cache._debug_output(f'Setting up ({context})...')
     if cache.profiler is not None:  # Already set up
+        cache._debug_output(f'Setup aborted ({context})')
         return False
 
     import os
@@ -225,7 +226,7 @@ def _setup_in_child_process(cache, wrap_os_fork=False, prof=None):
 
     # Do the preimports at `cache.preimports_module` where appropriate
     if cache.preimports_module:
-        cache._debug_output(f'cache {id(cache):#x} loading preimports...')
+        cache._debug_output('Loading preimports...')
         with open(cache.preimports_module, mode='rb') as fobj:
             code = compile(fobj.read(), cache.preimports_module, 'exec')
             exec(code, {})  # Use a fresh, empty namespace
@@ -251,4 +252,5 @@ def _setup_in_child_process(cache, wrap_os_fork=False, prof=None):
     # the child process is about to terminate
     register(cache.cleanup)
 
+    cache._debug_output(f'Setup successful ({context})')
     return True

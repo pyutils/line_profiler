@@ -108,8 +108,8 @@ def _run(
             profile = os.path.samefile(filename, cache.rewrite_module)
         except Exception as e:
             cache._debug_output(
-                f'{THIS_MODULE}: failed to check whether to '
-                f'rewrite code loaded in `runpy.{func.__name__}(...)` '
+                f'{THIS_MODULE}: Failed to check whether code loaded by '
+                f'`runpy.{func.__name__}(...)` is to be rewritten '
                 f'({type(e).__name__}: {e})'
             )
             profile = False

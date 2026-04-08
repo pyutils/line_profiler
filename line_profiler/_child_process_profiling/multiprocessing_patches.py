@@ -51,11 +51,7 @@ class PickleHook:
         # We're in a child process created by `multiprocessing`, so set
         # up shop here...
         lp_cache = LineProfilingCache.load()
-        lp_cache._debug_output(f'cache {id(lp_cache):#x} setting up (mp)...')
-        has_set_up = _setup_in_child_process(lp_cache)
-        lp_cache._debug_output('cache {:#x} setup {}'.format(
-            id(lp_cache), 'done' if has_set_up else 'aborted',
-        ))
+        _setup_in_child_process(lp_cache, False, 'multiprocessing')
         # ... and we don't care about polluting the `multiprocessing`
         # namespace either, so don't bother with cleanup
         if not getattr(multiprocessing, _PATCHED_MARKER, False):
@@ -163,15 +159,14 @@ def _apply_mp_patches(
         setattr(obj, attr, value)
         if obj_name is None:
             obj_name = repr(obj)
-        lp_cache._debug_output('cache {:#x}: patched `{}.{}` -> `{}`'.format(
-            id(lp_cache), obj_name, attr, value,
+        lp_cache._debug_output('Patched `{}.{}` -> `{}`'.format(
+            obj_name, attr, value,
         ))
 
     # Patch `multiprocessing.process.BaseProcess._bootstrap()`
     Proc = multiprocessing.process.BaseProcess
     bootstrap_wrapper = partialmethod(
-        bootstrap,
-        Proc._bootstrap,  # type: ignore[attr-defined]
+        bootstrap, Proc._bootstrap,  # type: ignore[attr-defined]
     )
     replace(
         Proc, '_bootstrap', bootstrap_wrapper,

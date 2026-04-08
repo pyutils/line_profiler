@@ -274,9 +274,11 @@ class LineProfilingCache:
     @cached_property
     def _debug_message_header(self) -> str:
         pid = os.getpid()
-        if self.main_pid == pid:
-            return f'PID {pid} (main process)'
-        return f'PID {pid} (from {self.main_pid})'
+        return 'PID {} ({}): Cache {:#x}'.format(
+            pid,
+            'main process' if self.main_pid == pid else self.main_pid,
+            id(self),
+        )
 
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
