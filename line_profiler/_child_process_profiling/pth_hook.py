@@ -157,6 +157,11 @@ def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
             return result
         # If we're here, we are in the fork
         forked = cache.copy()
+        if forked._replace_loaded_instance():
+            forked._debug_output(
+                f'cache {id(forked):#x} in fork '
+                'superseded cached `.load()`-ed instance'
+            )
         forked._debug_output(f'cache {id(forked):#x} setting up (fork)...')
         has_set_up = _setup_in_child_process(forked)
         forked._debug_output('cache {:#x} setup {}'.format(
