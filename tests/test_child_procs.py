@@ -167,74 +167,6 @@ def test_module(
     yield _ModuleFixture(_test_module, monkeypatch, [ext_module])
 
 
-# Note:
-# Currently code execution in child processes is not properly profiled;
-# these tests are just for checking that `kernprof` doesn't impair the
-# proper execution of `multiprocessing` code
-
-
-fuzz_invocations = pytest.mark.parametrize(
-    ('runner', 'outfile', 'profile',
-     'label'),  # Dummy argument to make `pytest` output more legible
-    # This is essentially a no-op since it doesn't actually do
-    # line-profiling, but we check that code path for completeness
-    [(['kernprof', '-q', '--no-line'], 'out.prof', False, 'cProfile')]
-    # Run line profiling with and w/o profiling targets
-    + [(['kernprof', '-q', '-l'], 'out.lprof', False,
-        'line_profiler-inactive'),
-       (['kernprof', '-q', '-l'], 'out.lprof', True,
-        'line_profiler-active')],
-)
-
-
-@fuzz_invocations
-def test_running_multiproc_script(
-    test_module: _ModuleFixture,
-    tmp_path_factory: pytest.TempPathFactory,
-    runner: str | list[str],
-    outfile: str | None,
-    profile: bool,
-    label: str,
-) -> None:
-    """
-    Check that `kernprof` can run the test module as a script
-    (`kernprof [...] <path>`).
-    """
-    run_script(test_module, tmp_path_factory, runner, outfile, profile)
-
-
-@fuzz_invocations
-def test_running_multiproc_module(
-    test_module: _ModuleFixture,
-    tmp_path_factory: pytest.TempPathFactory,
-    runner: str | list[str],
-    outfile: str | None,
-    profile: bool,
-    label: str,
-) -> None:
-    """
-    Check that `kernprof` can run the test module as a module
-    (`kernprof [...] -m <module>`).
-    """
-    run_module(test_module, tmp_path_factory, runner, outfile, profile)
-
-
-@fuzz_invocations
-def test_running_multiproc_literal_code(
-    test_module: _ModuleFixture,
-    tmp_path_factory: pytest.TempPathFactory,
-    runner: str | list[str],
-    outfile: str | None,
-    profile: bool,
-    label: str,
-) -> None:
-    """
-    Check that `kernprof` can run the test module as literal code
-    (`kernprof [...] -c "code"`).
-    """
-    run_literal_code(test_module, tmp_path_factory, runner, outfile, profile)
-
-
 def _run_as_script(
     runner_args: list[str], test_args: list[str], test_module: _ModuleFixture,
     **kwargs
@@ -447,3 +379,47 @@ def test_multiproc_script_sanity_check(
         use_local_func=use_local_func,
         nnums=nnums, nprocs=nprocs,
     )
+
+
+@pytest.mark.parametrize(
+    ('run_func',
+     'label2'),  # Dummy argument to make `pytest` output more legible
+    [(run_module, 'module'),
+     (run_script, 'script'),
+     (run_literal_code, 'literal-code')]
+)
+@pytest.mark.parametrize(
+    ('runner', 'outfile', 'profile',
+     'label'),  # Dummy argument to make `pytest` output more legible
+    # This is essentially a no-op since it doesn't actually do
+    # line-profiling, but we check that code path for completeness
+    [(['kernprof', '-q', '--no-line'], 'out.prof', False, 'cProfile')]
+    # Run line profiling with and w/o profiling targets
+    + [(['kernprof', '-q', '-l'], 'out.lprof', False,
+        'line_profiler-inactive'),
+       (['kernprof', '-q', '-l'], 'out.lprof', True,
+        'line_profiler-active')],
+)
+def test_running_multiproc_script(
+    run_func: Callable[..., subprocess.CompletedProcess],
+    test_module: _ModuleFixture,
+    tmp_path_factory: pytest.TempPathFactory,
+    runner: str | list[str],
+    outfile: str | None,
+    profile: bool,
+    label: str,
+    label2: str,
+) -> None:
+    """
+    Check that `kernprof` can RUN the test module in various contexts
+    (`kernprof [...] <path>`, `kernprof [...] -m <module>`, and
+    `kernprof [...] -c "code"`).
+
+    Notes:
+        - See issue #422 for the original motivation.
+
+        - This test does not test the actual profiling, just the
+          execution of the code and presence of profiling data
+          thereafter.
+    """
+    run_func(test_module, tmp_path_factory, runner, outfile, profile)
