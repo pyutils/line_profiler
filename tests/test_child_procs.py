@@ -321,6 +321,7 @@ def _run_test_module(
     profile: bool = True,
     *,
     profiled_code_is_tempfile: bool = False,
+    use_local_func: bool = False,
     nnums: int | None = None,
     nprocs: int | None = None,
     check: bool = True,
@@ -362,6 +363,8 @@ def _run_test_module(
         runner_args.append('--view')
 
     test_args: list[str] = []
+    if use_local_func:
+        test_args.append('--local')
     if nnums is None:
         nnums = NUM_NUMBERS
     else:
@@ -414,11 +417,13 @@ run_literal_code = partial(
 
 
 @pytest.mark.parametrize(
-    ('run_func',
+    ('run_func', 'use_local_func',
      'label'),  # Dummy argument to make `pytest` output more legible
-    [(run_module, 'module'),
-     (run_script, 'script'),
-     (run_literal_code, 'literal-code')],
+    [(run_module, True, 'module-local'), (run_module, False, 'module-ext'),
+     (run_script, True, 'script-local'), (run_script, False, 'script-ext')]
+    # Python can't pickle things unless they resided in a retrievable
+    # location (so not the script supplied by `python -c`)
+    + [(run_literal_code, False, 'literal-code-ext')],
 )
 @pytest.mark.parametrize(
     ('nnums', 'nprocs'), [(None, None), (None, 3), (200, None)],
@@ -427,6 +432,7 @@ def test_multiproc_script_sanity_check(
     run_func: Callable[..., subprocess.CompletedProcess],
     test_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
+    use_local_func: bool,
     nnums: int,
     nprocs: int,
     label: str,
@@ -438,5 +444,6 @@ def test_multiproc_script_sanity_check(
     run_func(
         test_module, tmp_path_factory,
         runner=sys.executable, profile=False,
+        use_local_func=use_local_func,
         nnums=nnums, nprocs=nprocs,
     )
