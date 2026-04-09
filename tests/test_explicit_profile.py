@@ -153,7 +153,9 @@ def test_explicit_profile_ignores_inherited_owner_marker():
         env = os.environ.copy()
         env['LINE_PROFILE'] = '1'
         env['LINE_PROFILER_OWNER_PID'] = str(os.getpid() + 100000)
-        env['PYTHONPATH'] = os.getcwd()
+        env['PYTHONPATH'] = os.pathsep.join(
+            [p for p in [os.getcwd(), env.get('PYTHONPATH')] if p]
+        )
 
         with ub.ChDir(temp_dpath):
             script_fpath = ub.Path('script.py')
@@ -182,7 +184,9 @@ def test_explicit_profile_process_pool_forkserver():
         env = os.environ.copy()
         env['LINE_PROFILE'] = '1'
         # env['LINE_PROFILER_DEBUG'] = '1'
-        env['PYTHONPATH'] = os.getcwd()
+        env['PYTHONPATH'] = os.pathsep.join(
+            [p for p in [os.getcwd(), env.get('PYTHONPATH')] if p]
+        )
 
         with ub.ChDir(temp_dpath):
             script_fpath = ub.Path('script.py')
