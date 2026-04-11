@@ -12,10 +12,11 @@ from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
+from time import monotonic
+from uuid import uuid4
 
 import pytest
 import ubelt as ub
-from _pytest.fixtures import FixtureFunctionDefinition
 
 from line_profiler.line_profiler import LineStats
 
@@ -34,14 +35,14 @@ def my_external_sum(x: list[int]) -> int:
     return result
 """).strip('\n')
 
-TEST_MODULE_BODY = dedent(f"""
+TEST_MODULE_TEMPLATE = dedent("""
 from __future__ import annotations
 
 from argparse import ArgumentParser
 from collections.abc import Callable
 from multiprocessing import Pool
 
-from my_ext_module import my_external_sum
+from {EXT_MODULE} import my_external_sum
 
 
 def my_local_sum(x: list[int]) -> int:
@@ -92,8 +93,15 @@ if __name__ == '__main__':
 """).strip('\n')
 
 
+# ============================== Fixtures ==============================
+
+
 @dataclass
 class _ModuleFixture:
+    """
+    Convenience wrapper around a Python source file which represents an
+    importable module.
+    """
     path: Path
     monkeypatch: pytest.MonkeyPatch
     dependencies: Collection[_ModuleFixture] = ()
@@ -102,6 +110,20 @@ class _ModuleFixture:
         self, *,
         local: bool = False, children: bool = False, deps_only: bool = False,
     ) -> None:
+        """
+        Set the module at :py:attr:`~.path` up to be importable.
+
+        Args:
+            local (bool):
+                Make it importable for the CURRENT process (via
+                :py:data:`sys.path`).
+            children (bool):
+                Make it importable for CHILD processes (via
+                ``os.environ['PYTHONPATH']``).
+            deps_only (bool):
+                If true, only does the equivalent setup for
+                dependencies.
+        """
         for dep in self.dependencies:
             dep.install(local=local, children=children)
         if deps_only:
@@ -112,33 +134,50 @@ class _ModuleFixture:
         if children:
             self.monkeypatch.setenv('PYTHONPATH', path, prepend=os.pathsep)
 
+    @staticmethod
+    def propose_name(prefix: str) -> Generator[str, None, None]:
+        """
+        Propose a valid module name that isn't already occupied.
+        """
+        while True:
+            name = '_'.join([prefix] + str(uuid4()).split('-'))
+            if name not in sys.modules:
+                assert name.isidentifier()
+                yield name
+
     @property
     def name(self) -> str:
         return self.path.stem
 
 
-def _module_path_fixture(
-    name: str, body: str, **kwargs,
-) -> FixtureFunctionDefinition:
-    def my_fixture_func() -> Generator[Path, None, None]:
-        with TemporaryDirectory() as mydir_str:
-            my_dir = Path(mydir_str)
-            my_dir.mkdir(exist_ok=True)
-            my_module = my_dir / f'{name}.py'
-            my_module.write_text(body)
-            yield my_module
-
-    my_fixture_func.__name__ = name
-    return pytest.fixture(my_fixture_func, **kwargs)
-
-
 # Only write the files once per test session
-_ext_module = _module_path_fixture(
-    'my_ext_module', EXTERNAL_MODULE_BODY, scope='session',
-)
-_test_module = _module_path_fixture(
-    'my_test_module', TEST_MODULE_BODY, scope='session',
-)
+
+
+@pytest.fixture(scope='session')
+def _ext_module() -> Generator[Path, None, None]:
+    name = next(_ModuleFixture.propose_name('my_ext_module'))
+    with TemporaryDirectory() as mydir_str:
+        my_dir = Path(mydir_str)
+        my_dir.mkdir(exist_ok=True)
+        my_module = my_dir / f'{name}.py'
+        my_module.write_text(EXTERNAL_MODULE_BODY)
+        yield my_module
+
+
+@pytest.fixture(scope='session')
+def _test_module(_ext_module: Path) -> Generator[Path, None, None]:
+    name = next(_ModuleFixture.propose_name('my_test_module'))
+    body = TEST_MODULE_TEMPLATE.format(
+        EXT_MODULE=_ext_module.stem,
+        NUM_NUMBERS=NUM_NUMBERS,
+        NUM_PROCS=NUM_PROCS,
+    )
+    with TemporaryDirectory() as mydir_str:
+        my_dir = Path(mydir_str)
+        my_dir.mkdir(exist_ok=True)
+        my_module = my_dir / f'{name}.py'
+        my_module.write_text(body)
+        yield my_module
 
 
 @pytest.fixture
@@ -162,7 +201,7 @@ def test_module(
     """
     Yields:
         :py:class:`_ModuleFixture` helper object containing the code at
-        :py:data:`TEST_MODULE_BODY`
+        :py:data:`TEST_MODULE_TEMPLATE`
     """
     yield _ModuleFixture(_test_module, monkeypatch, [ext_module])
 
@@ -230,6 +269,8 @@ def _run_subproc(
     # Note: somehow `mypy` doesn't agree with simply unpacking the
     # `*args` into `subprocess.run()`...
     status: int | str = '???'
+    proc: subprocess.CompletedProcess | None = None
+    time = monotonic()
     try:
         proc = subprocess.run(  # type: ignore[call-overload]
             cmd, *args, env=env, **kwargs,
@@ -241,7 +282,19 @@ def _run_subproc(
         status = proc.returncode
         return proc
     finally:
-        print(f'-- Process end (return status: {status})--')
+        time = monotonic() - time
+        if proc is not None:
+            for name, captured, stream in [
+                ('stdout', proc.stdout, sys.stdout),
+                ('stderr', proc.stderr, sys.stderr),
+            ]:
+                if captured is None:
+                    continue
+                print(f'{name}:\n{indent(captured, "  ")}', file=stream)
+        print(
+            f'-- Process end (time elapsed: {time:.2f} s / '
+            f'return status: {status})--'
+        )
 
 
 def _run_test_module(
@@ -309,15 +362,8 @@ def _run_test_module(
             runner_args.extend(['--outfile', outfile])
         proc = run_helper(
             runner_args, test_args, test_module,
-            text=True, capture_output=True,
+            text=True, capture_output=True, check=check,
         )
-        try:
-            if check:
-                proc.check_returncode()
-        finally:
-            print(f'stdout:\n{indent(proc.stdout, "  ")}')
-            print(f'stderr:\n{indent(proc.stderr, "  ")}', file=sys.stderr)
-
         # Checks:
         # - The result is correctly calculated
         assert proc.stdout.splitlines()[0] == str(nnums * (nnums + 1) // 2)
@@ -390,7 +436,7 @@ def test_multiproc_script_sanity_check(
 )
 @pytest.mark.parametrize(
     ('runner', 'outfile', 'profile',
-     'label'),  # Dummy argument to make `pytest` output more legible
+     'label1'),  # Dummy argument to make `pytest` output more legible
     # This is essentially a no-op since it doesn't actually do
     # line-profiling, but we check that code path for completeness
     [(['kernprof', '-q', '--no-line'], 'out.prof', False, 'cProfile')]
@@ -407,7 +453,7 @@ def test_running_multiproc_script(
     runner: str | list[str],
     outfile: str | None,
     profile: bool,
-    label: str,
+    label1: str,
     label2: str,
 ) -> None:
     """
@@ -423,3 +469,111 @@ def test_running_multiproc_script(
           thereafter.
     """
     run_func(test_module, tmp_path_factory, runner, outfile, profile)
+
+
+@pytest.mark.parametrize(
+    ('run_func', 'label1'),
+    [(run_module, 'module'),
+     (run_script, 'script'),
+     (run_literal_code, 'literal-code')]
+)
+@pytest.mark.parametrize(
+    ('prof_child_procs', 'label2'),
+    [(True, 'with-child-prof'), (False, 'no-child-prof')],
+)
+@pytest.mark.parametrize(
+    ('preimports', 'label3'),
+    [(True, 'with-preimports'), (False, 'no-preimports')],
+)
+@pytest.mark.parametrize(
+    ('use_local_func', 'label4'), [(True, 'local'), (False, 'external')],
+)
+@pytest.mark.parametrize(
+    # XXX: should we explicitly test the single-proc case? We already
+    # have quite a lot of subtests tho...
+    ('nnums', 'nprocs'), [(2000, 3)],
+)
+def test_profiling_multiproc_script(
+    run_func: Callable[..., subprocess.CompletedProcess],
+    test_module: _ModuleFixture,
+    ext_module: _ModuleFixture,
+    tmp_path_factory: pytest.TempPathFactory,
+    prof_child_procs: bool,
+    preimports: bool,
+    use_local_func: bool,
+    nnums: int,
+    nprocs: int,
+    # Dummy arguments to make `pytest` output more legible
+    label1: str,
+    label2: str,
+    label3: str,
+    label4: str,
+) -> None:
+    """
+    Check that `kernprof` can PROFILE the test module in various
+    contexts, optionally extending profiling into child processes.
+
+    Note:
+        This test function is heavily parametrized. Here is why that is
+        necessary:
+
+        - ``run_func`` tests the different :cmd:`kernprof` modes (see
+          :py:func:`~.test_running_multiproc_script`).
+
+        - ``use_local_func`` tests that we can consistently set up
+          profiling in both functions locally-defined in the profiled
+          code and imported by it.
+
+        - ``preimports`` tests that both mechanisms for setting up
+          profiling targets work:
+
+          - :py:const:`True`: child processes import the module
+            generated by
+            :py:mod:`line_profiler.autoprofile.eager_preimports`, like
+            the main :py:mod:`kernprof` process does.
+
+          - :py:const:`False`: child processes rewrite the executed code
+            before passing it to :py:mod:`runpy`, similar to what
+            :py:mod:`line_profiler.autoprofile.autoprofile` does.
+
+          These code paths go through different
+          :py:mod:`multiprocessing` components that we have patched and
+          thus needs separate testing.
+
+        - ``prof_child_procs`` of course toggles whether to do the
+          patches to set up profiling in child processes.
+    """
+    # How many calls do we expect?
+    nhits = dict.fromkeys(
+        ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
+    )
+    # Make sure we're profiling the right function
+    tag = 'LOCAL' if use_local_func else 'EXT'
+    if prof_child_procs:
+        # - `nprocs` child calls summing the `nnums` numbers
+        # - One call in the main proc summing the `nprocs` results from
+        #   children
+        nhits[tag + '-INVOCATION'] = nprocs + 1
+        nhits[tag + '-LOOP'] = nnums + nprocs
+    else:
+        nhits[tag + '-INVOCATION'] = 1
+        nhits[tag + '-LOOP'] = nprocs
+
+    runner = ['kernprof', '-l']
+    runner.extend([
+        '--{}prof-child-procs'.format('' if prof_child_procs else 'no-'),
+        '--{}preimports'.format('' if preimports else 'no-'),
+    ])
+    if not use_local_func:
+        # Also make sure to include the external module in `--prof-mod`
+        runner.append(f'--prof-mod={ext_module.name}')
+    run_func(
+        test_module, tmp_path_factory,
+        runner=runner,
+        outfile='out.lprof',
+        profile=True,
+        use_local_func=use_local_func,
+        nhits=nhits,
+        nnums=nnums,
+        nprocs=nprocs,
+    )
