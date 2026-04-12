@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import multiprocessing
 import os
 import shlex
 import subprocess
@@ -8,9 +9,9 @@ import sys
 from collections.abc import (
     Callable, Collection, Generator, Iterable, Mapping, Sequence,
 )
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
-from multiprocessing import get_all_start_methods
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
@@ -30,16 +31,18 @@ C = TypeVar('C', bound=Callable[..., Any])
 
 NUM_NUMBERS = 100
 NUM_PROCS = 4
-START_METHODS = set(get_all_start_methods())
+START_METHODS = set(multiprocessing.get_all_start_methods())
 
 EXTERNAL_MODULE_BODY = dedent("""
 from __future__ import annotations
 
 
-def my_external_sum(x: list[int]) -> int:
+def my_external_sum(x: list[int], fail: bool = False) -> int:
     result: int = 0  # GREP_MARKER[EXT-INVOCATION]
     for item in x:
         result += item  # GREP_MARKER[EXT-LOOP]
+    if fail:
+        raise RuntimeError('forced failure')
     return result
 """).strip('\n')
 
@@ -54,18 +57,21 @@ from typing import Literal
 from {EXT_MODULE} import my_external_sum
 
 
-def my_local_sum(x: list[int]) -> int:
+def my_local_sum(x: list[int], fail: bool = False) -> int:
     result: int = 0  # GREP_MARKER[LOCAL-INVOCATION]
     # The reversing is to prevent bytecode aliasing with
     # `my_external_sum()` (see issue #424, PR #425)
     for item in reversed(x):
         result += item  # GREP_MARKER[LOCAL-LOOP]
+    if fail:
+        raise RuntimeError('forced failure')
     return result
 
 
 def sum_in_child_procs(
     length: int, n: int, my_sum: Callable[[list[int]], int],
     start_method: Literal['fork', 'forkserver', 'spawn'] | None = None,
+    fail: bool = False,
 ) -> int:
     my_list: list[int] = list(range(1, length + 1))
     sublists: list[list[int]] = []
@@ -81,10 +87,10 @@ def sum_in_child_procs(
     else:
         pool = Pool(n)
     with pool:
-        subsums = pool.map(my_sum, sublists)
+        subsums = pool.starmap(my_sum, [(sl, fail) for sl in sublists])
         pool.close()
         pool.join()
-    return my_sum(subsums)
+    return my_sum(subsums, fail)
 
 
 def main(args: list[str] | None = None) -> None:
@@ -95,6 +101,7 @@ def main(args: list[str] | None = None) -> None:
         '-s', '--start-method',
         choices=['fork', 'forkserver', 'spawn'], default=None,
     )
+    parser.add_argument('-f', '--force-failure', action='store_true')
     parser.add_argument(
         '--local',
         action='store_const',
@@ -103,7 +110,11 @@ def main(args: list[str] | None = None) -> None:
         const=my_local_sum,
     )
     options = parser.parse_args(args)
-    print(sum_in_child_procs(options.length, options.n, options.my_sum))
+    print(sum_in_child_procs(
+        options.length, options.n, options.my_sum,
+        start_method=options.start_method,
+        fail=options.force_failure,
+    ))
 
 
 if __name__ == '__main__':
@@ -229,6 +240,30 @@ def test_module(
 
 class _NotSupplied(enum.Enum):
     NOT_SUPPLIED = enum.auto()
+
+
+class ResultMismatch(ValueError):
+    def __init__(
+        self,
+        expected: Any,
+        actual: Any | _NotSupplied = _NotSupplied.NOT_SUPPLIED,
+    ) -> None:
+        msg = f'expected: {expected}'
+        if actual != _NotSupplied.NOT_SUPPLIED:
+            msg = f'{msg}, got {actual}'
+        super().__init__(msg)
+        self.expected = expected
+        self.actual = actual
+
+    @property
+    def rich_message(self) -> str:
+        msg = '{}: {}'.format(type(self).__name__, self.args[0])
+        if self.__traceback__ is not None:
+            tb = self.__traceback__
+            msg = '{}:{}: {}'.format(
+                tb.tb_frame.f_code.co_filename, tb.tb_lineno, msg,
+            )
+        return msg
 
 
 @final
@@ -516,6 +551,7 @@ def _run_test_module(
     *,
     profiled_code_is_tempfile: bool = False,
     use_local_func: bool = False,
+    fail: bool = False,
     start_method: Literal['fork', 'forkserver', 'spawn'] | None = None,
     nnums: int | None = None,
     nprocs: int | None = None,
@@ -540,7 +576,11 @@ def _run_test_module(
                     actual_nhits += int(n)
                 except Exception:
                     pass
-        assert actual_nhits == nhits
+        if actual_nhits == nhits:
+            return
+        raise ResultMismatch(
+            f'{nhits} hit(s) on line(s) tagged with {tag!r}', actual_nhits,
+        )
 
     if isinstance(runner, str):
         runner_args: list[str] = [runner]
@@ -560,6 +600,8 @@ def _run_test_module(
     test_args: list[str] = []
     if use_local_func:
         test_args.append('--local')
+    if fail:
+        test_args.append('--force-failure')
     if start_method:
         if start_method in START_METHODS:
             test_args.extend(['-s', start_method])
@@ -580,11 +622,21 @@ def _run_test_module(
             runner_args.extend(['--outfile', outfile])
         proc = run_helper(
             runner_args, test_args, test_module,
-            text=True, capture_output=True, check=check,
+            text=True, capture_output=True, check=(check and not fail),
         )
         # Checks:
-        # - The result is correctly calculated
-        assert proc.stdout.splitlines()[0] == str(nnums * (nnums + 1) // 2)
+        if fail:
+            # - The process has failed as expected
+            if check:
+                assert proc.returncode
+        else:
+            # - The result is correctly calculated
+            expected = nnums * (nnums + 1) // 2
+            output_lines = proc.stdout.splitlines()
+            if output_lines[0] != str(expected):
+                raise ResultMismatch(
+                    f'result {expected}', f'output lines: {output_lines}',
+                )
         # - Profiling results are written to the specified file
         prof_result: LineStats | None = None
         if outfile is None:
@@ -614,6 +666,21 @@ run_literal_code = partial(
 # =============================== Tests ================================
 
 
+def _get_mp_start_method_fuzzer(label_name: str) -> _Params:
+    """
+    Returns:
+        :py:class:`_Params` object which does a full Cartesian-product
+        fuzz between ``fail`` (true or false) and ``start_method``
+        ('fork', 'forkserver', and 'spawn'; default :py:const:`None`)
+    """
+    fuzz_fail = _Params.new(('fail', label_name),
+                            [(True, 'failure'), (False, 'success')],
+                            defaults=(False, 'success'))
+    fuzz_start = _Params.new('start_method', ['fork', 'forkserver', 'spawn'],
+                             defaults=None)
+    return fuzz_fail * fuzz_start
+
+
 _fuzz_sanity = (
     _Params.new(('run_func', 'label1'),
                 [(run_module, 'module'), (run_script, 'script')])
@@ -623,9 +690,9 @@ _fuzz_sanity = (
     # location (so not the script supplied by `python -c`)
     + _Params.new(('run_func', 'label1', 'use_local_func', 'label2'),
                   [(run_literal_code, 'literal-code', False, 'ext')])
-    # Also fuzz the parallelization-related stuff
-    + _Params.new('start_method', ['fork', 'forkserver', 'spawn'],
-                  defaults=None)
+    # Also fuzz the parallelization-related stuff, esp. check what
+    # happens if an exception is raised inside the parallelly-run func
+    + _get_mp_start_method_fuzzer('label3')
     + _Params.new(('nnums', 'nprocs'), [(200, None), (None, 3)],
                   defaults=(None, None))
 )
@@ -637,12 +704,12 @@ def test_multiproc_script_sanity_check(
     test_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     use_local_func: bool,
+    fail: bool,
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int | None,
     nprocs: int | None,
     # Dummy arguments to make `pytest` output more legible
-    label1: str,
-    label2: str,
+    label1: str, label2: str, label3: str,
 ) -> None:
     """
     Sanity check that the test module functions as expected when run
@@ -651,6 +718,7 @@ def test_multiproc_script_sanity_check(
     run_func(
         test_module, tmp_path_factory,
         runner=sys.executable, profile=False,
+        fail=fail,
         use_local_func=use_local_func,
         start_method=start_method,
         nnums=nnums, nprocs=nprocs,
@@ -683,8 +751,7 @@ def test_running_multiproc_script(
     outfile: str | None,
     profile: bool,
     # Dummy arguments to make `pytest` output more legible
-    label1: str,
-    label2: str,
+    label1: str, label2: str,
 ) -> None:
     """
     Check that `kernprof` can RUN the test module in various contexts
@@ -709,14 +776,13 @@ _fuzz_prof_mp_1 = (
                 defaults=(run_script, 'script'))
     + _Params.new(('prof_child_procs', 'label2'),
                   [(True, 'with-child-prof'), (False, 'no-child-prof')])
-    + _Params.new('start_method', ['fork', 'forkserver', 'spawn'],
-                  defaults=None)
+    + _get_mp_start_method_fuzzer('label3')
 )
 _fuzz_prof_mp_2 = (
-    _Params.new(('preimports', 'label3'),
+    _Params.new(('preimports', 'label4'),
                 [(True, 'with-preimports'), (False, 'no-preimports')],
                 defaults=(False, 'no-preimports'))
-    + _Params.new(('use_local_func', 'label4'),
+    + _Params.new(('use_local_func', 'label5'),
                   [(True, 'local'), (False, 'external')],
                   defaults=(False, 'external'))
 )
@@ -737,14 +803,12 @@ def test_profiling_multiproc_script(
     prof_child_procs: bool,
     preimports: bool,
     use_local_func: bool,
+    fail: bool,
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int,
     nprocs: int,
     # Dummy arguments to make `pytest` output more legible
-    label1: str,
-    label2: str,
-    label3: str,
-    label4: str,
+    label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
     """
     Check that `kernprof` can PROFILE the test module in various
@@ -756,10 +820,6 @@ def test_profiling_multiproc_script(
 
         - ``run_func`` tests the different :cmd:`kernprof` modes (see
           :py:func:`~.test_running_multiproc_script`).
-
-        - ``use_local_func`` tests that we can consistently set up
-          profiling in both functions locally-defined in the profiled
-          code and imported by it.
 
         - ``preimports`` tests that both mechanisms for setting up
           profiling targets work:
@@ -777,24 +837,61 @@ def test_profiling_multiproc_script(
           :py:mod:`multiprocessing` components that we have patched and
           thus needs separate testing.
 
+        - ``use_local_func`` tests that we can consistently set up
+          profiling in both functions locally-defined in the profiled
+          code and imported by it.
+
+        - ``fail`` tests that our patches and hook doesn't choke when
+          exceptions occur in child processes, and profiling data can
+          still be collected.
+
+        - ``start_method`` tests whether all available
+          :py:mod:`multiprocessing` start methods are covered.
+
         - ``prof_child_procs`` of course toggles whether to do the
           patches to set up profiling in child processes.
+
+    Known bugs:
+        - When the function sent to :py:mod:`multiprocessing` raises an
+          exception, profiling results are inconsistently gather from
+          child processes.
+
+        For now we XFAIL these cases.
     """
+    def xfail_on_result_mismatch(info: pytest.ExceptionInfo) -> None:
+        xc = info.value
+        assert isinstance(xc, ResultMismatch)
+        pytest.xfail(xc.rich_message)
+
+    # XXX: we handle known bugs here...
+    ctx: AbstractContextManager[pytest.ExceptionInfo | None]
+    if fail:
+        ctx = pytest.raises(
+            ResultMismatch, match='hit.*tagged',
+        )
+    else:
+        ctx = nullcontext()
+
     # How many calls do we expect?
     nhits = dict.fromkeys(
         ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
     )
     # Make sure we're profiling the right function
     tag = 'LOCAL' if use_local_func else 'EXT'
+    tag_call = tag + '-INVOCATION'
+    tag_loop = tag + '-LOOP'
+    if not fail:
+        # The final sum in the parent process should always be profiled
+        # unless the child processes failed and we never returned from
+        # `Pool.starmap()`
+        nhits[tag_call] += 1
+        nhits[tag_loop] += nprocs
     if prof_child_procs:
-        # - `nprocs` child calls summing the `nnums` numbers
-        # - One call in the main proc summing the `nprocs` results from
-        #   children
-        nhits[tag + '-INVOCATION'] = nprocs + 1
-        nhits[tag + '-LOOP'] = nnums + nprocs
-    else:
-        nhits[tag + '-INVOCATION'] = 1
-        nhits[tag + '-LOOP'] = nprocs
+        # When profiling extends into child processes, each of them
+        # invokes the sum function once and when combined they loop thru
+        # all the items
+        nhits[tag_call] += nprocs
+        nhits[tag_loop] += nnums
 
     runner = ['kernprof', '-l']
     runner.extend([
@@ -804,17 +901,21 @@ def test_profiling_multiproc_script(
     if not use_local_func:
         # Also make sure to include the external module in `--prof-mod`
         runner.append(f'--prof-mod={ext_module.name}')
-    run_func(
-        test_module, tmp_path_factory,
-        runner=runner,
-        outfile='out.lprof',
-        profile=True,
-        use_local_func=use_local_func,
-        start_method=start_method,
-        nhits=nhits,
-        nnums=nnums,
-        nprocs=nprocs,
-    )
+    with ctx as maybe_xc:
+        run_func(
+            test_module, tmp_path_factory,
+            runner=runner,
+            outfile='out.lprof',
+            profile=True,
+            use_local_func=use_local_func,
+            fail=fail,
+            start_method=start_method,
+            nhits=nhits,
+            nnums=nnums,
+            nprocs=nprocs,
+        )
+    if maybe_xc is not None:
+        xfail_on_result_mismatch(maybe_xc)
 
 
 # TODO: test for profiling under the following circumstances:
