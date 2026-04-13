@@ -9,7 +9,6 @@ import sys
 from collections.abc import (
     Callable, Collection, Generator, Iterable, Mapping, Sequence,
 )
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -850,28 +849,7 @@ def test_profiling_multiproc_script(
 
         - ``prof_child_procs`` of course toggles whether to do the
           patches to set up profiling in child processes.
-
-    Known bugs:
-        - When the function sent to :py:mod:`multiprocessing` raises an
-          exception, profiling results are inconsistently gather from
-          child processes.
-
-        For now we XFAIL these cases.
     """
-    def xfail_on_result_mismatch(info: pytest.ExceptionInfo) -> None:
-        xc = info.value
-        assert isinstance(xc, ResultMismatch)
-        pytest.xfail(xc.rich_message)
-
-    # XXX: we handle known bugs here...
-    ctx: AbstractContextManager[pytest.ExceptionInfo | None]
-    if fail:
-        ctx = pytest.raises(
-            ResultMismatch, match='hit.*tagged',
-        )
-    else:
-        ctx = nullcontext()
-
     # How many calls do we expect?
     nhits = dict.fromkeys(
         ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
@@ -901,21 +879,18 @@ def test_profiling_multiproc_script(
     if not use_local_func:
         # Also make sure to include the external module in `--prof-mod`
         runner.append(f'--prof-mod={ext_module.name}')
-    with ctx as maybe_xc:
-        run_func(
-            test_module, tmp_path_factory,
-            runner=runner,
-            outfile='out.lprof',
-            profile=True,
-            use_local_func=use_local_func,
-            fail=fail,
-            start_method=start_method,
-            nhits=nhits,
-            nnums=nnums,
-            nprocs=nprocs,
-        )
-    if maybe_xc is not None:
-        xfail_on_result_mismatch(maybe_xc)
+    run_func(
+        test_module, tmp_path_factory,
+        runner=runner,
+        outfile='out.lprof',
+        profile=True,
+        use_local_func=use_local_func,
+        fail=fail,
+        start_method=start_method,
+        nhits=nhits,
+        nnums=nnums,
+        nprocs=nprocs,
+    )
 
 
 # TODO: test for profiling under the following circumstances:
