@@ -14,11 +14,18 @@ en/latest/subprocess.html#using-multiprocessing>`__.
 """
 from __future__ import annotations
 
-import multiprocessing.process
+import multiprocessing
+import os
 from collections.abc import Callable
-from functools import partial, partialmethod, wraps
+from contextlib import AbstractContextManager, nullcontext
+from functools import partial, wraps
+from importlib import import_module
+from multiprocessing.process import BaseProcess
+from pathlib import Path
+from tempfile import mkstemp
+from time import sleep
 from typing import Any, TypeVar
-from typing_extensions import Concatenate, ParamSpec
+from typing_extensions import Concatenate, ParamSpec, Self
 
 from .cache import LineProfilingCache
 from .pth_hook import _setup_in_child_process
@@ -33,6 +40,12 @@ T = TypeVar('T')
 PS = ParamSpec('PS')
 
 _PATCHED_MARKER = '_line_profiler_patched_multiprocessing'
+_PROCESS_TERM_LOCK_LOC = '_line_profiler_process_terminate_lock'
+_POLLING_COOLDOWN = 1. / 32  # Seconds
+# NOTE: Set this to `None` or `True` to tee the `multiprocessing`
+# internal logging messages to the log files; if `None`, logs are only
+# written if `LineProfilingCache.load().debug` is set to true.
+_INTERCEPT_MP_LOG_MESSAGES = False
 
 
 class PickleHook:
@@ -53,137 +66,182 @@ class PickleHook:
         # up shop here.
         lp_cache = LineProfilingCache.load()
         _setup_in_child_process(lp_cache, False, 'multiprocessing')
+        # In a child process, we don't care about polluting the
+        # `multiprocessing` namespace, so don't bother with cleanup
         if not getattr(multiprocessing, _PATCHED_MARKER, False):
-            _apply_mp_patches(lp_cache, True, True)
+            _apply_mp_patches(lp_cache, _no_op)
 
 
-def cleanup_wrapper(
-    vanilla_impl: Callable[PS, T], name: str | None = None,
-) -> Callable[PS, T]:
+class _Poller:
     """
-    Wrap around :py:class:`multiprocessing.process.BaseProcess` methods
-    like ``._bootstrap()``, writing the profiling results after it is
-    run.
-
-    Args:
-        vanilla_impl (Callable)
-            Vanilla implementation of the method
-        name (str | None)
-            Optional name to use in debug messages; if not provided, use
-            ``vanilla_impl.__name__`` where available.
-
-    Returns:
-        Wrapper around ``vanilla_impl``
-
-    Side effects:
-        Profiling results are written as the wrapper function exits,
-        before the result of ``vanilla_impl()`` is returned
-
-    See also:
-        :py:func:`setup_wrapper`
+    Poll a callable until it returns true-y.
     """
-    @wraps(vanilla_impl)
-    def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
-        try:
-            return vanilla_impl(*args, **kwargs)
-        finally:  # Write profiling results
-            cache = LineProfilingCache.load()
-            cache._debug_output(f'Calling cleanup hook via: {name}')
-            for msg in 'FOO', 'BAR', 'BAZ':
-                cache._debug_output(msg)
-            cache.cleanup()
+    def __init__(
+        self, func: Callable[[], Any], cooldown: float | None = None,
+    ) -> None:
+        if not (cooldown and cooldown > 0):
+            cooldown = 0
+        self._func: Callable[[], Any] = func
+        self._cooldown = cooldown
 
-    if name is None:
-        name = getattr(vanilla_impl, '__name__', '???')
-    return wrapper
+    def sleep(self):
+        cd = self._cooldown
+        if cd > 0:
+            sleep(cd)
+
+    def with_cooldown(self, cooldown: float | None) -> Self:
+        return type(self)(self._func, cooldown)
+
+    @classmethod
+    def poll_until(
+        cls, func: Callable[PS, Any], /, *args: PS.args, **kwargs: PS.kwargs
+    ) -> Self:
+        if args or kwargs:
+            func = partial(func, *args, **kwargs)
+        return cls(func)
+
+    @classmethod
+    def poll_while(
+        cls, func: Callable[PS, Any], /, *args: PS.args, **kwargs: PS.kwargs
+    ) -> Self:
+        def negated(
+            func: Callable[PS, Any], *a: PS.args, **k: PS.kwargs
+        ) -> bool:
+            return not func(*a, **k)
+
+        return cls(partial(negated, func, *args, **kwargs))
+
+    def __enter__(self) -> Self:
+        while not self._func():
+            self.sleep()
+        return self
+
+    def __exit__(self, *_, **__) -> None:
+        pass
 
 
-def setup_wrapper(
-    vanilla_impl: Callable[PS, T], name: str | None = None,
-) -> Callable[PS, T]:
+def _method_wrapper(
+    wrapper: Callable[Concatenate[S, Callable[Concatenate[S, PS], T], PS], T]
+) -> Callable[
+    [Callable[Concatenate[S, PS], T]], Callable[Concatenate[S, PS], T]
+]:
+    def inner_wrapper(
+        vanilla_impl: Callable[Concatenate[S, PS], T],
+    ) -> Callable[Concatenate[S, PS], T]:
+        @wraps(vanilla_impl)
+        def wrapped_impl(self: S, *a: PS.args, **k: PS.kwargs) -> T:
+            return wrapper(self, vanilla_impl, *a, **k)
+
+        return wrapped_impl
+
+    for field in 'name', 'qualname', 'doc':
+        dunder = f'__{field}__'
+        value = getattr(wrapper, dunder, None)
+        if value is not None:
+            setattr(inner_wrapper, dunder, value)
+    return inner_wrapper
+
+
+@_method_wrapper
+def wrap_start(
+    self: BaseProcess, vanilla_impl: Callable[[BaseProcess], None],
+) -> None:
     """
-    Wrap around :py:class:`multiprocessing.process.BaseProcess` methods
-    like ``.start()``, setting up profiling before it is run.
-
-    Args:
-        vanilla_impl (Callable)
-            Vanilla implementation of the method
-        name (str | None)
-            Optional name to use in debug messages; if not provided, use
-            ``vanilla_impl.__name__`` where available.
-
-    Returns:
-        Wrapper around ``vanilla_impl``
-
-    Side effects:
-        Profiling set up when the wrapper function is called, before
-        ``vanilla_impl`` itself is invoked
-
-    See also:
-        :py:func:`cleanup_wrapper`
+    Wrap around :py:meth:`BaseProcess.start` to specify the location for
+    a lock file, which is managed by the child process and checked by
+    the parent. This is to ensure that the child can exit gracefully and
+    complete any necessary cleanup.
     """
-    @wraps(vanilla_impl)
-    def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
-        cache = LineProfilingCache.load()
-        if cache.profiler is None:
-            cache._debug_output(f'Calling setup hook via: {name}')
-            _setup_in_child_process(cache, False, 'multiprocessing')
-            assert cache.profiler is not None
-        return vanilla_impl(*args, **kwargs)
-
-    if name is None:
-        name = getattr(vanilla_impl, '__name__', '???')
-    return wrapper
+    cache = LineProfilingCache.load()
+    handle, tempfile = mkstemp(
+        dir=cache.cache_dir, prefix='process-term-lock-', suffix='.lock',
+    )
+    try:
+        setattr(self, _PROCESS_TERM_LOCK_LOC, Path(tempfile))
+        vanilla_impl(self)
+    finally:
+        os.close(handle)
 
 
-def get_target_property() -> property:
+@_method_wrapper
+def wrap_terminate(
+    self: BaseProcess, vanilla_impl: Callable[[BaseProcess], None],
+) -> None:
     """
-    Returns:
-        Property object which wraps around the ``._target`` attribute of
-        (i.e. ``target`` arguemnt to)
-        :py:class:`multiprocessing.process.BaseProcess`
+    Wrap around :py:meth:`BaseProcess.terminate` to make sure that we
+    don't actually kill the child (OS-level) process before it has the
+    chance to properly clean up. This is done by blocking the call as
+    long as a lock file exists, which is specified by the parent process
+    and managed by the child.
 
     Note:
-        This is a hack to make sure that profiling output is written
-        ASAP after the call to the target is finished.
+        We're technically polling in a hot loop, but:
 
-        More intuitive solutions that just didn't work are:
+        - We're only calling this when explicitly terminating processes,
+          which isn't that bad; and
 
-        * Wrap ``target`` at initialization time:
-          By replacing the callable with a wrapper, the whole process
-          object becomes un-pickle-able.
+        - Such calls typically only happen:
 
-        * Wrap :py:meth:`multiprocessing.process.BaseProcess._bootstrap`
-          as :py:mod:`coverage` does:
-          For currently unclear reasons, if the function set to
-          :py:mod:`multiprocessing` raises an error, the cleanup clauses
-          in a try-finally block enclosing the call to the original
-          ``_bootstrap()`` implementation fails to cleanly,
-          consistently, and fully execute. Something seems to be
-          starting process/interpreter teardown prematurely in child
-          processes...
+          - When e.g. the parallel function exectued in child
+            processes raised an error, so we're already on a "bad"
+            path; and
+
+          - AFTER the performance-critical part of the code (the
+            parallelly-run function).
+
+        To circumvent this we may use dedicated FS-watching APIs like
+        :py:mod:`watchdog` (which use syscalls to do this), but we'll
+        think about introducing extra dependencies when we REALLY have
+        to.
     """
-    def getter(
-        self: multiprocessing.process.BaseProcess,
-    ) -> Callable[..., Any] | None:
-        target = vars(self).get(loc)
-        if target is None:
-            return None
-        return cleanup_wrapper(target, name='<process target>')
+    # XXX: why can `coverage` get away with not doing all this lock-file
+    # hijinks and just patching `BaseProcess._bootstrap()`?
+    lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
+    if lock_file:
+        lock: AbstractContextManager[Any] = (
+            _Poller.poll_while(lock_file.exists)
+            .with_cooldown(_POLLING_COOLDOWN)
+        )
+    else:
+        lock = nullcontext()
+    with lock:
+        try:
+            delattr(self, _PROCESS_TERM_LOCK_LOC)
+        except AttributeError:
+            pass
+        vanilla_impl(self)
 
-    def setter(
-        self: multiprocessing.process.BaseProcess,
-        target: Callable[..., Any] | None,
-    ) -> None:
-        vars(self)[loc] = target
 
-    def deleter(
-        self: multiprocessing.process.BaseProcess,
-    ) -> None:
-        vars(self).pop(loc, None)
+@_method_wrapper
+def wrap_bootstrap(
+    self: BaseProcess,
+    vanilla_impl: Callable[Concatenate[BaseProcess, PS], T], /,
+    *args: PS.args, **kwargs: PS.kwargs
+) -> T:
+    """
+    Wrap around :py:meth:`BaseProcess._bootstrap` to:
 
-    loc = '_target'
-    return property(getter, setter, deleter)
+    - Run ``LineProfilingCache.load().cleanup()`` so that profiling
+      results can be gathered; and
+
+    - Write a lock file before executing ``vanilla_impl()`` and deleted
+      it thereafter, to ensure that a parant process doesn't prematurely
+      ``.terminate()`` a failed child before the profiling results can
+      be gathered.
+    """
+    cache = LineProfilingCache.load()
+    lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
+
+    if lock_file:
+        lock_file.touch()
+        cache.add_cleanup(lock_file.unlink, missing_ok=True)
+    try:
+        return vanilla_impl(self, *args, **kwargs)
+    finally:
+        cache._debug_output(
+            'Calling cleanup hook via `BaseProcess._bootstrap`'
+        )
+        cache.cleanup()
 
 
 def _cache_hook(
@@ -217,23 +275,6 @@ def tee_log(
     _cache_hook(
         vanilla_impl, get_msg,  # type: ignore[arg-type]
         msg, *args, **kwargs,
-    )
-
-
-def log_method_call(
-    self: S,
-    vanilla_impl: Callable[Concatenate[S, PS], T],
-    name: str,
-    /,
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> T:
-    def get_msg(self: S, *_, **__) -> str:
-        return f'Called: `.{name}()` method of {self!r}'
-
-    return _cache_hook(
-        vanilla_impl, get_msg,  # type: ignore[arg-type]
-        self, *args, **kwargs,
     )
 
 
@@ -279,19 +320,26 @@ def apply(lp_cache: LineProfilingCache) -> None:
 
     Side effects:
         - :py:mod:`multiprocessing` marked as having been set up
-        - :py:meth:`multiprocessing.process.BaseProcess._bootstrap`
-          patched
-        - :py:func:`multiprocessing.spawn.get_preparation_data` patched
-        - Cleanup callbacks registered via `lp_cache.add_cleanup()`
+
+        - The following methods and functions patched:
+          - :py:meth:`multiprocessing.process.BaseProcess.start`
+
+          - :py:meth:`multiprocessing.process.BaseProcess.terminate`
+
+          - :py:meth:`multiprocessing.process.BaseProcess._bootstrap`
+
+          - :py:func:`multiprocessing.spawn.get_preparation_data`
+
+        - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
     """
     if not getattr(multiprocessing, _PATCHED_MARKER, False):
-        _apply_mp_patches(lp_cache, False)
+        _apply_mp_patches(lp_cache, lp_cache.add_cleanup)
 
 
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
-    in_child_process: bool,
-    debug: bool = False,
+    add_cleanup: Callable[..., Any],
+    debug: bool | None = _INTERCEPT_MP_LOG_MESSAGES,
 ) -> None:
     def replace(
         obj: Any, attr: str, value: Any, obj_name: str | None = None,
@@ -309,33 +357,25 @@ def _apply_mp_patches(
             obj_name, attr, value,
         ))
 
-    # In a child process, we don't care about polluting the
-    # `multiprocessing` namespace, so don't bother with cleanup
-    if in_child_process:
-        add_cleanup: Callable[..., None] = _no_op
-    else:
-        add_cleanup = lp_cache.add_cleanup
-
-    # Patch `multiprocessing.process.BaseProcess._bootstrap()`
-    Proc = multiprocessing.process.BaseProcess
-    if False:
-        wrapper_maker: Callable[[Callable[PS, T]], Callable[PS, T]]
-        for wrapper_maker, methods in [  # type: ignore[assignment]
-            (setup_wrapper, []),
-            (cleanup_wrapper, ['_bootstrap']),
-        ]:
-            for method in methods:
-                vanilla = getattr(Proc, method)
-                replace(
-                    Proc, method, wrapper_maker(vanilla),
-                    f'{Proc.__module__}.{Proc.__qualname__}',
-                )
-    else:
-        # Patch `multiprocessing.process.BaseProcess._target`
-        replace(
-            Proc, '_target', get_target_property(),
-            f'{Proc.__module__}.{Proc.__qualname__}',
-        )
+    # Patch `multiprocessing.process.BaseProcess` methods
+    Method = Callable[Concatenate[S, PS], T]
+    patches: dict[str, Callable[[Method], Method]]
+    for submodule, target, patches in [  # type: ignore[assignment]
+        ('process', 'BaseProcess', {
+            'start': wrap_start,
+            'terminate': wrap_terminate,
+            '_bootstrap': wrap_bootstrap,
+        }),
+    ]:
+        try:
+            mod = import_module('multiprocessing.' + submodule)
+        except ImportError:
+            continue
+        Class = getattr(mod, target)
+        name = f'{Class.__module__}.{Class.__qualname__}'
+        for method, method_wrapper in patches.items():
+            vanilla = getattr(Class, method)
+            replace(Class, method, method_wrapper(vanilla), name)
 
     # Patch `multiprocessing.spawn`
     try:
@@ -351,36 +391,12 @@ def _apply_mp_patches(
         # Patch `runpy` (do it locally instead of tempering with the
         # global `runpy` mmodule)
         if hasattr(spawn, 'runpy'):
-            replace(
-                spawn, 'runpy', create_runpy_wrapper(lp_cache), spawn.__name__,
-            )
-
-    # Log Popen calls
-    # XXX: these seem to mitigate (but not completely eliminate) the
-    # issue of incomplete profiling data; the point seems to be deleying
-    # the call to `Popen.terminate()` in the parent process so that
-    # "bad" child processes have the chance to complete their cleanup
-    # calls. Do we have a more robust way of doing this?
-    if False:
-        from importlib import import_module
-
-        for submodule in [
-            'popen_fork', 'popen_spawn_posix', 'popen_spawn_win32',
-        ]:
-            try:
-                Popen = import_module('multiprocessing.' + submodule).Popen
-            except ImportError:
-                continue
-            for method in 'kill', 'terminate', 'interrupt', 'close', 'wait':
-                method_wrapper = partialmethod(
-                    log_method_call, getattr(Popen, method), method,
-                )
-                replace(
-                    Popen, method, method_wrapper,
-                    f'{Popen.__module__}.{Popen.__qualname__}',
-                )
+            runpy_wrapper = create_runpy_wrapper(lp_cache)
+            replace(spawn, 'runpy', runpy_wrapper, spawn.__name__)
 
     # Intercept `multiprocessing` debug messages
+    if debug is None:
+        debug = lp_cache.debug
     if debug:
         from multiprocessing import util
 
@@ -397,8 +413,7 @@ def _apply_mp_patches(
             )
 
     # Mark `multiprocessing` as having been patched
-    setattr(multiprocessing, _PATCHED_MARKER, True)
-    add_cleanup(vars(multiprocessing).pop, _PATCHED_MARKER, None)
+    replace(multiprocessing, _PATCHED_MARKER, True)
 
 
 def _no_op(*_, **__) -> None:
