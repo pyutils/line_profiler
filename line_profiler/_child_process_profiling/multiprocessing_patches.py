@@ -184,9 +184,9 @@ def _apply_mp_patches(
         try:
             old = getattr(obj, attr)
         except AttributeError:
-            add_cleanup(setattr, obj, attr, old)
-        else:
             add_cleanup(delattr, obj, attr)
+        else:
+            add_cleanup(setattr, obj, attr, old)
         setattr(obj, attr, value)
         if obj_name is None:
             obj_name = repr(obj)
