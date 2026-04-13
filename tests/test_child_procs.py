@@ -32,7 +32,12 @@ NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
 
-EXTERNAL_MODULE_BODY = dedent("""
+
+def strip(s: str) -> str:
+    return dedent(s).strip('\n')
+
+
+EXTERNAL_MODULE_BODY = strip("""
 from __future__ import annotations
 
 
@@ -43,9 +48,9 @@ def my_external_sum(x: list[int], fail: bool = False) -> int:
     if fail:
         raise RuntimeError('forced failure')
     return result
-""").strip('\n')
+""")
 
-TEST_MODULE_TEMPLATE = dedent("""
+TEST_MODULE_TEMPLATE = strip("""
 from __future__ import annotations
 
 from argparse import ArgumentParser
@@ -118,7 +123,7 @@ def main(args: list[str] | None = None) -> None:
 
 if __name__ == '__main__':
     main()
-""").strip('\n')
+""")
 
 
 # ============================== Fixtures ==============================
@@ -564,23 +569,6 @@ def _run_test_module(
         profliing_stats (LineStats | None):
             Line-profiling stats (where available)
     """
-    def check_output(output: str, tag: str, nhits: int) -> None:
-        # The line should be preixed with 5 numbers:
-        # lineno, nhits, time, time-per-hit, % time
-        actual_nhits = 0
-        for line in output.splitlines():
-            if line.endswith(f'# GREP_MARKER[{tag}]'):
-                try:
-                    _, n, _, _, _, *_ = line.split()
-                    actual_nhits += int(n)
-                except Exception:
-                    pass
-        if actual_nhits == nhits:
-            return
-        raise ResultMismatch(
-            f'{nhits} hit(s) on line(s) tagged with {tag!r}', actual_nhits,
-        )
-
     if isinstance(runner, str):
         runner_args: list[str] = [runner]
     else:
@@ -652,8 +640,26 @@ def _run_test_module(
         #   code is in a tempfile the profiling data will be dropped in
         #   the written outfile)
         for tag, num in (nhits or {}).items():
-            check_output(proc.stdout, tag, num)
+            _check_output(proc.stdout, tag, num)
     return proc, prof_result
+
+
+def _check_output(output: str, tag: str, nhits: int) -> None:
+    # The line should be preixed with 5 numbers:
+    # lineno, nhits, time, time-per-hit, % time
+    actual_nhits = 0
+    for line in output.splitlines():
+        if line.endswith(f'# GREP_MARKER[{tag}]'):
+            try:
+                _, n, _, _, _, *_ = line.split()
+                actual_nhits += int(n)
+            except Exception:
+                pass
+    if actual_nhits == nhits:
+        return
+    raise ResultMismatch(
+        f'{nhits} hit(s) on line(s) tagged with {tag!r}', actual_nhits,
+    )
 
 
 run_module = partial(_run_test_module, _run_as_module)
@@ -893,7 +899,79 @@ def test_profiling_multiproc_script(
     )
 
 
-# TODO: test for profiling under the following circumstances:
-# - `os.system()`
-# - `subprocess.run()`
-# - Nested subprocesses
+@pytest.mark.parametrize(('use_subprocess', 'label1'),
+                         [(True, 'subprocess.run'), (False, 'os.system')])
+@pytest.mark.parametrize(('prof_child_procs', 'label2'),
+                         [(True, 'with-child-prof'), (False, 'no-child-prof')])
+@pytest.mark.parametrize(('fail', 'label3'),
+                         [(True, 'failure'), (False, 'success')])
+@pytest.mark.parametrize('n', [200])
+def test_profiling_bare_python(
+    tmp_path_factory: pytest.TempPathFactory,
+    ext_module: _ModuleFixture,
+    use_subprocess: bool,
+    prof_child_procs: bool,
+    fail: bool,
+    n: int,
+    # Dummy arguments to make `pytest` output more legible
+    label1: str, label2: str, label3: str,
+) -> None:
+    """
+    Check that `kernprof` can profile the target functions if the code
+    invokes another bare Python process (via either :py:func:`os.system`
+    or :py:func:`subprocess.run`) that calls them.
+    """
+    ext_module.install(children=True)
+    temp_dir = tmp_path_factory.mktemp('mytemp')
+
+    script_path = temp_dir / 'my-script.py'
+    script_content = strip("""
+    from {EXT_MODULE} import my_external_sum
+
+
+    if __name__ == '__main__':
+        numbers = list(range(1, 1 + {N}))
+        result = my_external_sum(numbers, {FAIL})
+    """.format(
+        EXT_MODULE=ext_module.name,
+        N=n,
+        FAIL=fail,
+    ))
+    script_path.write_text(script_content)
+
+    out_file = temp_dir / 'out.lprof'
+    cmd = [
+        'kernprof', '-lv', '--preimports',
+        f'--prof-mod={ext_module.name}',
+        f'--outfile={out_file}',
+        '--{}prof-child-procs'.format('' if prof_child_procs else 'no-'),
+    ]
+    sub_cmd = [sys.executable, str(script_path)]
+    if use_subprocess:
+        code = strip(f"""
+        import subprocess
+
+
+        subprocess.run({sub_cmd!r}, check=True)
+        """)
+    else:
+        code = strip("""
+        import os
+
+
+        if os.system({!r}):
+            raise RuntimeError('called process failed')
+        """.format(shlex.join(sub_cmd)))
+    cmd.extend(['-c', code])
+    proc = _run_subproc(cmd, text=True, capture_output=True)
+
+    nhits = {'EXT-INVOCATION': 1, 'EXT-LOOP': n}
+    if not prof_child_procs:
+        for k in nhits:
+            nhits[k] = 0
+
+    # Check that the code errors out when expected
+    assert bool(fail) == bool(proc.returncode)
+    # Check that the profiling output is as expected
+    for tag, num in nhits.items():
+        _check_output(proc.stdout, tag, num)
