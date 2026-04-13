@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import multiprocessing.process
 from collections.abc import Callable
-from functools import partial, partialmethod
+from functools import partial, wraps
 from typing import Any, TypeVar
-from typing_extensions import Concatenate, ParamSpec
+from typing_extensions import ParamSpec
 
 from .cache import LineProfilingCache
 from .pth_hook import _setup_in_child_process
@@ -58,39 +58,70 @@ class PickleHook:
             _apply_mp_patches(lp_cache, _no_op)
 
 
-def bootstrap(
-    self: multiprocessing.process.BaseProcess,
-    vanilla_impl: Callable[
-        Concatenate[multiprocessing.process.BaseProcess, PS], T
-    ],
-    /,
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> T:
+def cleanup_wrapper(vanilla_impl: Callable[PS, T]) -> Callable[PS, T]:
     """
-    Wrap around
-    :py:meth:`multiprocessing.process.BaseProcess._bootstrap`,
-    writing the profiling results after it is run.
+    Wrap around :py:class:`multiprocessing.process.BaseProcess` methods
+    like ``._bootstrap()``, writing the profiling results after it is
+    run.
 
     Args:
-        self (multiprocessing.process.BaseProcess)
-            :py:class:`~.BaseProcess`
         vanilla_impl (Callable)
-            Vanilla :py:meth:`~.BaseProcess._bootstrap`
-        *args
-        **kwargs
-            Passed to :py:meth:`~.BaseProcess._bootstrap`
+            Vanilla implementation of the method
 
     Returns:
-        Return value of ``vanilla_impl(*args, **kwargs)``
+        Wrapper around ``vanilla_impl``
 
     Side effects:
-        Profiling results are written
+        Profiling results are written as the wrapper function exits,
+        before the result of ``vanilla_impl()`` is returned
     """
-    try:
-        return vanilla_impl(self, *args, **kwargs)
-    finally:  # Write profiling results
-        LineProfilingCache.load().cleanup()
+    @wraps(vanilla_impl)
+    def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
+        try:
+            return vanilla_impl(*args, **kwargs)
+        finally:  # Write profiling results
+            # FIXME: somehow this finally clause is not consistently and
+            # fully executed when an error occurs in the function passed
+            # to `multiprocessing`... maybe the interpreter is being
+            # actively exited/torned down as we speak
+            cache = LineProfilingCache.load()
+            cache._debug_output(f'Calling cleanup hook via: {name}')
+            cache.cleanup()
+
+    name = vanilla_impl.__name__
+    return wrapper
+
+
+def setup_wrapper(vanilla_impl: Callable[PS, T]) -> Callable[PS, T]:
+    """
+    Wrap around :py:class:`multiprocessing.process.BaseProcess` methods
+    like ``.start()``, setting up profiling before it is run.
+
+    Args:
+        vanilla_impl (Callable)
+            Vanilla implementation of the method
+
+    Returns:
+        Wrapper around ``vanilla_impl``
+
+    Side effects:
+        Profiling set up when the wrapper function is called, before
+        ``vanilla_impl`` itself is invoked
+
+    See also:
+        :py:func:`cleanup_wrapper`
+    """
+    @wraps(vanilla_impl)
+    def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
+        cache = LineProfilingCache.load()
+        if cache.profiler is None:
+            cache._debug_output(f'Calling setup hook via: {name}')
+            _setup_in_child_process(cache, False, 'multiprocessing')
+            assert cache.profiler is not None
+        return vanilla_impl(*args, **kwargs)
+
+    name = vanilla_impl.__name__
+    return wrapper
 
 
 def get_preparation_data(
@@ -165,13 +196,17 @@ def _apply_mp_patches(
 
     # Patch `multiprocessing.process.BaseProcess._bootstrap()`
     Proc = multiprocessing.process.BaseProcess
-    bootstrap_wrapper = partialmethod(
-        bootstrap, Proc._bootstrap,  # type: ignore[attr-defined]
-    )
-    replace(
-        Proc, '_bootstrap', bootstrap_wrapper,
-        f'{Proc.__module__}.{Proc.__qualname__}',
-    )
+    for wrapper_maker, methods in [
+        # (setup_wrapper, ['start']),
+        (setup_wrapper, []),
+        (cleanup_wrapper, ['_bootstrap']),
+    ]:
+        for method in methods:
+            vanilla = getattr(Proc, method)
+            replace(
+                Proc, method, wrapper_maker(vanilla),
+                f'{Proc.__module__}.{Proc.__qualname__}',
+            )
 
     # Patch `multiprocessing.spawn`
     try:
