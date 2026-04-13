@@ -223,6 +223,7 @@ def _setup_in_child_process(cache, wrap_os_fork=False, context='', prof=None):
     ctx = CuratedProfilerContext(prof, insert_builtin=cache.insert_builtin)
     ctx.install()
     cache.add_cleanup(ctx.uninstall)
+    cache._debug_output(f'Set up `.profiler` at {id(prof):#x}')
 
     # Do the preimports at `cache.preimports_module` where appropriate
     if cache.preimports_module:
