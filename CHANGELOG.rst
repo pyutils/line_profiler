@@ -6,6 +6,7 @@ Changes
 * FIX: Make sure that the profiled code is run in the
   ``sys.modules['__main__']`` namespace to avoid issues w/e.g. pickling
   (#423)
+* CHANGE: Drop support for Python 3.8 and Python 3.9
 
 
 5.0.2

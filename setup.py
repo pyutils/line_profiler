@@ -315,7 +315,7 @@ if __name__ == '__main__':
     setupkw['license'] = 'BSD'
     setupkw['packages'] = list(setuptools.find_packages())
     setupkw['py_modules'] = ['kernprof', 'line_profiler']
-    setupkw['python_requires'] = '>=3.8'
+    setupkw['python_requires'] = '>=3.10'
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
     setupkw['package_data'] = {'line_profiler': ['py.typed', '*.pyi', '*.toml']}
     # `include_package_data` is needed to put `rc/line_profiler.toml` in
@@ -334,8 +334,6 @@ if __name__ == '__main__':
         'Operating System :: OS Independent',
         'Programming Language :: C',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
