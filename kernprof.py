@@ -138,6 +138,9 @@ which displays:
                             If the script/module profiled is in `--prof-mod`, autoprofile
                             all its imports. Only works with line profiling (`-l`/`--line-
                             by-line`). (Default: False)
+      --prof-child-procs [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
+                            Extend profiling into child Python processes. Only works with
+                            line profiling (`-l`/`--line-by-line`). (Default: False)
 
     output options:
       -o, --outfile OUTFILE
@@ -152,7 +155,7 @@ which displays:
       -q, --quiet           Decrease verbosity level (default: 0). At level -1, disable
                             helpful messages (e.g. "Wrote profile results to <...>"); at
                             level -2, silence the stdout; at level -3, silence the stderr.
---rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
+      --rich [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             Use rich formatting if viewing output. (Default: False; short
                             form: -r)
       -u, --unit UNIT       Output unit (in seconds) in which the timing info is
@@ -1059,7 +1062,7 @@ def _write_preimports(prof, options, exclude, keep=False):
     from line_profiler.autoprofile.autoprofile import (
         _extend_line_profiler_for_profiling_imports as upgrade_profiler,
     )
-    from line_profiler.curated_profiling import ClassifiedPreimportTargets 
+    from line_profiler.curated_profiling import ClassifiedPreimportTargets
 
     # We could've done everything in-memory with `io.StringIO` and `exec()`,
     # but that results in indecipherable tracebacks should anything goes wrong;
