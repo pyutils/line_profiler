@@ -486,6 +486,7 @@ def _run_subproc(
     cmd: Sequence[str] | str,
     /,
     *args,
+    check: bool = False,
     env: Mapping[str, str] | None = None,
     **kwargs
 ) -> subprocess.CompletedProcess:
@@ -497,6 +498,16 @@ def _run_subproc(
         cmd_str = cmd
     else:
         cmd_str = shlex.join(cmd)
+
+    # If we're capturing outputs, it may be for the best to wait until
+    # we've processed the output streams to check the return code...
+    check_rc_in_run = check
+    for arg in 'stdout', 'stdin':
+        if kwargs.get(arg) not in {None, subprocess.DEVNULL}:
+            check_rc_in_run = False
+    if kwargs.get('capture_output'):
+        check_rc_in_run = False
+
     print('Command:', cmd_str)
     if env is not None:
         diff: list[str] = []
@@ -522,23 +533,29 @@ def _run_subproc(
     time = monotonic()
     try:
         proc = subprocess.run(  # type: ignore[call-overload]
-            cmd, *args, env=env, **kwargs,
+            cmd, *args, env=env, check=check_rc_in_run, **kwargs,
         )
     except Exception:
         status = 'error'
         raise
     else:
+        assert proc is not None
+        if check and not check_rc_in_run:  # Perform missing check
+            proc.check_returncode()
         status = proc.returncode
         return proc
     finally:
         time = monotonic() - time
         if proc is not None:
+            captured: str | bytes | None
             for name, captured, stream in [
                 ('stdout', proc.stdout, sys.stdout),
                 ('stderr', proc.stderr, sys.stderr),
             ]:
                 if captured is None:
                     continue
+                if isinstance(captured, bytes):  # `text=False`
+                    captured = captured.decode()
                 print(f'{name}:\n{indent(captured, "  ")}', file=stream)
         print(
             f'-- Process end (time elapsed: {time:.2f} s / '
