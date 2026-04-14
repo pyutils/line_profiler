@@ -12,6 +12,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from sysconfig import get_path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
 from time import monotonic
@@ -570,6 +571,11 @@ def _run_test_module(
         profliing_stats (LineStats | None):
             Line-profiling stats (where available)
     """
+    def get_pth_files(pattern: str = '*.pth') -> set[str]:
+        return {path.name for path in lib_path.glob(pattern)}
+
+    lib_path = Path(get_path('purelib'))
+
     if isinstance(runner, str):
         runner_args: list[str] = [runner]
     else:
@@ -608,6 +614,7 @@ def _run_test_module(
     with ub.ChDir(tmp_path_factory.mktemp('mytemp')):
         if outfile is not None:
             runner_args.extend(['--outfile', outfile])
+        old_pth_files = get_pth_files()
         proc = run_helper(
             runner_args, test_args, test_module,
             text=True, capture_output=True, check=(check and not fail),
@@ -626,6 +633,9 @@ def _run_test_module(
                 raise ResultMismatch(
                     f'result {expected}', f'output lines: {output_lines}',
                 )
+        # - Temporary `.pth` file(s) created by `~~.pth_hook` has been
+        #   cleaned up
+        assert get_pth_files() == old_pth_files
         # - Profiling results are written to the specified file
         prof_result: LineStats | None = None
         if outfile is None:
