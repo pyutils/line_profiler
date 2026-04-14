@@ -132,7 +132,7 @@ jobs:
         - windows-latest
         - ubuntu-24.04-arm
         cibw_skip:
-        - '*-win32 cp3{10}-win_arm64 cp313-musllinux_i686'
+        - '*-win32 cp310-win_arm64 cp313-musllinux_i686'
         arch:
         - auto
     steps:
@@ -143,11 +143,6 @@ jobs:
       if: ${{ startsWith(matrix.os, 'windows-') }} && ${{ contains(matrix.cibw_skip, '*-win32') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.7.0
-      if: runner.os == 'Linux' && matrix.arch != 'auto'
-      with:
-        platforms: all
     - name: Build binary wheels
       uses: pypa/cibuildwheel@v3.3.1
       with:
@@ -374,11 +369,6 @@ jobs:
       if: ${{ startsWith(matrix.os, 'windows-') }}
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3.7.0
-      if: runner.os == 'Linux' && matrix.arch != 'auto'
-      with:
-        platforms: all
     - name: Setup Python
       uses: actions/setup-python@v5.6.0
       with:
