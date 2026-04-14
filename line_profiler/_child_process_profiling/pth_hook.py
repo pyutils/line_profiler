@@ -203,7 +203,6 @@ def _setup_in_child_process(cache, wrap_os_fork=False, context='', prof=None):
 
     import os
     from atexit import register
-    from tempfile import mkstemp
     from ..autoprofile.autoprofile import (
         # Note: we need this to equip the profiler with the
         # `.add_imported_function_or_module()` pseudo-method
@@ -234,16 +233,12 @@ def _setup_in_child_process(cache, wrap_os_fork=False, context='', prof=None):
 
     # Occupy a tempfile slot in `cache.cache_dir` and set the profiler
     # up to write thereto when the process terminates
-    handle, prof_outfile = mkstemp(
+    prof_outfile = cache.make_tempfile(
         prefix='child-prof-output-{}-{}-{:#x}-'
         .format(cache.main_pid, os.getpid(), id(prof)),
         suffix='.lprof',
-        dir=cache.cache_dir,
     )
-    try:  # Whatever else we do, write the profiling stats first
-        cache._add_cleanup(prof.dump_stats, -1, prof_outfile)
-    finally:
-        os.close(handle)
+    cache._add_cleanup(prof.dump_stats, -1, prof_outfile)
 
     # Set up `os.fork()` wrapping if needed (i.e. in a spawned process)
     if wrap_os_fork:

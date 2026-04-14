@@ -15,14 +15,12 @@ en/latest/subprocess.html#using-multiprocessing>`__.
 from __future__ import annotations
 
 import multiprocessing
-import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from functools import partial, wraps
 from importlib import import_module
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from tempfile import mkstemp
 from time import sleep
 from typing import Any, TypeVar
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -153,14 +151,9 @@ def wrap_start(
     complete any necessary cleanup.
     """
     cache = LineProfilingCache.load()
-    handle, tempfile = mkstemp(
-        dir=cache.cache_dir, prefix='process-term-lock-', suffix='.lock',
-    )
-    try:
-        setattr(self, _PROCESS_TERM_LOCK_LOC, Path(tempfile))
-        vanilla_impl(self)
-    finally:
-        os.close(handle)
+    tempfile = cache.make_tempfile(prefix='process-term-lock-', suffix='.lock')
+    setattr(self, _PROCESS_TERM_LOCK_LOC, tempfile)
+    vanilla_impl(self)
 
 
 @_method_wrapper
