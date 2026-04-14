@@ -15,6 +15,7 @@ from functools import partial, cached_property
 from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
+from tempfile import mkstemp
 from typing import Any, ClassVar, cast
 from typing_extensions import Self, ParamSpec
 
@@ -225,6 +226,23 @@ class LineProfilingCache:
                 print(msg, file=fobj)
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
+
+    def make_tempfile(self, **kwargs) -> Path:
+        """
+        Create a fresh tempfile under :py:attr:`~.cache_dir`. The other
+        arguments are passed as-is to :py:func:`tempfile.mkstemp`.
+
+        Returns:
+            path (Path):
+                Path to the created file.
+        """
+        handle, path = mkstemp(dir=self.cache_dir, **kwargs)
+        try:
+            path_obj = Path(path)
+            self._debug_output(f'Created tempfile: {path_obj.name!r}')
+            return path_obj
+        finally:
+            os.close(handle)
 
     def _replace_loaded_instance(self) -> bool:
         if self._consistent_with_loaded_instance:
