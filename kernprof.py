@@ -140,7 +140,8 @@ which displays:
                             by-line`). (Default: False)
       --prof-child-procs [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             Extend profiling into child Python processes. Only works with
-                            line profiling (`-l`/`--line-by-line`). (Default: False)
+                            line profiling (`-l`/`--line-by-line`). (EXPERIMENTAL;
+                            default: False)
 
     output options:
       -o, --outfile OUTFILE
@@ -690,7 +691,7 @@ def _add_core_parser_arguments(parser):
         action='store_true',
         help='Extend profiling into child Python processes. '
         'Only works with line profiling (`-l`/`--line-by-line`). '
-        f'(Default: {default.conf_dict["prof_child_procs"]})',
+        f'(EXPERIMENTAL; default: {default.conf_dict["prof_child_procs"]})',
     )
     out_opts = parser.add_argument_group('output options')
     if default.conf_dict['outfile']:
