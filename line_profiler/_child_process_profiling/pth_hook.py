@@ -20,16 +20,11 @@ Note:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable  # noqa: F401
     from pathlib import Path  # noqa: F401
-    from typing import Any  # noqa: F401
-    from ..line_profiler import LineProfiler  # noqa: F401
     from .cache import LineProfilingCache  # noqa: F401
 
 
-__all__ = (
-    'write_pth_hook', 'load_pth_hook', '_setup_in_child_process'
-)
+__all__ = ('write_pth_hook', 'load_pth_hook')
 
 INHERITED_PID_ENV_VARNAME = (
     'LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_PID'
@@ -83,7 +78,7 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
     finally:  # Not closing the handle causes issues on Windows
         os.close(handle)
 
-    _wrap_os_fork(cache)
+    cache._wrap_os_fork()
 
     return fpath
 
@@ -118,8 +113,7 @@ def load_pth_hook(ppid):  # type: (int) -> None
         return
     try:
         cache = LineProfilingCache.load()
-        _setup_in_child_process(cache, True, 'pth')
-        # _setup_in_child_process(LineProfilingCache.load())
+        cache._setup_in_child_process(True, 'pth')
     except Exception as e:
         if DEBUG:
             msg = f'{type(e)}: {e}'
@@ -127,126 +121,3 @@ def load_pth_hook(ppid):  # type: (int) -> None
             log.warning(msg)
     finally:
         load_pth_hook.called = True  # type: ignore[attr-defined]
-
-
-def _wrap_os_fork(cache):  # type: (LineProfilingCache) -> None
-    """
-    Create a wrapper around :py:func:`os.fork` which handles profiling.
-
-    Args:
-        cache (:py:class:`~.LineProfilingCache`):
-            Cache object
-
-    Side effects:
-        - :py:func:`os.fork` (if available) replaced with the wrapper
-        - Cleanup callback registered at ``cache`` undoing that
-    """
-    import os
-    from functools import wraps
-
-    try:
-        fork = os.fork
-    except AttributeError:  # Can't fork on this platform
-        return
-
-    @wraps(fork)
-    def wrapper():  # type: () -> int
-        result = fork()
-        if result:
-            return result
-        # If we're here, we are in the fork
-        forked = cache.copy()
-        if forked._replace_loaded_instance():
-            forked._debug_output(
-                'Superseded cached `.load()`-ed instance in forked process'
-            )
-        # Note: we can reuse the profiler instance in the fork, but it
-        # needs to go through setup so that the separate profiling
-        # results are dumped into another output file
-        _setup_in_child_process(forked, False, 'fork', cache.profiler)
-        return result
-
-    os.fork = wrapper
-    cache.add_cleanup(setattr, os, 'fork', fork)
-
-
-def _setup_in_child_process(cache, wrap_os_fork=False, context='', prof=None):
-    # type: (LineProfilingCache, bool, str, LineProfiler | None) -> bool
-    """
-    Set up shop in a forked/spawned child process so that
-    (line-)profiling can extend therein.
-
-    Args:
-        cache (LineProfilingCache):
-            Cache object
-        wrap_os_fork (bool):
-            Whether to wrap :py:func:`os.fork` which handles profiling;
-            already-forked child processes should set this to false
-        context (str):
-            Optional context from which the function is called, to be
-            used in log messages
-        prof (LineProfiler | None):
-            Optional profiler instance to associate with the cache;
-            if not provided, an instance is created
-
-    Returns:
-        has_set_up (bool):
-            False is ``cache`` has already been set up prior to calling
-            this function, true otherwise
-    """
-    if not context:
-        context = '...'
-    cache._debug_output(f'Setting up ({context})...')
-    if cache.profiler is not None:  # Already set up
-        cache._debug_output(f'Setup aborted ({context})')
-        return False
-
-    import os
-    from atexit import register
-    from ..autoprofile.autoprofile import (
-        # Note: we need this to equip the profiler with the
-        # `.add_imported_function_or_module()` pseudo-method
-        # (see `kernprof.py::_write_preimports()`), which is required
-        # for the preimports to work
-        _extend_line_profiler_for_profiling_imports as upgrade_profiler,
-    )
-    from ..curated_profiling import CuratedProfilerContext
-    from ..line_profiler import LineProfiler  # noqa: F811
-
-    # Create a profiler instance and manage it with
-    # `CuratedProfilerContext`
-    if prof is None:
-        prof = LineProfiler()
-    cache.profiler = prof
-    upgrade_profiler(prof)
-    ctx = CuratedProfilerContext(prof, insert_builtin=cache.insert_builtin)
-    ctx.install()
-    cache.add_cleanup(ctx.uninstall)
-    cache._debug_output(f'Set up `.profiler` at {id(prof):#x}')
-
-    # Do the preimports at `cache.preimports_module` where appropriate
-    if cache.preimports_module:
-        cache._debug_output('Loading preimports...')
-        with open(cache.preimports_module, mode='rb') as fobj:
-            code = compile(fobj.read(), cache.preimports_module, 'exec')
-            exec(code, {})  # Use a fresh, empty namespace
-
-    # Occupy a tempfile slot in `cache.cache_dir` and set the profiler
-    # up to write thereto when the process terminates
-    prof_outfile = cache.make_tempfile(
-        prefix='child-prof-output-{}-{}-{:#x}-'
-        .format(cache.main_pid, os.getpid(), id(prof)),
-        suffix='.lprof',
-    )
-    cache._add_cleanup(prof.dump_stats, -1, prof_outfile)
-
-    # Set up `os.fork()` wrapping if needed (i.e. in a spawned process)
-    if wrap_os_fork:
-        _wrap_os_fork(cache)
-
-    # Set `cache.cleanup()` as an atexit hook to handle everything when
-    # the child process is about to terminate
-    register(cache.cleanup)
-
-    cache._debug_output(f'Setup successful ({context})')
-    return True

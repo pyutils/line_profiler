@@ -4,6 +4,7 @@ processes.
 """
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import os
 try:
@@ -11,7 +12,7 @@ try:
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
 from collections.abc import Collection, Callable
-from functools import partial, cached_property
+from functools import partial, cached_property, wraps
 from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
@@ -20,6 +21,14 @@ from typing import Any, ClassVar, cast
 from typing_extensions import Self, ParamSpec
 
 from .. import _diagnostics as diagnostics
+from ..autoprofile.autoprofile import (
+    # Note: we need this to equip the profiler with the
+    # `.add_imported_function_or_module()` pseudo-method
+    # (see `kernprof.py::_write_preimports()`), which is required for
+    # the preimports to work
+    _extend_line_profiler_for_profiling_imports as upgrade_profiler,
+)
+from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
@@ -226,6 +235,116 @@ class LineProfilingCache:
                 print(msg, file=fobj)
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
+
+    def _setup_in_child_process(
+        self,
+        wrap_os_fork: bool = False,
+        context: str = '',
+        prof: LineProfiler | None = None,
+    ) -> bool:
+        """
+        Set up shop in a forked/spawned child process so that
+        (line-)profiling can extend therein.
+
+        Args:
+            wrap_os_fork (bool):
+                Whether to wrap :py:func:`os.fork` which handles
+                profiling; already-forked child processes should set
+                this to false
+            context (str):
+                Optional context from which the function is called, to
+                be used in log messages
+            prof (LineProfiler | None):
+                Optional profiler instance to associate with the cache;
+                if not provided, an instance is created
+
+        Returns:
+            has_set_up (bool):
+                False the instance has already been set up prior to
+                calling this function, true otherwise
+        """
+        if not context:
+            context = '...'
+        self._debug_output(f'Setting up ({context})...')
+        if self.profiler is not None:  # Already set up
+            self._debug_output(f'Setup aborted ({context})')
+            return False
+
+        # Create a profiler instance and manage it with
+        # `CuratedProfilerContext`
+        if prof is None:
+            prof = LineProfiler()
+        self.profiler = prof
+        upgrade_profiler(prof)
+        ctx = CuratedProfilerContext(prof, insert_builtin=self.insert_builtin)
+        ctx.install()
+        self.add_cleanup(ctx.uninstall)
+        self._debug_output(f'Set up `.profiler` at {id(prof):#x}')
+
+        # Do the preimports at `cache.preimports_module` where
+        # appropriate
+        if self.preimports_module:
+            self._debug_output('Loading preimports...')
+            with open(self.preimports_module, mode='rb') as fobj:
+                code = compile(fobj.read(), self.preimports_module, 'exec')
+                exec(code, {})  # Use a fresh, empty namespace
+
+        # Occupy a tempfile slot in `.cache_dir` and set the profiler
+        # up to write thereto when the process terminates (with high
+        # priority)
+        prof_outfile = self.make_tempfile(
+            prefix='child-prof-output-{}-{}-{:#x}-'
+            .format(self.main_pid, os.getpid(), id(prof)),
+            suffix='.lprof',
+        )
+        self._add_cleanup(prof.dump_stats, -1, prof_outfile)
+
+        # Set up `os.fork()` wrapping if needed (i.e. in a spawned
+        # process)
+        if wrap_os_fork:
+            self._wrap_os_fork()
+
+        # Set `.cleanup()` as an atexit hook to handle everything when
+        # the child process is about to terminate
+        atexit.register(self.cleanup)
+
+        self._debug_output(f'Setup successful ({context})')
+        return True
+
+    def _wrap_os_fork(self) -> None:
+        """
+        Create a wrapper around :py:func:`os.fork` which handles
+        profiling.
+
+        Side effects:
+            - :py:func:`os.fork` (if available) replaced with the
+              wrapper
+            - :py:meth:`~.cleanup` callback registered undoing that
+        """
+        try:
+            fork = os.fork
+        except AttributeError:  # Can't fork on this platform
+            return
+
+        @wraps(fork)
+        def wrapper() -> int:
+            result = fork()
+            if result:
+                return result
+            # If we're here, we are in the fork
+            forked = self.copy()  # Ditch inherited cleanups
+            if forked._replace_loaded_instance():
+                forked._debug_output(
+                    'Superseded cached `.load()`-ed instance in forked process'
+                )
+            # Note: we can reuse the profiler instance in the fork, but
+            # it needs to go through setup so that the separate
+            # profiling results are dumped into another output file
+            forked._setup_in_child_process(False, 'fork', self.profiler)
+            return result
+
+        os.fork = wrapper
+        self.add_cleanup(setattr, os, 'fork', fork)
 
     def make_tempfile(self, **kwargs) -> Path:
         """
