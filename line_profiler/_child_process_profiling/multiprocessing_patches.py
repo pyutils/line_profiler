@@ -28,7 +28,6 @@ from typing_extensions import Concatenate, ParamSpec, Self
 
 from .. import _diagnostics as diagnostics
 from .cache import LineProfilingCache
-from .pth_hook import _setup_in_child_process
 from .runpy_patches import create_runpy_wrapper
 
 
@@ -80,7 +79,7 @@ class PickleHook:
         # We're in a child process created by `multiprocessing`, so set
         # up shop here.
         lp_cache = LineProfilingCache.load()
-        _setup_in_child_process(lp_cache, False, 'multiprocessing')
+        lp_cache._setup_in_child_process(False, 'multiprocessing')
         # In a child process, we don't care about polluting the
         # `multiprocessing` namespace, so don't bother with cleanup
         if not getattr(multiprocessing, _PATCHED_MARKER, False):
