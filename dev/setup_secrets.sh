@@ -139,6 +139,8 @@ setup_package_environs_github_erotemic(){
     export VARNAME_TWINE_PASSWORD="EROTEMIC_PYPI_MASTER_TOKEN"
     export VARNAME_TEST_TWINE_PASSWORD="EROTEMIC_TEST_PYPI_MASTER_TOKEN"
     export VARNAME_TWINE_USERNAME="EROTEMIC_PYPI_MASTER_TOKEN_USERNAME"
+    export GITHUB_ENVIRONMENT_PYPI="pypi"
+    export GITHUB_ENVIRONMENT_TESTPYPI="testpypi"
     export VARNAME_TEST_TWINE_USERNAME="EROTEMIC_TEST_PYPI_MASTER_TOKEN_USERNAME"
     export GPG_IDENTIFIER="=Erotemic-CI <erotemic@gmail.com>"
     ' | python -c "import sys; from textwrap import dedent; print(dedent(sys.stdin.read()).strip(chr(10)))" > dev/secrets_configuration.sh
@@ -151,6 +153,8 @@ setup_package_environs_github_pyutils(){
     export VARNAME_TWINE_PASSWORD="PYUTILS_PYPI_MASTER_TOKEN"
     export VARNAME_TEST_TWINE_PASSWORD="PYUTILS_TEST_PYPI_MASTER_TOKEN"
     export VARNAME_TWINE_USERNAME="PYUTILS_PYPI_MASTER_TOKEN_USERNAME"
+    export GITHUB_ENVIRONMENT_PYPI="pypi"
+    export GITHUB_ENVIRONMENT_TESTPYPI="testpypi"
     export VARNAME_TEST_TWINE_USERNAME="PYUTILS_TEST_PYPI_MASTER_TOKEN_USERNAME"
     export GPG_IDENTIFIER="=PyUtils-CI <openpyutils@gmail.com>"
     ' | python -c "import sys; from textwrap import dedent; print(dedent(sys.stdin.read()).strip(chr(10)))" > dev/secrets_configuration.sh
@@ -178,7 +182,63 @@ resolve_secret_value_from_varname_ptr(){
     printf '%s' "$secret_value"
 }
 
+upload_one_github_secret(){
+    local secret_name="$1"
+    local secret_value="$2"
+    local environment_name="${3:-}"
+    if [[ "$environment_name" == "" ]]; then
+        gh secret set "$secret_name" -b"$secret_value"
+    else
+        gh secret set "$secret_name" --env "$environment_name" -b"$secret_value"
+    fi
+}
+
+github_repo_full_name(){
+    local remote_url
+    remote_url="$(git remote get-url origin)"
+    if [[ "$remote_url" == git@github.com:* ]]; then
+        printf '%s' "${remote_url#git@github.com:}" | sed 's/\.git$//'
+    elif [[ "$remote_url" == https://github.com/* ]]; then
+        printf '%s' "${remote_url#https://github.com/}" | sed 's/\.git$//'
+    else
+        echo "Unable to determine GitHub repo from origin: $remote_url" >&2
+        return 1
+    fi
+}
+
+ensure_github_environment(){
+    local environment_name="$1"
+    local repo_full_name
+    repo_full_name="$(github_repo_full_name)" || return 1
+    gh api --method PUT \
+        -H "Accept: application/vnd.github+json" \
+        "/repos/${repo_full_name}/environments/${environment_name}" >/dev/null
+}
+
+setup_github_release_environments(){
+    source dev/secrets_configuration.sh
+    local repo_full_name
+    local pypi_env
+    local testpypi_env
+    repo_full_name="$(github_repo_full_name)" || return 1
+    pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
+    testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
+
+    ensure_github_environment "$testpypi_env"
+    ensure_github_environment "$pypi_env"
+
+    echo "Ensured GitHub environments exist:"
+    echo "  - $testpypi_env"
+    echo "  - $pypi_env"
+    echo "Review environment protection rules manually as needed:"
+    echo "  https://github.com/${repo_full_name}/settings/environments"
+    echo "Suggested policy:"
+    echo "  - ${testpypi_env}: usually no approval required"
+    echo "  - ${pypi_env}: require approval / reviewers and restrict to release refs"
+}
+
 upload_github_secrets(){
+    local mode="${1:-legacy}"
     load_secrets
     unset GITHUB_TOKEN
     #printf "%s" "$GITHUB_TOKEN" | gh auth login --hostname Github.com --with-token
@@ -186,14 +246,58 @@ upload_github_secrets(){
         gh auth login
     fi
     local secret_value
+    local pypi_env
+    local testpypi_env
     source dev/secrets_configuration.sh
-    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) && gh secret set "TWINE_USERNAME" -b"$secret_value"
-    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_USERNAME TEST_TWINE_USERNAME) && gh secret set "TEST_TWINE_USERNAME" -b"$secret_value"
-    toggle_setx_enter
-    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) && gh secret set "CI_SECRET" -b"$secret_value"
-    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_PASSWORD TWINE_PASSWORD) && gh secret set "TWINE_PASSWORD" -b"$secret_value"
-    secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_PASSWORD TEST_TWINE_PASSWORD) && gh secret set "TEST_TWINE_PASSWORD" -b"$secret_value"
-    toggle_setx_exit
+
+    if [[ "$mode" == "trusted_publishing" ]]; then
+        pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
+        testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
+        setup_github_release_environments
+        toggle_setx_enter
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) || true
+        if [[ "$secret_value" != "" ]]; then
+            upload_one_github_secret "CI_SECRET" "$secret_value" "$pypi_env"
+            upload_one_github_secret "CI_SECRET" "$secret_value" "$testpypi_env"
+        fi
+        toggle_setx_exit
+    elif [[ "$mode" == "direct_gpg" ]]; then
+        # direct_ci GPG transport + non-trusted publishing.
+        # GPG material is already uploaded by upload_github_gpg_secrets.
+        # Upload Twine credentials environment-scoped (live password to pypi
+        # env, test password to testpypi env). CI_SECRET is not uploaded.
+        pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
+        testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
+        setup_github_release_environments
+        toggle_setx_enter
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) || true
+        if [[ "$secret_value" != "" ]]; then
+            upload_one_github_secret "TWINE_USERNAME" "$secret_value" "$pypi_env"
+            upload_one_github_secret "TWINE_USERNAME" "$secret_value" "$testpypi_env"
+        fi
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_USERNAME TEST_TWINE_USERNAME) || true
+        if [[ "$secret_value" != "" ]]; then
+            upload_one_github_secret "TEST_TWINE_USERNAME" "$secret_value" "$testpypi_env"
+        fi
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_PASSWORD TWINE_PASSWORD) || true
+        if [[ "$secret_value" != "" ]]; then
+            upload_one_github_secret "TWINE_PASSWORD" "$secret_value" "$pypi_env"
+        fi
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_PASSWORD TEST_TWINE_PASSWORD) || true
+        if [[ "$secret_value" != "" ]]; then
+            upload_one_github_secret "TEST_TWINE_PASSWORD" "$secret_value" "$testpypi_env"
+        fi
+        toggle_setx_exit
+    else
+        # Legacy mode: all secrets repo-level, CI_SECRET included.
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) && upload_one_github_secret "TWINE_USERNAME" "$secret_value"
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_USERNAME TEST_TWINE_USERNAME) && upload_one_github_secret "TEST_TWINE_USERNAME" "$secret_value"
+        toggle_setx_enter
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) && upload_one_github_secret "CI_SECRET" "$secret_value"
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_PASSWORD TWINE_PASSWORD) && upload_one_github_secret "TWINE_PASSWORD" "$secret_value"
+        secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_PASSWORD TEST_TWINE_PASSWORD) && upload_one_github_secret "TEST_TWINE_PASSWORD" "$secret_value"
+        toggle_setx_exit
+    fi
 }
 
 
@@ -241,15 +345,15 @@ upload_gitlab_group_secrets(){
     fi
 
     TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
     GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
     echo "GROUP_ID = $GROUP_ID"
 
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
     < "$TMP_DIR/group_info" jq
 
     # Get group-level secret variables
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" > "$TMP_DIR/group_vars"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" > "$TMP_DIR/group_vars"
     < "$TMP_DIR/group_vars" jq '.[] | .key'
 
     if [[ "$?" != "0" ]]; then
@@ -277,20 +381,26 @@ upload_gitlab_group_secrets(){
             echo "Remove variable does not exist, posting"
 
             toggle_setx_enter
-            curl --request POST --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" \
-                    --form "key=${SECRET_VARNAME}" \
-                    --form "value=${LOCAL_VALUE}" \
-                    --form "protected=true" \
-                    --form "masked=true" \
-                    --form "environment_scope=*" \
-                    --form "variable_type=env_var"
+            curl --fail --silent --show-error \
+                --request POST --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" \
+                --form "key=${SECRET_VARNAME}" \
+                --form "value=${LOCAL_VALUE}" \
+                --form "protected=true" \
+                --form "masked=true" \
+                --form "environment_scope=*" \
+                --form "variable_type=env_var"
             toggle_setx_exit
         elif [[ "$REMOTE_VALUE" != "$LOCAL_VALUE" ]]; then
             echo "Remove variable does not agree, putting"
             # Update variable value
             toggle_setx_enter
-            curl --request PUT --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables/$SECRET_VARNAME" \
-                    --form "value=${LOCAL_VALUE}"
+            curl --fail --silent --show-error \
+                --request PUT --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables/$SECRET_VARNAME" \
+                    --form "value=${LOCAL_VALUE}" \
+                    --form "protected=true" \
+                    --form "masked=true" \
+                    --form "environment_scope=*" \
+                    --form "variable_type=env_var"
             toggle_setx_exit
         else
             echo "Remote value agrees with local"
@@ -322,13 +432,13 @@ upload_gitlab_repo_secrets(){
 
     TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
     toggle_setx_enter
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
     toggle_setx_exit
     GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
     echo "GROUP_ID = $GROUP_ID"
 
     toggle_setx_enter
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
     toggle_setx_exit
     GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
     < "$TMP_DIR/group_info" jq
@@ -338,16 +448,25 @@ upload_gitlab_repo_secrets(){
 
     # Get group-level secret variables
     toggle_setx_enter
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables" > "$TMP_DIR/project_vars"
+    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables" > "$TMP_DIR/project_vars"
     toggle_setx_exit
     < "$TMP_DIR/project_vars" jq '.[] | .key'
     if [[ "$?" != "0" ]]; then
         echo "Failed to access project level variables. Probably a permission issue"
     fi
 
+    local mode="${1:-legacy}"
+
     LIVE_MODE=1
     source dev/secrets_configuration.sh
-    SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
+    if [[ "$mode" == "direct_gpg" ]]; then
+        # In direct_ci transport mode the GPG key material is uploaded as
+        # project-level secrets by upload_gitlab_gpg_secrets; CI_SECRET is not
+        # needed.  Only Twine and push-token secrets are uploaded here.
+        SECRET_VARNAME_ARR=(VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
+    else
+        SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
+    fi
     for SECRET_VARNAME_PTR in "${SECRET_VARNAME_ARR[@]}"; do
         SECRET_VARNAME=${!SECRET_VARNAME_PTR}
         echo ""
@@ -366,13 +485,16 @@ upload_gitlab_repo_secrets(){
             # New variable
             echo "Remove variable does not exist, posting"
             if [[ "$LIVE_MODE" == "1" ]]; then
-                curl --request POST --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables" \
-                        --form "key=${SECRET_VARNAME}" \
-                        --form "value=${LOCAL_VALUE}" \
-                        --form "protected=true" \
-                        --form "masked=true" \
-                        --form "environment_scope=*" \
-                        --form "variable_type=env_var"
+                curl --fail --silent --show-error \
+                    --request POST \
+                    --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+                    "$HOST/api/v4/projects/$PROJECT_ID/variables" \
+                    --form "key=${SECRET_VARNAME}" \
+                    --form "value=${LOCAL_VALUE}" \
+                    --form "protected=true" \
+                    --form "masked=true" \
+                    --form "environment_scope=*" \
+                    --form "variable_type=env_var"
             else
                 echo "dry run, not posting"
             fi
@@ -380,8 +502,15 @@ upload_gitlab_repo_secrets(){
             echo "Remove variable does not agree, putting"
             # Update variable value
             if [[ "$LIVE_MODE" == "1" ]]; then
-                curl --request PUT --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables/$SECRET_VARNAME" \
-                        --form "value=${LOCAL_VALUE}"
+                curl --fail --silent --show-error \
+                    --request PUT \
+                    --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+                    "$HOST/api/v4/projects/$PROJECT_ID/variables/$SECRET_VARNAME" \
+                    --form "value=${LOCAL_VALUE}" \
+                    --form "protected=true" \
+                    --form "masked=true" \
+                    --form "environment_scope=*" \
+                    --form "variable_type=env_var"
             else
                 echo "dry run, not putting"
             fi
@@ -410,7 +539,10 @@ export_encrypted_code_signing_keys(){
     # HOW TO ENCRYPT YOUR SECRET GPG KEY
     # You need to have a known public gpg key for this to make any sense
 
-    MAIN_GPG_KEYID=$(gpg --list-keys --keyid-format LONG "$GPG_IDENTIFIER" | head -n 2 | tail -n 1 | awk '{print $1}')
+    # Full primary-key fingerprint (40 hex chars) — more collision-resistant
+    # than the 16-char LONG key ID. Uses machine-parseable colon format so
+    # the extraction is stable across gpg output layout changes.
+    MAIN_GPG_FPR=$(gpg --list-keys --with-colons "$GPG_IDENTIFIER" | awk -F: '/^fpr/ { print $10; exit }')
     GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" | grep "\[S\]" -A 1 | tail -n 1 | awk '{print $1}')
     # Careful, if you don't have a subkey, requesting it will export more than you want.
     # Export the main key instead (its better to have subkeys, but this is a lesser evil)
@@ -421,7 +553,7 @@ export_encrypted_code_signing_keys(){
         # anyway.
         GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" | grep "\[C\]" -A 1 | tail -n 1 | awk '{print $1}')
     fi
-    echo "MAIN_GPG_KEYID  = $MAIN_GPG_KEYID"
+    echo "MAIN_GPG_FPR    = $MAIN_GPG_FPR"
     echo "GPG_SIGN_SUBKEY = $GPG_SIGN_SUBKEY"
 
     # Only export the signing secret subkey
@@ -435,9 +567,10 @@ export_encrypted_code_signing_keys(){
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_public_gpg_key.pgp > dev/ci_public_gpg_key.pgp.enc
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_secret_gpg_subkeys.pgp > dev/ci_secret_gpg_subkeys.pgp.enc
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/gpg_owner_trust > dev/gpg_owner_trust.enc
-    echo "$MAIN_GPG_KEYID" > dev/public_gpg_key
+    # Store the full fingerprint as the public signer anchor
+    printf '%s\n' "$MAIN_GPG_FPR" > dev/public_gpg_key
 
-    # Test decrpyt
+    # Test decrypt
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc | gpg --list-packets --verbose
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc  | gpg --list-packets --verbose
     GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc
@@ -451,7 +584,6 @@ export_encrypted_code_signing_keys(){
     rm dev/gpg_owner_trust
     git status
     git add dev/*.enc
-    git add dev/gpg_owner_trust
     git add dev/public_gpg_key
 }
 
@@ -459,6 +591,207 @@ export_encrypted_code_signing_keys(){
 # See the xcookie module gitlab python API
 #gitlab_set_protected_branches(){
 #}
+
+
+_gpg_locate_signing_subkey(){
+    __doc__="
+    Internal helper. Sets MAIN_GPG_FPR and GPG_SIGN_SUBKEY in the caller's
+    scope. Exits non-zero and prints a diagnostic if either cannot be found.
+    Requires GPG_IDENTIFIER to already be set.
+    "
+    MAIN_GPG_FPR=$(gpg --list-keys --with-colons "$GPG_IDENTIFIER" \
+        | awk -F: '/^fpr/ { print $10; exit }')
+    GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" \
+        | grep "\[S\]" -A 1 | tail -n 1 | awk '{print $1}')
+    if [[ "$GPG_SIGN_SUBKEY" == "" ]]; then
+        echo "WARNING: no [S] subkey found for $GPG_IDENTIFIER, falling back to [C] key" >&2
+        GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" \
+            | grep "\[C\]" -A 1 | tail -n 1 | awk '{print $1}')
+    fi
+    if [[ -z "$MAIN_GPG_FPR" ]]; then
+        echo "ERROR: could not determine primary key fingerprint for $GPG_IDENTIFIER" >&2
+        return 1
+    fi
+    if [[ -z "$GPG_SIGN_SUBKEY" ]]; then
+        echo "ERROR: could not find a signing subkey for $GPG_IDENTIFIER" >&2
+        return 1
+    fi
+    echo "MAIN_GPG_FPR    = $MAIN_GPG_FPR"
+    echo "GPG_SIGN_SUBKEY = $GPG_SIGN_SUBKEY"
+}
+
+
+upload_github_gpg_secrets(){
+    __doc__="
+    Export GPG signing subkey material and upload it directly to GitHub
+    Actions as environment-scoped secrets (pypi + testpypi environments).
+    Also writes dev/public_gpg_key with the full primary key fingerprint
+    and stages it for commit.
+
+    No .enc files are written to disk or committed to git.
+    This implements ci_gpg_secret_transport = 'direct_ci' for GitHub.
+    Call this instead of export_encrypted_code_signing_keys.
+    "
+    load_secrets
+    source dev/secrets_configuration.sh
+
+    local pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
+    local testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
+
+    _gpg_locate_signing_subkey || return 1
+
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d -t gpg-ci-XXXXXXXXXX)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$TMP_DIR'" RETURN
+
+    # Export signing subkey secret material and associated public key
+    gpg --armor --export-options export-backup \
+        --export-secret-subkeys "${GPG_SIGN_SUBKEY}!" > "$TMP_DIR/signing_subkey.pgp"
+    gpg --armor --export "${GPG_SIGN_SUBKEY}" > "$TMP_DIR/public_key.pgp"
+    gpg --export-ownertrust > "$TMP_DIR/owner_trust"
+
+    # Single-line base64 for robust secret transport (tr -d '\n' is
+    # portable across GNU and macOS; avoids -w 0 / -b 0 divergence).
+    local GPG_SECRET_SIGNING_SUBKEY_B64 GPG_PUBLIC_KEY_B64 GPG_OWNER_TRUST_B64
+    GPG_SECRET_SIGNING_SUBKEY_B64=$(base64 < "$TMP_DIR/signing_subkey.pgp" | tr -d '\n')
+    GPG_PUBLIC_KEY_B64=$(base64 < "$TMP_DIR/public_key.pgp" | tr -d '\n')
+    GPG_OWNER_TRUST_B64=$(base64 < "$TMP_DIR/owner_trust" | tr -d '\n')
+
+    if [[ -z "$GPG_SECRET_SIGNING_SUBKEY_B64" ]]; then
+        echo "ERROR: signing subkey export is empty — aborting" >&2
+        return 1
+    fi
+
+    # Write the public fingerprint anchor to the repo.
+    # This file is the only GPG artifact committed in direct_ci mode.
+    mkdir -p dev
+    printf '%s\n' "$MAIN_GPG_FPR" > dev/public_gpg_key
+    git add dev/public_gpg_key
+    git status
+
+    unload_secrets
+
+    # Ensure deployment environments exist before scoping secrets to them
+    setup_github_release_environments
+
+    if ! gh auth status; then gh auth login; fi
+
+    toggle_setx_enter
+    for env_name in "$pypi_env" "$testpypi_env"; do
+        upload_one_github_secret "GPG_SECRET_SIGNING_SUBKEY_B64" \
+            "$GPG_SECRET_SIGNING_SUBKEY_B64" "$env_name"
+        upload_one_github_secret "GPG_PUBLIC_KEY_B64" \
+            "$GPG_PUBLIC_KEY_B64" "$env_name"
+        upload_one_github_secret "GPG_OWNER_TRUST_B64" \
+            "$GPG_OWNER_TRUST_B64" "$env_name"
+    done
+    toggle_setx_exit
+}
+
+
+upload_gitlab_gpg_secrets(){
+    __doc__="
+    Export GPG signing subkey material and upload it directly to GitLab
+    CI/CD project variables (protected=true, masked=true).
+    Also writes dev/public_gpg_key with the full primary key fingerprint
+    and stages it for commit.
+
+    No .enc files are written to disk or committed to git.
+    This implements ci_gpg_secret_transport = 'direct_ci' for GitLab.
+    Call this instead of export_encrypted_code_signing_keys.
+    "
+    load_secrets
+    source dev/secrets_configuration.sh
+
+    _gpg_locate_signing_subkey || return 1
+
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d -t gpg-ci-XXXXXXXXXX)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$TMP_DIR'" RETURN
+
+    gpg --armor --export-options export-backup \
+        --export-secret-subkeys "${GPG_SIGN_SUBKEY}!" > "$TMP_DIR/signing_subkey.pgp"
+    gpg --armor --export "${GPG_SIGN_SUBKEY}" > "$TMP_DIR/public_key.pgp"
+    gpg --export-ownertrust > "$TMP_DIR/owner_trust"
+
+    local GPG_SECRET_SIGNING_SUBKEY_B64 GPG_PUBLIC_KEY_B64 GPG_OWNER_TRUST_B64
+    GPG_SECRET_SIGNING_SUBKEY_B64=$(base64 < "$TMP_DIR/signing_subkey.pgp" | tr -d '\n')
+    GPG_PUBLIC_KEY_B64=$(base64 < "$TMP_DIR/public_key.pgp" | tr -d '\n')
+    GPG_OWNER_TRUST_B64=$(base64 < "$TMP_DIR/owner_trust" | tr -d '\n')
+
+    if [[ -z "$GPG_SECRET_SIGNING_SUBKEY_B64" ]]; then
+        echo "ERROR: signing subkey export is empty — aborting" >&2
+        return 1
+    fi
+
+    # Write the public fingerprint anchor to the repo.
+    mkdir -p dev
+    printf '%s\n' "$MAIN_GPG_FPR" > dev/public_gpg_key
+    git add dev/public_gpg_key
+    git status
+
+    # Locate the GitLab project via git remote
+    local REMOTE=origin
+    local HOST
+    HOST=https://$(git remote get-url $REMOTE \
+        | cut -d "/" -f 1 | cut -d "@" -f 2 | cut -d ":" -f 1)
+    local PRIVATE_GITLAB_TOKEN
+    PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
+    if [[ "$PRIVATE_GITLAB_TOKEN" == "ERROR" ]]; then
+        echo "ERROR: failed to load GitLab authentication token" >&2
+        return 1
+    fi
+
+    local PROJECT_PATH
+    PROJECT_PATH=$(git remote get-url $REMOTE | cut -d ":" -f 2 | sed 's/\.git$//')
+    local PROJECT_ID
+    PROJECT_ID=$(curl --fail --show-error --silent --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/projects?search=$(basename "$PROJECT_PATH")" \
+        | jq -r ".[] | select(.path_with_namespace==\"$PROJECT_PATH\") | .id")
+    if [[ -z "$PROJECT_ID" ]]; then
+        echo "ERROR: could not determine GitLab project ID for $PROJECT_PATH" >&2
+        return 1
+    fi
+    echo "PROJECT_ID = $PROJECT_ID"
+
+    _gitlab_upsert_protected_var(){
+        local key="$1" value="$2"
+        local existing
+        existing=$(curl -s --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+            "$HOST/api/v4/projects/$PROJECT_ID/variables/$key" \
+            | jq -r '.key // empty')
+        if [[ -z "$existing" ]]; then
+            curl --fail --silent --show-error --request POST \
+                --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+                "$HOST/api/v4/projects/$PROJECT_ID/variables" \
+                --form "key=$key" \
+                --form "value=$value" \
+                --form "protected=true" \
+                --form "masked=true" \
+                --form "environment_scope=*" \
+                --form "variable_type=env_var"
+        else
+            curl --fail --silent --show-error --request PUT \
+                --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+                "$HOST/api/v4/projects/$PROJECT_ID/variables/$key" \
+                --form "value=$value" \
+                --form "protected=true" \
+                --form "masked=true" \
+                --form "environment_scope=*" \
+                --form "variable_type=env_var"
+        fi
+    }
+
+    unload_secrets
+
+    toggle_setx_enter
+    _gitlab_upsert_protected_var "GPG_SECRET_SIGNING_SUBKEY_B64" "$GPG_SECRET_SIGNING_SUBKEY_B64"
+    _gitlab_upsert_protected_var "GPG_PUBLIC_KEY_B64"            "$GPG_PUBLIC_KEY_B64"
+    _gitlab_upsert_protected_var "GPG_OWNER_TRUST_B64"           "$GPG_OWNER_TRUST_B64"
+    toggle_setx_exit
+}
 
 
 _test_gnu(){

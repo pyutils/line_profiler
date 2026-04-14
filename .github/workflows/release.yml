@@ -99,7 +99,7 @@ jobs:
   test_deploy:
     name: Deploy Test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && ! startsWith(github.event.ref, 'refs/tags') && ! startsWith(github.event.ref, 'refs/heads/release')
+    if: github.event_name == 'push' && github.event.ref == 'refs/heads/main'
     needs:
     - build_binpy_wheels
     - build_sdist
@@ -120,31 +120,32 @@ jobs:
     - name: Show files to upload
       shell: bash
       run: ls -la wheelhouse
-    - name: Sign and Publish
+    - name: Sign distributions
       env:
-        TWINE_REPOSITORY_URL: https://test.pypi.org/legacy/
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TEST_TWINE_PASSWORD }}
-        CI_SECRET: ${{ secrets.CI_SECRET }}
+        GPG_SECRET_SIGNING_SUBKEY_B64: ${{ secrets.GPG_SECRET_SIGNING_SUBKEY_B64 }}
+        GPG_PUBLIC_KEY_B64: ${{ secrets.GPG_PUBLIC_KEY_B64 }}
+        GPG_OWNER_TRUST_B64: ${{ secrets.GPG_OWNER_TRUST_B64 }}
       run: |-
         GPG_EXECUTABLE=gpg
         $GPG_EXECUTABLE --version
         openssl version
         $GPG_EXECUTABLE --list-keys
-        echo "Decrypting Keys"
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/ci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc | $GPG_EXECUTABLE --import
-        echo "Finish Decrypt Keys"
+        echo "Importing GPG keys from CI secrets"
+        printf '%s' "$GPG_PUBLIC_KEY_B64" | base64 -d | $GPG_EXECUTABLE --import
+        printf '%s' "$GPG_OWNER_TRUST_B64" | base64 -d | $GPG_EXECUTABLE --import-ownertrust
+        printf '%s' "$GPG_SECRET_SIGNING_SUBKEY_B64" | base64 -d | $GPG_EXECUTABLE --import
+        echo "Finish importing GPG keys"
         $GPG_EXECUTABLE --list-keys || true
-        $GPG_EXECUTABLE --list-keys  || echo "first invocation of gpg creates directories and returns 1"
         $GPG_EXECUTABLE --list-keys
+        GPG_KEYID=$(cat dev/public_gpg_key)
+        echo "GPG_KEYID = '$GPG_KEYID'"
+        IMPORTED_FPR=$($GPG_EXECUTABLE --list-keys --with-colons "$GPG_KEYID" | awk -F: '/^fpr/ { print $10; exit }')
+        if [[ "$IMPORTED_FPR" != "$GPG_KEYID" ]]; then echo "ERROR: imported GPG fingerprint $IMPORTED_FPR does not match pinned $GPG_KEYID"; exit 1; fi
+        echo "GPG fingerprint verified: $IMPORTED_FPR"
         VERSION=$(python -c "import setup; print(setup.VERSION)")
         python -m pip install pip uv -U
         python -m pip install packaging twine -U
         python -m pip install urllib3 requests[security]
-        GPG_KEYID=$(cat dev/public_gpg_key)
-        echo "GPG_KEYID = '$GPG_KEYID'"
         GPG_SIGN_CMD="$GPG_EXECUTABLE --batch --yes --detach-sign --armor --local-user $GPG_KEYID"
         WHEEL_PATHS=(wheelhouse/*.whl wheelhouse/*.tar.gz)
         WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_PATHS[@]}")
@@ -161,7 +162,22 @@ jobs:
         python -m pip install opentimestamps-client
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
-        twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
+    - name: Prepare publish directory
+      shell: bash
+      run: |-
+        mkdir -p publish_wheelhouse
+        shopt -s nullglob
+        for FPATH in wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.zip
+        do
+            cp "$FPATH" publish_wheelhouse/
+        done
+        ls -la publish_wheelhouse
+    - name: Publish test artifacts to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: publish_wheelhouse
+        skip-existing: true
+        repository-url: https://test.pypi.org/legacy/
     - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
@@ -172,6 +188,10 @@ jobs:
           wheelhouse/*.tar.gz
           wheelhouse/*.asc
           wheelhouse/*.ots
+    permissions:
+      contents: read
+      id-token: write
+    environment: testpypi
   live_deploy:
     name: Deploy Live
     runs-on: ubuntu-latest
@@ -196,31 +216,32 @@ jobs:
     - name: Show files to upload
       shell: bash
       run: ls -la wheelhouse
-    - name: Sign and Publish
+    - name: Sign distributions
       env:
-        TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-        CI_SECRET: ${{ secrets.CI_SECRET }}
+        GPG_SECRET_SIGNING_SUBKEY_B64: ${{ secrets.GPG_SECRET_SIGNING_SUBKEY_B64 }}
+        GPG_PUBLIC_KEY_B64: ${{ secrets.GPG_PUBLIC_KEY_B64 }}
+        GPG_OWNER_TRUST_B64: ${{ secrets.GPG_OWNER_TRUST_B64 }}
       run: |-
         GPG_EXECUTABLE=gpg
         $GPG_EXECUTABLE --version
         openssl version
         $GPG_EXECUTABLE --list-keys
-        echo "Decrypting Keys"
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/ci_public_gpg_key.pgp.enc | $GPG_EXECUTABLE --import
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/gpg_owner_trust.enc | $GPG_EXECUTABLE --import-ownertrust
-        openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:CI_SECRET -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc | $GPG_EXECUTABLE --import
-        echo "Finish Decrypt Keys"
+        echo "Importing GPG keys from CI secrets"
+        printf '%s' "$GPG_PUBLIC_KEY_B64" | base64 -d | $GPG_EXECUTABLE --import
+        printf '%s' "$GPG_OWNER_TRUST_B64" | base64 -d | $GPG_EXECUTABLE --import-ownertrust
+        printf '%s' "$GPG_SECRET_SIGNING_SUBKEY_B64" | base64 -d | $GPG_EXECUTABLE --import
+        echo "Finish importing GPG keys"
         $GPG_EXECUTABLE --list-keys || true
-        $GPG_EXECUTABLE --list-keys  || echo "first invocation of gpg creates directories and returns 1"
         $GPG_EXECUTABLE --list-keys
+        GPG_KEYID=$(cat dev/public_gpg_key)
+        echo "GPG_KEYID = '$GPG_KEYID'"
+        IMPORTED_FPR=$($GPG_EXECUTABLE --list-keys --with-colons "$GPG_KEYID" | awk -F: '/^fpr/ { print $10; exit }')
+        if [[ "$IMPORTED_FPR" != "$GPG_KEYID" ]]; then echo "ERROR: imported GPG fingerprint $IMPORTED_FPR does not match pinned $GPG_KEYID"; exit 1; fi
+        echo "GPG fingerprint verified: $IMPORTED_FPR"
         VERSION=$(python -c "import setup; print(setup.VERSION)")
         python -m pip install pip uv -U
         python -m pip install packaging twine -U
         python -m pip install urllib3 requests[security]
-        GPG_KEYID=$(cat dev/public_gpg_key)
-        echo "GPG_KEYID = '$GPG_KEYID'"
         GPG_SIGN_CMD="$GPG_EXECUTABLE --batch --yes --detach-sign --armor --local-user $GPG_KEYID"
         WHEEL_PATHS=(wheelhouse/*.whl wheelhouse/*.tar.gz)
         WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_PATHS[@]}")
@@ -237,7 +258,21 @@ jobs:
         python -m pip install opentimestamps-client
         ots stamp wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.asc
         ls -la wheelhouse
-        twine upload --username __token__ --password "$TWINE_PASSWORD" --repository-url "$TWINE_REPOSITORY_URL" wheelhouse/*.whl wheelhouse/*.tar.gz --skip-existing --verbose || { echo "failed to twine upload" ; exit 1; }
+    - name: Prepare publish directory
+      shell: bash
+      run: |-
+        mkdir -p publish_wheelhouse
+        shopt -s nullglob
+        for FPATH in wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.zip
+        do
+            cp "$FPATH" publish_wheelhouse/
+        done
+        ls -la publish_wheelhouse
+    - name: Publish live artifacts to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: publish_wheelhouse
+        skip-existing: true
     - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
@@ -248,6 +283,10 @@ jobs:
           wheelhouse/*.tar.gz
           wheelhouse/*.asc
           wheelhouse/*.ots
+    permissions:
+      contents: read
+      id-token: write
+    environment: pypi
   release:
     name: Create Github Release
     if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/tags') || startsWith(github.event.ref, 'refs/heads/release'))
@@ -295,3 +334,85 @@ jobs:
           wheelhouse/*.tar.gz
 
 
+###
+# Trusted publishing setup checklist
+#
+# This release workflow file:
+#   .github/workflows/release.yml
+# Workflow page:
+#   github.com/pyutils/line_profiler/actions/workflows/release.yml
+# Workflow source:
+#   github.com/pyutils/line_profiler/blob/main/.github/workflows/release.yml
+# GitHub environments:
+#   github.com/pyutils/line_profiler/settings/environments
+#
+# Official references:
+#   https://docs.pypi.org/trusted-publishers/
+#   https://docs.pypi.org/trusted-publishers/using-a-publisher/
+#   https://docs.pypi.org/trusted-publishers/security-model/
+#   https://docs.github.com/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+#   https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment
+#
+# If trusted publishing is not configured yet:
+#
+#   1. In GitHub, create or review these protected environments:
+#        - testpypi
+#        - pypi
+#      URL:
+#        github.com/pyutils/line_profiler/settings/environments
+#
+#     Some xcookie setups will expect a setup like:
+#
+#        - testpypi:
+#            * environment name: testpypi
+#            * use for non-release pushes that publish to TestPyPI
+#            * usually no manual approval is needed
+#            * optionally restrict deployment branches if you only want
+#              TestPyPI publishes from selected branches
+#
+#        - pypi:
+#            * environment name: pypi
+#            * use for real releases only
+#            * require manual approval / required reviewers
+#            * prevent self-review if your org supports it
+#            * restrict deployments to release branches / version tags
+#
+#        - do not put TWINE_* secrets in these environments when using
+#          trusted publishing
+#
+#        - if enable_gpg=true and ci_gpg_secret_transport=encrypted_repo:
+#          store CI_SECRET as an environment secret (not repo-wide)
+#        - if enable_gpg=true and ci_gpg_secret_transport=direct_ci:
+#          store GPG_SECRET_SIGNING_SUBKEY_B64, GPG_PUBLIC_KEY_B64, and
+#          GPG_OWNER_TRUST_B64 as environment secrets; no CI_SECRET needed
+#
+#   2. In PyPI, add a trusted publisher for this project:
+#        owner: pyutils
+#        repository: line_profiler
+#        workflow filename: release.yml
+#        environment: pypi
+#      Project publishing page:
+#        https://pypi.org/manage/project/line-profiler/settings/publishing/
+#      Account publishing page:
+#        https://pypi.org/manage/account/publishing/
+#
+#   3. In TestPyPI, add a trusted publisher for this project:
+#        owner: pyutils
+#        repository: line_profiler
+#        workflow filename: release.yml
+#        environment: testpypi
+#      Project publishing page:
+#        https://test.pypi.org/manage/project/line-profiler/settings/publishing/
+#      Account publishing page:
+#        https://test.pypi.org/manage/account/publishing/
+#
+# Notes:
+#   - Keep the workflow filename stable after registration.
+#   - The PyPI/TestPyPI project pages may not exist until the project
+#     exists there; use the account publishing pages for pending publishers.
+#   - Trusted publishing removes TWINE_* secrets.
+#   - When enable_gpg=true and ci_gpg_secret_transport="encrypted_repo":
+#     CI_SECRET is still required (environment-scoped to pypi/testpypi).
+#   - When enable_gpg=true and ci_gpg_secret_transport="direct_ci":
+#     GPG_SECRET_SIGNING_SUBKEY_B64, GPG_PUBLIC_KEY_B64, and GPG_OWNER_TRUST_B64
+#     are required (environment-scoped to pypi/testpypi). No CI_SECRET.
