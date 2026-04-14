@@ -15,16 +15,18 @@ en/latest/subprocess.html#using-multiprocessing>`__.
 from __future__ import annotations
 
 import multiprocessing
+import warnings
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from functools import partial, wraps
 from importlib import import_module
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from time import sleep
-from typing import Any, TypeVar
+from time import sleep, monotonic
+from typing import Any, Literal, TypeVar, NoReturn
 from typing_extensions import Concatenate, ParamSpec, Self
 
+from .. import _diagnostics as diagnostics
 from .cache import LineProfilingCache
 from .pth_hook import _setup_in_child_process
 from .runpy_patches import create_runpy_wrapper
@@ -39,11 +41,26 @@ PS = ParamSpec('PS')
 
 _PATCHED_MARKER = '_line_profiler_patched_multiprocessing'
 _PROCESS_TERM_LOCK_LOC = '_line_profiler_process_terminate_lock'
-_POLLING_COOLDOWN = 1. / 32  # Seconds
+
+# NOTE: polling behaviors for blocking `BaseProcess.terminate()` with
+# the lock file:
+# - _POLLING_COOLDOWN:
+#   Seconds between polling for the lock file; set to zero to poll in a
+#   hot loop (not recommended)
+# - _POLLING_TIMEOUT: second to block before timing out anyway; set to
+#   zero to disable timing out
+# - _POLLING_ON_TIMEOUT: what to do on timeout if enabled:
+#   - 'error': error out with `_Poller.Timeout`
+#   - 'warn': issue a warning and move on
+#   - 'ignore': move on without a warning
+_POLLING_COOLDOWN = 1. / 32
+_POLLING_TIMEOUT = 1.
+_POLLING_ON_TIMEOUT: Literal['error', 'warn', 'ignore'] = 'warn'
+
 # NOTE: Set this to `None` or `True` to tee the `multiprocessing`
 # internal logging messages to the log files; if `None`, logs are only
 # written if `LineProfilingCache.load().debug` is set to true.
-_INTERCEPT_MP_LOG_MESSAGES = False
+_INTERCEPT_MP_LOG_MESSAGES: bool | None = False
 
 
 class PickleHook:
@@ -75,20 +92,41 @@ class _Poller:
     Poll a callable until it returns true-y.
     """
     def __init__(
-        self, func: Callable[[], Any], cooldown: float | None = None,
+        self,
+        func: Callable[[], Any],
+        cooldown: float = 0,
+        timeout: float = 0,
+        on_timeout: Literal['ignore', 'warn', 'error'] = 'error',
     ) -> None:
-        if not (cooldown and cooldown > 0):
+        if cooldown < 0:
             cooldown = 0
+        if timeout < 0:
+            timeout = 0
         self._func: Callable[[], Any] = func
         self._cooldown = cooldown
+        self._timeout = timeout
+        self._on_timeout = on_timeout
 
     def sleep(self):
         cd = self._cooldown
         if cd > 0:
             sleep(cd)
 
-    def with_cooldown(self, cooldown: float | None) -> Self:
-        return type(self)(self._func, cooldown)
+    def with_cooldown(self, cooldown: float) -> Self:
+        return type(self)(
+            self._func, cooldown, self._timeout, self._on_timeout,
+        )
+
+    def with_timeout(
+        self,
+        timeout: float | None = None,
+        on_timeout: Literal['ignore', 'warn', 'error'] | None = None,
+    ) -> Self:
+        if timeout is None:
+            timeout = self._timeout
+        if on_timeout is None:
+            on_timeout = self._on_timeout
+        return type(self)(self._func, self._cooldown, timeout, on_timeout)
 
     @classmethod
     def poll_until(
@@ -110,11 +148,45 @@ class _Poller:
         return cls(partial(negated, func, *args, **kwargs))
 
     def __enter__(self) -> Self:
-        while not self._func():
+        def error(msg: str) -> NoReturn:
+            raise type(self).Timeout(msg)
+
+        def warn(msg: str) -> None:
+            warnings.warn(msg)
+            diagnostics.log.warning(msg)
+
+        def ignore(_):
+            pass
+
+        timeout = self._timeout
+        callback = self._func
+
+        handle_timeout: Callable[[str], Any] = {
+            'error': error, 'warn': warn, 'ignore': ignore,
+        }[self._on_timeout]
+        fmt = '.3g'
+        timeout_msg_header = f'{type(self).__name__} at {id(self):#x}'
+
+        start = monotonic()
+        while not callback():
+            elapsed = monotonic() - start
+            if timeout and elapsed >= timeout:
+                handle_timeout(
+                    f'{timeout_msg_header}: '
+                    f'timed out ({elapsed:{fmt}} s >= {timeout:{fmt}} s) '
+                    f'waiting for callback {callback!r} to return true'
+                )
+                break
             self.sleep()
         return self
 
     def __exit__(self, *_, **__) -> None:
+        pass
+
+    class Timeout(RuntimeError):
+        """
+        Raised when a :py:class:`_Poller` is timed out when polling.
+        """
         pass
 
 
@@ -187,21 +259,30 @@ def wrap_terminate(
         think about introducing extra dependencies when we REALLY have
         to.
     """
-    # XXX: why can `coverage` get away with not doing all this lock-file
-    # hijinks and just patching `BaseProcess._bootstrap()`?
+    # XXX: why can `coverage` get away with not doing all these
+    # lock-file hijinks and just patching `BaseProcess._bootstrap()`?
+
+    def discard_lock() -> None:
+        assert lock_file is not None
+        # This should have already happened unless we timed out
+        lock_file.unlink(missing_ok=True)
+        try:
+            delattr(self, _PROCESS_TERM_LOCK_LOC)
+        except AttributeError:
+            pass
+
     lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
     if lock_file:
         lock: AbstractContextManager[Any] = (
             _Poller.poll_while(lock_file.exists)
             .with_cooldown(_POLLING_COOLDOWN)
+            .with_timeout(_POLLING_TIMEOUT, _POLLING_ON_TIMEOUT)
         )
+        callback = discard_lock
     else:
-        lock = nullcontext()
+        lock, callback = nullcontext(), _no_op
     with lock:
-        try:
-            delattr(self, _PROCESS_TERM_LOCK_LOC)
-        except AttributeError:
-            pass
+        callback()
         vanilla_impl(self)
 
 

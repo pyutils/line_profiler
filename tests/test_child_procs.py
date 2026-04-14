@@ -561,6 +561,7 @@ def _run_test_module(
     nprocs: int | None = None,
     check: bool = True,
     nhits: Mapping[str, int] | None = None,
+    **kwargs
 ) -> tuple[subprocess.CompletedProcess, LineStats | None]:
     """
     Returns:
@@ -610,6 +611,7 @@ def _run_test_module(
         proc = run_helper(
             runner_args, test_args, test_module,
             text=True, capture_output=True, check=(check and not fail),
+            **kwargs
         )
         # Checks:
         if fail:
@@ -856,6 +858,12 @@ def test_profiling_multiproc_script(
         - ``prof_child_procs`` of course toggles whether to do the
           patches to set up profiling in child processes.
     """
+    # XXX: owing to the shenanigans in
+    # `line_profiler._child_process_profiling.multiprocessing_patches`,
+    # there is a risk that failing child processes are not properly
+    # `.terminate()`-ed. So just put in a timeout...
+    timeout = 5  # Seconds
+
     # How many calls do we expect?
     nhits = dict.fromkeys(
         ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
@@ -896,6 +904,7 @@ def test_profiling_multiproc_script(
         nhits=nhits,
         nnums=nnums,
         nprocs=nprocs,
+        timeout=timeout,
     )
 
 
