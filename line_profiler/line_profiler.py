@@ -600,15 +600,9 @@ class LineProfiler(CLineProfiler, ByCountProfilerMixin):
         namespace: type | types.ModuleType,
         *,
         seen: set[int] | None = None,
-        func_scoping_policy: ScopingPolicy = cast(
-            ScopingPolicy, ScopingPolicy.NONE
-        ),
-        class_scoping_policy: ScopingPolicy = cast(
-            ScopingPolicy, ScopingPolicy.NONE
-        ),
-        module_scoping_policy: ScopingPolicy = cast(
-            ScopingPolicy, ScopingPolicy.NONE
-        ),
+        func_scoping_policy: ScopingPolicy = ScopingPolicy.NONE,
+        class_scoping_policy: ScopingPolicy = ScopingPolicy.NONE,
+        module_scoping_policy: ScopingPolicy = ScopingPolicy.NONE,
         wrap: bool = False,
         name: str | None = None,
     ) -> int:

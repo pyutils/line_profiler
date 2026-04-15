@@ -46,7 +46,14 @@ class _StrEnumBase(str, enum.Enum):
         return self.value
 
 
-class StringEnum(getattr(enum, 'StrEnum', _StrEnumBase)):  # type: ignore[misc]
+try:
+    from enum import StrEnum as _StrEnum
+except ImportError:
+    if not typing.TYPE_CHECKING:  # Don't confuse the typechecker
+        _StrEnum = _StrEnumBase
+
+
+class StringEnum(_StrEnum):
     """
     Convenience wrapper around :py:class:`enum.StrEnum`.
 
