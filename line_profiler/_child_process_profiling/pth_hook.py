@@ -120,4 +120,4 @@ def load_pth_hook(ppid):  # type: (int) -> None
             warnings.warn(msg)
             log.warning(msg)
     finally:
-        load_pth_hook.called = True  # type: ignore[attr-defined]
+        load_pth_hook.called = True  # type: ignore
