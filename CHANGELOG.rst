@@ -10,6 +10,8 @@ Changes
 * FIX: ``ScopingPolicy`` members now type-check properly as instances
   thereof -- at least on Python versions (3.11+) where ``enum.StrEnum``
   is available (#427)
+* FIX: Bytecodes of profiled functions now always labeled to prevent
+  confusion with non-profiled "twins" (#425)
 
 
 5.0.2

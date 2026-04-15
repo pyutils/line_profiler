@@ -31,7 +31,6 @@ import opcode
 import os
 import types
 from warnings import warn
-from weakref import WeakSet
 
 from line_profiler._diagnostics import (
     WRAP_TRACE, SET_FRAME_LOCAL_TRACE, USE_LEGACY_TRACE
@@ -1067,9 +1066,6 @@ cdef class LineProfiler:
     _managers = {}
     # type: ClassVar[dict[bytes, int]], bytes = bytecode
     _all_paddings = {}
-    # type: ClassVar[dict[int, weakref.WeakSet[LineProfiler]]],
-    # int = func id
-    _all_instances_by_funcs = {}
 
     def __init__(self, *functions,
                  wrap_trace=None, set_frame_local_trace=None):
@@ -1139,26 +1135,23 @@ datamodel.html#user-defined-functions
         code_hashes = []
         if any(co_code):  # Normal Python functions
             # Figure out how much padding we need and strip the bytecode
+            # Notes:
+            # - Profiled function are always padded, so as to
+            #   distinguish between them and unprofiled bytecode twins
+            # - `npad` is strictly increasing, except when the function
+            #   has already been padded -- we assume that is solely
+            #   because a (could be the same) profiler instance has seen
+            #   it
             base_co_code: bytes
-            npad_code: int
-            base_co_code, npad_code = multibyte_rstrip(co_code)
-            try:
-                npad = self._all_paddings[base_co_code]
-            except KeyError:
-                npad = 0
-            self._all_paddings[base_co_code] = max(npad, npad_code) + 1
-            try:
-                profilers_to_update = self._all_instances_by_funcs[func_id]
-                profilers_to_update.add(self)
-            except KeyError:
-                profilers_to_update = WeakSet({self})
-                self._all_instances_by_funcs[func_id] = profilers_to_update
-            # Maintain `.dupes_map` (legacy)
-            try:
-                self.dupes_map[base_co_code].append(code)
-            except KeyError:
-                self.dupes_map[base_co_code] = [code]
-            if npad > npad_code:
+            npad: int
+            is_padded: int
+            base_co_code, is_padded = multibyte_rstrip(co_code)
+            if not is_padded:
+                try:
+                    npad = self._all_paddings[base_co_code]
+                except KeyError:
+                    npad = 1
+                self._all_paddings[base_co_code] = npad + 1
                 # Code hash already exists, so there must be a duplicate
                 # function (on some instance);
                 # (re-)pad with no-op
@@ -1168,8 +1161,11 @@ datamodel.html#user-defined-functions
                     func.__code__ = code
                 except AttributeError as e:
                     func.__func__.__code__ = code
-            else:  # No re-padding -> no need to update the other profs
-                profilers_to_update = {self}
+            # Maintain `.dupes_map` (legacy)
+            try:
+                self.dupes_map[base_co_code].append(code)
+            except KeyError:
+                self.dupes_map[base_co_code] = [code]
             # TODO: Since each line can be many bytecodes, this is kinda
             # inefficient
             # See if this can be sped up by not needing to iterate over
@@ -1204,21 +1200,17 @@ datamodel.html#user-defined-functions
             # because Cython shim code objects don't support local
             # events
             code = code.replace(co_filename=cython_source)
-            profilers_to_update = {self}
         # Update `._c_code_map` and `.code_hash_map` with the new line
-        # hashes on `self` (and other instances profiling the same
-        # function if we padded the bytecode)
-        for instance in profilers_to_update:
-            prof = <LineProfiler>instance
-            try:
-                line_hashes = prof.code_hash_map[code]
-            except KeyError:
-                line_hashes = prof.code_hash_map[code] = []
-            for code_hash in code_hashes:
-                line_hash = <int64>code_hash
-                if not prof._c_code_map.count(line_hash):
-                    line_hashes.append(line_hash)
-                    prof._c_code_map[line_hash]
+        # hashes
+        try:
+            line_hashes = self.code_hash_map[code]
+        except KeyError:
+            line_hashes = self.code_hash_map[code] = []
+        for code_hash in code_hashes:
+            line_hash = <int64>code_hash
+            if not self._c_code_map.count(line_hash):
+                line_hashes.append(line_hash)
+                self._c_code_map[line_hash]
 
         self.functions.append(func)
 

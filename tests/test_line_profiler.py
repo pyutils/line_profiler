@@ -7,11 +7,14 @@ import inspect
 import io
 import os
 import pickle
+import subprocess
 import sys
 import textwrap
 import types
+from pathlib import Path
 from tempfile import TemporaryDirectory
 import pytest
+from ubelt import ChDir
 from line_profiler import _line_profiler, LineProfiler, LineStats
 
 
@@ -989,6 +992,94 @@ def test_duplicate_code_objects():
     assert entries[-2][1] == 10 + 20
 
 
+def test_nonprofiled_clashing_bytecodes(tmp_path_factory):
+    """
+    Test that the profiler can distinguish between a profiled function
+    and a non-profiled one compiling down to the same bytecode.
+    """
+    # See issue #424
+    template = textwrap.dedent("""
+    def {}(n):  # Any function using this compiles to the same bytecode
+        x = 0
+        for n in range(1, n + 1):
+            x += n
+        return x
+    """).strip('\n')
+    module_name = 'my_module'
+    script_name = 'my-script.py'
+    outfile = 'out.lprof'
+    func_p = 'profiled_func'
+    func_no_p = 'nonprofiled_func'
+
+    # Note: bytecode padding depends on the existence of duplicates,
+    # which are counted throughout the lifetime of the `LineProfiler`
+    # class. To ensure that we start on a clean slate -- that
+    # `LineProfiler` isn't "polluted" by running prior tests -- run the
+    # profliing in a subprocess.
+    with ChDir(tmp_path_factory.mktemp('test_nonprofiled_clashing_bytecodes')):
+        syspath_annex = (Path.cwd() / 'syspath').resolve()
+        syspath_annex.mkdir()
+        with (syspath_annex / (module_name + '.py')).open('w') as fobj:
+            print(
+                textwrap.dedent("""
+    '''
+    This docstring is fluff to make the function definitions overlap in
+    line numbers.
+    '''
+
+
+    {fp_def}
+                """).strip('\n').format(fp_def=template.format(func_p)),
+                file=fobj,
+            )
+        with open(script_name, 'w') as fobj:
+            print(
+                textwrap.dedent("""
+    from line_profiler import LineProfiler
+    from {mod} import {fp_name}
+
+
+    {fnp_def}
+
+
+    if __name__ == '__main__':
+        prof = LineProfiler()
+        prof.add_callable({fp_name})
+        with prof:
+            # The context turns on profiling for the call, but it
+            # shouldn't do anything since the imported and profiled
+            # function is not called
+            {fnp_name}(10)
+        prof.dump_stats({out!r})
+                """).strip('\n').format(
+                    mod=module_name,
+                    fp_name=func_p,
+                    fnp_name=func_no_p,
+                    fnp_def=template.format(func_no_p),
+                    out=outfile,
+                ),
+                file=fobj,
+            )
+
+        syspath = os.environ.get('PYTHONPATH', '')
+        syspath = ('{}:{}' if syspath else '{}').format(syspath_annex, syspath)
+        subprocess.run(
+            [sys.executable, script_name],
+            check=True, env={**os.environ, 'PYTHONPATH': syspath},
+        )
+
+        assert os.path.exists(outfile)
+        stats = LineStats.from_files(outfile)
+        stats.print()  # For debugging purposes
+
+    # There should only be one function profiled (`profiled_func()`),
+    # which however doesn't have any actual data because it was never
+    # called
+    ((*_, func_name), data), = stats.timings.items()
+    assert (func_name == func_p), stats
+    assert (not data), stats
+
+
 @pytest.mark.parametrize('force_same_line_numbers', [True, False])
 @pytest.mark.parametrize(
     'ops',
@@ -1157,6 +1248,11 @@ def test_aggregate_profiling_data_between_code_versions():
     Test that profiling data from previous versions of the code object
     are preserved when another profiler causes the code object of a
     function to be overwritten.
+
+    Note
+    ----
+    Now obsolete because we no longer double-pad/overwrite the function
+    bytecode if it has already been seen by another profiler instance.
     """
 
     def func(n):
@@ -1171,10 +1267,8 @@ def test_aggregate_profiling_data_between_code_versions():
     # Gather data with `@prof1`
     wrapper1 = prof1(func)
     assert wrapper1(10) == 10 * 11 // 2
-    code = func.__code__
     # Gather data with `@prof2`; the code object is overwritten here
     wrapper2 = prof2(wrapper1)
-    assert func.__code__ != code
     assert wrapper2(15) == 15 * 16 // 2
     # Despite the overwrite of the code object, the old data should
     # still remain, and be aggregated with the new data when calling
