@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import multiprocessing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from functools import partial, wraps
 from importlib import import_module
@@ -432,7 +432,7 @@ def _apply_mp_patches(
 
     # Patch `multiprocessing.process.BaseProcess` methods
     Method = Callable[Concatenate[S, PS], T]
-    patches: dict[str, Callable[[Method], Method]]
+    patches: Mapping[str, Callable[[Method], Method]]
     for submodule, target, patches in [  # type: ignore[assignment]
         ('process', 'BaseProcess', {
             'start': wrap_start,

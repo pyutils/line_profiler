@@ -375,8 +375,10 @@ class LineStats(CLineStats):
             instance (LineStats):
                 New instance without any profiling data.
         """
-        unit = LineProfiler().timer_unit  # type: ignore[attr-defined]
-        return cls({}, unit)
+        prof = LineProfiler()
+        if TYPE_CHECKING:
+            assert hasattr(prof, 'timer_unit')
+        return cls({}, cast(float, prof.timer_unit))
 
     @classmethod
     def from_files(

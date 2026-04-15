@@ -166,7 +166,7 @@ class LineProfilingCache:
             )
             diagnostics.log.debug(msg)
             instance = cls._from_path(cls._get_filename(cache_dir))
-            cls._loaded_instance = instance
+            instance._replace_loaded_instance(force=True)
         return instance
 
     def dump(self) -> None:
@@ -343,7 +343,19 @@ class LineProfilingCache:
             forked._setup_in_child_process(False, 'fork', self.profiler)
             return result
 
-        os.fork = wrapper
+        # Note: type checkers have vastly different opinions on
+        # `os.fork = wrapper`:
+        # - `ty` wouldn't shut up about shadowing unless we explicitly
+        #   type-annotate the assignment (error type:
+        #   "invalid-assignment")
+        # - `mypy` is cool with the bare assignment, but complains about
+        #   declaring types in "assignment to non-self-attribute"
+        #   (error type: "misc")
+        # The only way to satisfy both seems to be either an
+        # unqualified "type: ignore" comment, or circumventing the
+        # attribute checks by `setattr()` or assigning to the module
+        # namespace dict.
+        os.fork = wrapper  # type: ignore
         self.add_cleanup(setattr, os, 'fork', fork)
 
     def make_tempfile(self, **kwargs) -> Path:
@@ -363,9 +375,13 @@ class LineProfilingCache:
         finally:
             os.close(handle)
 
-    def _replace_loaded_instance(self) -> bool:
-        if self._consistent_with_loaded_instance:
-            type(self)._loaded_instance = self
+    def _replace_loaded_instance(self, force: bool = False) -> bool:
+        cls = type(self)
+        if force or self._consistent_with_loaded_instance:
+            # Note: `ty` REALLY hates assigning an instance to
+            # `ClassVar[Self]` (#3274); no choice but to ignore it for
+            # the time being...
+            cls._loaded_instance = self  # type: ignore
             return True
         return False
 

@@ -88,6 +88,7 @@ def _run(
     cache: LineProfilingCache,
     runpy: ModuleType,
     func: Callable[Concatenate[str, PS], T],
+    name: str,
     resolve_target_to_path: Callable[[str], str],
     CodeWriter: type[AstTreeProfiler],
     target: str,
@@ -96,7 +97,7 @@ def _run(
 ) -> T:
     cache._debug_output('Calling via {}: `runpy.{}({})`'.format(
         THIS_MODULE,
-        func.__name__,
+        name,
         ', '.join(
             [repr(a) for a in (target, *args)]
             + [f'{k}={v!r}' for k, v in kwargs.items()]
@@ -109,7 +110,7 @@ def _run(
         except Exception as e:
             cache._debug_output(
                 f'{THIS_MODULE}: Failed to check whether code loaded by '
-                f'`runpy.{func.__name__}(...)` is to be rewritten '
+                f'`runpy.{name}(...)` is to be rewritten '
                 f'({type(e).__name__}: {e})'
             )
             profile = False
@@ -119,16 +120,13 @@ def _run(
     # `exec()` into the `runpy` namespace which just rewrites
     # `cache.rewrite_module` and executes it
     if profile:
-        runpy.exec = (  # type: ignore[attr-defined]
-            partial(_exec, cache, CodeWriter)
-        )
+        # Dodge attr-defined errors and their ilk
+        vars(runpy)['exec'] = partial(_exec, cache, CodeWriter)
     try:
         return func(target, *args, **kwargs)
     finally:
-        try:
+        if hasattr(runpy, 'exec'):
             del runpy.exec
-        except AttributeError:
-            pass
 
 
 def create_runpy_wrapper(cache: LineProfilingCache) -> ModuleType:
@@ -144,6 +142,6 @@ def create_runpy_wrapper(cache: LineProfilingCache) -> ModuleType:
     ]:
         impl = getattr(runpy, func)
         res = cast(Callable[[str], str], resolver)  # Help `mypy` out
-        wrapper = partial(_run, cache, runpy, impl, res, CodeWriter)
+        wrapper = partial(_run, cache, runpy, impl, func, res, CodeWriter)
         setattr(runpy, func, wrapper)
     return runpy

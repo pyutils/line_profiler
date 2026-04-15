@@ -12,7 +12,7 @@ import warnings
 from collections.abc import Callable, Collection
 from io import StringIO
 from textwrap import indent
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 from typing_extensions import Self
 
 from . import _diagnostics as diagnostics, profile as _global_profiler
@@ -21,6 +21,7 @@ from .autoprofile.eager_preimports import (
     is_dotted_path, write_eager_import_module,
 )
 from .cli_utils import short_string_path
+from .line_profiler import LineProfiler
 from .profiler_mixin import ByCountProfilerMixin
 
 
@@ -71,7 +72,10 @@ class ClassifiedPreimportTargets:
 
         if not self:
             return None
-        write_module_kwargs = {
+        # Note: `ty` (but not `mypy`) keeps complaining about the our
+        # splatting this dict; explicitly use `Any` to tell it to shut
+        # up.
+        write_module_kwargs: dict[str, Any] = {
             'dotted_paths': self.regular,
             'recurse': self.recurse,
             **kwargs,
@@ -168,7 +172,14 @@ class CuratedProfilerContext:
         self.insert_builtin = insert_builtin
         self.builtin_loc = builtin_loc
         self._installed = False
-        self._global_install = _global_profiler._kernprof_overwrite
+        self._kpo = _global_profiler._kernprof_overwrite
+
+    def _global_install(self, prof: ByCountProfilerMixin | None) -> None:
+        # Wrapper to convince type-checkers it is okay to pass these
+        # stuff to `._kernprof_overwrite()`. We don't want to patch
+        # that method's signature because passing non `LineProfiler`
+        # objects to it should be the exception, not the norm.
+        self._kpo(cast(LineProfiler, prof))
 
     def install(self) -> None:
         def del_builtin_profile() -> None:
@@ -180,7 +191,7 @@ class CuratedProfilerContext:
         if self._installed:
             return
         # Overwrite the explicit profiler (`@line_profiler.profile`)
-        self._global_install(self.prof)  # type: ignore[arg-type]
+        self._global_install(self.prof)  # type: ignore
         # Set up hooks to deal with inserting `.prof` as a builtin name
         if self.insert_builtin:
             try:
@@ -205,7 +216,7 @@ class CuratedProfilerContext:
         for _i in range(getattr(self.prof, 'enable_count', 0)):
             self.prof.disable_by_count()
         # Restore the state of the global `@line_profiler.profile`
-        self._global_install(None)  # type: ignore[arg-type]
+        self._global_install(None)
         self._installed = False
 
     def __enter__(self) -> None:
