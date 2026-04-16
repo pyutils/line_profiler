@@ -48,8 +48,6 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         - To be called in the main process.
         - The ``cache`` is responsible for deleting the written .pth
           file via the registered cleanup callback.
-        - For convenience, we also wrap :py:func:`os.fork` when this
-          function is called.
     """
     import os
     from pathlib import Path  # noqa: F811
@@ -77,8 +75,6 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         raise
     finally:  # Not closing the handle causes issues on Windows
         os.close(handle)
-
-    cache._wrap_os_fork()
 
     return fpath
 
