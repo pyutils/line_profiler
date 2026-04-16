@@ -18,6 +18,7 @@ import sys
 import tempfile
 import types
 import tokenize
+import warnings
 from argparse import ArgumentParser
 from datetime import datetime
 from os import PathLike
@@ -368,16 +369,65 @@ class LineStats(CLineStats):
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
     @classmethod
+    def get_empty_instance(cls) -> Self:
+        """
+        Returns:
+            instance (LineStats):
+                New instance without any profiling data.
+        """
+        prof = LineProfiler()
+        if TYPE_CHECKING:
+            assert hasattr(prof, 'timer_unit')
+        return cls({}, cast(float, prof.timer_unit))
+
+    @classmethod
     def from_files(
-        cls, file: PathLike[str] | str, /, *files: PathLike[str] | str
+        cls,
+        file: PathLike[str] | str,
+        /,
+        *files: PathLike[str] | str,
+        on_defective: Literal['ignore', 'warn', 'error'] = 'error',
     ) -> Self:
         """
         Utility function to load an instance from the given filenames.
+
+        Args:
+            file (PathLike[str] | str):
+                File to load profiling data from
+            *files (PathLike[str] | str):
+                Ditto above
+            on_defective (Literal['ignore', 'warn', 'error']):
+                What to do if some files fail to load: ``'ignore'``
+                those files, skip them but with a ``'warn'``-ing, or
+                raise the ``'error'`` as soon as one is encountered
+
+        Returns:
+            instance (LineStats):
+                New instance
         """
         stats_objs = []
-        for file in [file, *files]:
+        failures: dict[str, str] = {}
+        all_files = [file, *files]
+        for file in all_files:
             with open(file, 'rb') as f:
-                stats_objs.append(pickle.load(f))
+                try:
+                    stats_objs.append(pickle.load(f))
+                except Exception as e:
+                    if on_defective == 'error':
+                        raise
+                    failures[str(file)] = f'{type(e).__name__}: {e}'
+        if failures:
+            msg = (
+                '{} file(s) out of {} failed to load and are skipped: {!r}'
+                .format(len(failures), len(all_files), failures)
+            )
+            if on_defective == 'warn':
+                warnings.warn(msg)
+                diagnostics.log.warning(msg)
+            else:  # 'ignore'
+                diagnostics.log.debug(msg)
+        if not stats_objs:
+            return cls.get_empty_instance()
         return cls.from_stats_objects(*stats_objs)
 
     @classmethod
