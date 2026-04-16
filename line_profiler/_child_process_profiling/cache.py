@@ -19,7 +19,6 @@ from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from reprlib import Repr
-from tempfile import mkstemp
 from textwrap import indent
 from types import MethodType
 from typing import Any, ClassVar, TypeVar, TypedDict, cast
@@ -35,6 +34,7 @@ from ..autoprofile.autoprofile import (
 )
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
+from .misc_utils import block_indent, make_tempfile
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
 # hook, which must run with minimal overhead when a Python process isn't
@@ -176,7 +176,7 @@ class _CallbackRepr(Repr):
         func = getattr(method.__func__, '__qualname__', '?')
         prefix, suffix = f'<bound method {func} of ', '>'
         # Take care of possible multi-line reprs
-        return _indent_with_prefix(instance, prefix) + suffix
+        return block_indent(instance, prefix) + suffix
 
     def repr_partial(self, ptl: partial, level: int) -> str:
         get: Callable[[Any], str] = partial(self.repr1, level=level-1)
@@ -424,7 +424,7 @@ class LineProfilingCache:
         try:
             with self._debug_log.open(mode='a') as fobj:
                 prefix = self._debug_message_timestamp + ' '
-                print(_indent_with_prefix(msg, prefix), file=fobj)
+                print(block_indent(msg, prefix), file=fobj)
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
 
@@ -604,13 +604,9 @@ write_pth_hook`)
             path (Path):
                 Path to the created file.
         """
-        handle, path = mkstemp(dir=self.cache_dir, **kwargs)
-        try:
-            path_obj = Path(path)
-            self._debug_output(f'Created tempfile: {path_obj.name!r}')
-            return path_obj
-        finally:
-            os.close(handle)
+        path = make_tempfile(dir=self.cache_dir, **kwargs)
+        self._debug_output(f'Created tempfile: {path.name!r}')
+        return path
 
     def _replace_loaded_instance(self, force: bool = False) -> bool:
         cls = type(self)
@@ -679,8 +675,3 @@ write_pth_hook`)
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
         return type(self).load()._get_init_args() == self._get_init_args()
-
-
-def _indent_with_prefix(string: str, prefix: str, fill_char: str = ' ') -> str:
-    width = len(prefix)
-    return prefix + indent(string, fill_char * width)[width:]
