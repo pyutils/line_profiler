@@ -456,6 +456,19 @@ class _Params:
         return cls(param_list, value_tuple_list, default_values)
 
 
+# `shlex.join()` doesn't work properly on Windows, so use
+# `subprocess.list2cmdline()` instead;
+# though an "intentionally" undocumented API (cpython issue #10308),
+# it's been around since 2.4, seems stable enough, and does exactly what
+# is needed
+if sys.platform == 'win32':
+    concat_command_line: Callable[
+        [Sequence[str]], str
+    ] = subprocess.list2cmdline
+else:
+    concat_command_line = shlex.join
+
+
 def _run_as_script(
     runner_args: list[str], test_args: list[str], test_module: _ModuleFixture,
     **kwargs
@@ -498,7 +511,7 @@ def _run_subproc(
     if isinstance(cmd, str):
         cmd_str = cmd
     else:
-        cmd_str = shlex.join(cmd)
+        cmd_str = concat_command_line(cmd)
 
     # If we're capturing outputs, it may be for the best to wait until
     # we've processed the output streams to check the return code...
@@ -1015,7 +1028,7 @@ def test_profiling_bare_python(
 
         if os.system({!r}):
             raise RuntimeError('called process failed')
-        """.format(shlex.join(sub_cmd)))
+        """.format(concat_command_line(sub_cmd)))
     cmd.extend(['-c', code])
     proc = _run_subproc(cmd, text=True, capture_output=True)
 
