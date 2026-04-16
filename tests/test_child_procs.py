@@ -32,6 +32,7 @@ C = TypeVar('C', bound=Callable[..., Any])
 NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
+_WRITE_DEBUG_LOGS = True
 
 
 def strip(s: str) -> str:
@@ -578,6 +579,7 @@ def _run_test_module(
     nnums: int | None = None,
     nprocs: int | None = None,
     check: bool = True,
+    debug_log: str | None = None,
     nhits: Mapping[str, int] | None = None,
     **kwargs
 ) -> tuple[subprocess.CompletedProcess, LineStats | None]:
@@ -631,45 +633,54 @@ def _run_test_module(
     with ub.ChDir(tmp_path_factory.mktemp('mytemp')):
         if outfile is not None:
             runner_args.extend(['--outfile', outfile])
+        if debug_log:
+            runner_args.extend(['--debug-log', debug_log])
         old_pth_files = get_pth_files()
         proc = run_helper(
             runner_args, test_args, test_module,
             text=True, capture_output=True, check=(check and not fail),
             **kwargs
         )
-        # Checks:
-        if fail:
-            # - The process has failed as expected
-            if check:
-                assert proc.returncode
-        else:
-            # - The result is correctly calculated
-            expected = nnums * (nnums + 1) // 2
-            output_lines = proc.stdout.splitlines()
-            if output_lines[0] != str(expected):
-                raise ResultMismatch(
-                    f'result {expected}', f'output lines: {output_lines}',
-                )
-        # - Temporary `.pth` file(s) created by `~~.pth_hook` has been
-        #   cleaned up
-        assert get_pth_files() == old_pth_files
-        # - Profiling results are written to the specified file
-        prof_result: LineStats | None = None
-        if outfile is None:
-            assert not list(Path.cwd().iterdir())
-        else:
-            assert os.path.exists(outfile)
-            assert os.stat(outfile).st_size
-            if profile:
-                prof_result = LineStats.from_files(outfile)
-        # - If we're keeping track, the function is called the expected
-        #   number of times and has run the expected # of loops
-        #   (Note: we do it by parsing the output of `kernprof -v`
-        #   instead of reading the `--outfile`, because if the profiled
-        #   code is in a tempfile the profiling data will be dropped in
-        #   the written outfile)
-        for tag, num in (nhits or {}).items():
-            _check_output(proc.stdout, tag, num)
+        try:
+            # Checks:
+            if fail:
+                # - The process has failed as expected
+                if check:
+                    assert proc.returncode
+            else:
+                # - The result is correctly calculated
+                expected = nnums * (nnums + 1) // 2
+                output_lines = proc.stdout.splitlines()
+                if output_lines[0] != str(expected):
+                    raise ResultMismatch(
+                        f'result {expected}', f'output lines: {output_lines}',
+                    )
+            # - Temporary `.pth` file(s) created by `~~.pth_hook` has
+            #   been cleaned up
+            assert get_pth_files() == old_pth_files
+            # - Profiling results are written to the specified file
+            prof_result: LineStats | None = None
+            if outfile is None:
+                assert not list(Path.cwd().iterdir())
+            else:
+                assert os.path.exists(outfile)
+                assert os.stat(outfile).st_size
+                if profile:
+                    prof_result = LineStats.from_files(outfile)
+            # - If we're keeping track, the function is called the
+            #   expected number of times and has run the expected # of
+            #   loops (Note: we do it by parsing the output of
+            #   `kernprof -v` instead of reading the `--outfile`,
+            #   because if the profiled code is in a tempfile the
+            #   profiling data will be dropped in the written outfile)
+            for tag, num in (nhits or {}).items():
+                _check_output(proc.stdout, tag, num)
+        finally:
+            if debug_log is not None:
+                with open(debug_log) as fobj:
+                    print('-- Combined debug logs --', file=sys.stderr)
+                    print(indent(fobj.read(), '  '), end='', file=sys.stderr)
+                    print('-- End of debug logs --', file=sys.stderr)
     return proc, prof_result
 
 
@@ -932,6 +943,9 @@ def test_profiling_multiproc_script(
         nnums=nnums,
         nprocs=nprocs,
         timeout=timeout,
+        debug_log=(
+            'debug.log' if prof_child_procs and _WRITE_DEBUG_LOGS else None
+        ),
     )
 
 
@@ -976,12 +990,16 @@ def test_profiling_bare_python(
     script_path.write_text(script_content)
 
     out_file = temp_dir / 'out.lprof'
+    debug_log_file = temp_dir / 'debug.log'
+    write_debug = _WRITE_DEBUG_LOGS and prof_child_procs
     cmd = [
         'kernprof', '-lv', '--preimports',
         f'--prof-mod={ext_module.name}',
         f'--outfile={out_file}',
         '--{}prof-child-procs'.format('' if prof_child_procs else 'no-'),
     ]
+    if write_debug:
+        cmd.append(f'--debug-log={debug_log_file}')
     sub_cmd = [sys.executable, str(script_path)]
     if use_subprocess:
         code = strip(f"""
@@ -1006,8 +1024,17 @@ def test_profiling_bare_python(
         for k in nhits:
             nhits[k] = 0
 
-    # Check that the code errors out when expected
-    assert bool(fail) == bool(proc.returncode)
-    # Check that the profiling output is as expected
-    for tag, num in nhits.items():
-        _check_output(proc.stdout, tag, num)
+    try:
+        # Check that the code errors out when expected
+        assert bool(fail) == bool(proc.returncode)
+        # Check that the profiling output is as expected
+        for tag, num in nhits.items():
+            _check_output(proc.stdout, tag, num)
+    finally:
+        if write_debug:
+            print('-- Combined debug logs --', file=sys.stderr)
+            print(
+                indent(debug_log_file.read_text(), '  '),
+                end='', file=sys.stderr,
+            )
+            print('-- End of debug logs --', file=sys.stderr)
