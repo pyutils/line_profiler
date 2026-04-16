@@ -50,20 +50,18 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
           file via the registered cleanup callback.
     """
     import os
-    from pathlib import Path  # noqa: F811
     from sysconfig import get_path
-    from tempfile import mkstemp
+    from .misc_utils import make_tempfile
 
     if not os.path.exists(cache.filename):
         cache.dump()
         assert os.path.exists(cache.filename)
 
-    handle, fname = mkstemp(
+    fpath = make_tempfile(
         prefix='_line_profiler_profiling_hook_',
         suffix='.pth',
         dir=get_path('purelib'),
     )
-    fpath = Path(fname)
     try:
         pth_content = 'import {0}; {0}.load_pth_hook({1})'.format(
             (lambda: None).__module__, cache.main_pid,
@@ -71,10 +69,8 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         fpath.write_text(pth_content)
         cache.add_cleanup(fpath.unlink, missing_ok=True)
     except Exception:
-        os.remove(fpath)
+        fpath.unlink(missing_ok=True)
         raise
-    finally:  # Not closing the handle causes issues on Windows
-        os.close(handle)
 
     return fpath
 
