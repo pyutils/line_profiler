@@ -11,8 +11,7 @@ try:
     import _pickle as pickle
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
-from collections.abc import Collection, Callable
-from datetime import datetime
+from collections.abc import Collection, Callable, Iterable
 from functools import partial, cached_property, wraps
 from importlib import import_module
 from operator import setitem
@@ -34,6 +33,7 @@ from ..autoprofile.autoprofile import (
 )
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
+from ._cache_logging import CacheLoggingEntry
 from .misc_utils import block_indent, make_tempfile
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
@@ -247,8 +247,18 @@ class LineProfilingCache:
         Pop all the cleanup callbacks from the internal stack added via
         :py:meth:`~.add_cleanup` and call them in order.
         """
-        for priority in sorted(self._cleanup_stacks):
-            callbacks = self._cleanup_stacks.pop(priority)
+        stacks = self._cleanup_stacks
+        num_callbacks = sum(len(stack) for stack in stacks.values())
+        if not num_callbacks:
+            self._debug_output('Cleanup aborted (no registered callbacks)')
+            return
+        # Bookend the cleanup loop with log messages to help detect if
+        # child processes are prematurely terminated
+        self._debug_output(
+            f'Starting cleanup ({num_callbacks} callback(s))...',
+        )
+        for priority in sorted(stacks):
+            callbacks = stacks.pop(priority)
             while callbacks:
                 callback = callbacks.pop()
                 callback_repr = _CALLBACK_REPR(callback)
@@ -258,7 +268,10 @@ class LineProfilingCache:
                     msg = f'failed: {callback_repr}: {type(e).__name__}: {e}'
                 else:
                     msg = f'succeeded: {callback_repr}'
-                self._debug_output('Cleanup ' + msg)
+                self._debug_output('- Cleanup ' + msg)
+        self._debug_output(
+            f'... cleanup completed ({num_callbacks} callback(s))',
+        )
 
     def add_cleanup(
         self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
@@ -375,13 +388,18 @@ class LineProfilingCache:
 
     def _dump_debug_logs(self) -> None:
         """
-        Gather the debug logfiles in child processes and write them to
-        the logger; to be called in the main process.
+        Gather the debug logfiles in child processes and write their
+        contents to the logger
+        (:py:data:`line_profiler._diagnostics.log`).
+
+        Notes:
+            - The content of each child-process log file is not
+              re-parsed and is written to the logger as a single
+              multi-line message.
+
+            - To be called in the main process.
         """
-        pattern = _DEBUG_LOG_FILENAME_PATTERN.format(
-            main_pid=self.main_pid, current_pid='*',
-        )
-        for log in sorted(Path(self.cache_dir).glob(pattern)):
+        for log in sorted(self._get_debug_logfiles()):
             if log == self._debug_log:  # Don't double dip
                 continue
             *_, child_pid = log.stem.rpartition('_')
@@ -389,6 +407,34 @@ class LineProfilingCache:
                 child_pid, indent(log.read_text(), '  '),
             )
             diagnostics.log.debug(msg)
+
+    def _gather_debug_log_entries(
+        self, chronological: bool = False,
+    ) -> list[CacheLoggingEntry]:
+        """
+        Gather and return all entries from debug logfiles sorted by
+        timestamps.
+        """
+        log_files: Iterable[Path] = self._get_debug_logfiles()
+        if chronological:  # Sorting on the entries -> chronological
+            to_list: Callable[
+                [Iterable[CacheLoggingEntry]], list[CacheLoggingEntry]
+            ] = sorted
+        else:
+            # Otherwise, just sort by filename (entries in each file are
+            # still chronological)
+            log_files = sorted(log_files)
+            to_list = list
+        return to_list(
+            entry for log in log_files
+            for entry in CacheLoggingEntry.from_file(log)
+        )
+
+    def _get_debug_logfiles(self) -> Iterable[Path]:
+        pattern = _DEBUG_LOG_FILENAME_PATTERN.format(
+            main_pid=self.main_pid, current_pid='*',
+        )
+        return Path(self.cache_dir).glob(pattern)
 
     def inject_env_vars(
         self, env: dict[str, str] | None = None,
@@ -417,14 +463,8 @@ class LineProfilingCache:
             env[name] = value
 
     def _debug_output(self, msg: str) -> None:
-        msg = f'{self._debug_message_header}: {msg}'
-        diagnostics.log.debug(msg)
-        if not self._debug_log:
-            return
         try:
-            with self._debug_log.open(mode='a') as fobj:
-                prefix = self._debug_message_timestamp + ' '
-                print(block_indent(msg, prefix), file=fobj)
+            self._make_debug_entry(msg).write(self._debug_log)
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
 
@@ -659,18 +699,9 @@ write_pth_hook`)
         )
         return Path(self.cache_dir) / fname
 
-    @property
-    def _debug_message_timestamp(self) -> str:
-        return f'[cache-debug-log {datetime.now()} DEBUG]'
-
     @cached_property
-    def _debug_message_header(self) -> str:
-        pid = os.getpid()
-        return 'PID {} ({}): Cache {:#x}'.format(
-            pid,
-            'main process' if self.main_pid == pid else self.main_pid,
-            id(self),
-        )
+    def _make_debug_entry(self) -> Callable[[str], CacheLoggingEntry]:
+        return partial(CacheLoggingEntry.new, self.main_pid, id(self))
 
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
