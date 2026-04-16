@@ -248,29 +248,35 @@ class LineProfilingCache:
         :py:meth:`~.add_cleanup` and call them in order.
         """
         stacks = self._cleanup_stacks
-        num_callbacks = sum(len(stack) for stack in stacks.values())
-        if not num_callbacks:
+        ncallbacks_total = sum(len(stack) for stack in stacks.values())
+        if not ncallbacks_total:
             self._debug_output('Cleanup aborted (no registered callbacks)')
             return
         # Bookend the cleanup loop with log messages to help detect if
         # child processes are prematurely terminated
         self._debug_output(
-            f'Starting cleanup ({num_callbacks} callback(s))...',
+            f'Starting cleanup ({ncallbacks_total} callback(s))...',
         )
+        ncallbacks_run = 0
         for priority in sorted(stacks):
             callbacks = stacks.pop(priority)
             while callbacks:
                 callback = callbacks.pop()
                 callback_repr = _CALLBACK_REPR(callback)
+                ncallbacks_run += 1
                 try:
                     callback()
                 except Exception as e:
-                    msg = f'failed: {callback_repr}: {type(e).__name__}: {e}'
+                    state = 'failed'
+                    msg = f'{callback_repr}: {type(e).__name__}: {e}'
                 else:
-                    msg = f'succeeded: {callback_repr}'
-                self._debug_output('- Cleanup ' + msg)
+                    state, msg = 'succeeded', f'{callback_repr}'
+                self._debug_output(
+                    f'- Cleanup {state} '
+                    f'({ncallbacks_run}/{ncallbacks_total}): {msg}',
+                )
         self._debug_output(
-            f'... cleanup completed ({num_callbacks} callback(s))',
+            f'... cleanup completed ({ncallbacks_total} callback(s))',
         )
 
     def add_cleanup(
