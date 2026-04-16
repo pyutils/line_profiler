@@ -12,13 +12,18 @@ try:
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
 from collections.abc import Collection, Callable
+from datetime import datetime
 from functools import partial, cached_property, wraps
+from importlib import import_module
 from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
+from reprlib import Repr
 from tempfile import mkstemp
-from typing import Any, ClassVar, cast
-from typing_extensions import Self, ParamSpec
+from textwrap import indent
+from types import MethodType
+from typing import Any, ClassVar, TypeVar, TypedDict, cast
+from typing_extensions import Self, ParamSpec, Unpack
 
 from .. import _diagnostics as diagnostics
 from ..autoprofile.autoprofile import (
@@ -41,15 +46,183 @@ __all__ = ('LineProfilingCache',)
 
 
 PS = ParamSpec('PS')
+# Note: `typing.AnyStr` deprecated since 3.13
+AnyStr = TypeVar('AnyStr', str, bytes)
 
 INHERITED_CACHE_ENV_VARNAME_PREFIX = (
     'LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_DIR'
 )
 CACHE_FILENAME = 'line_profiler_cache.pkl'
+_DEBUG_LOG_FILENAME_PATTERN = 'debug_log_{main_pid}_{current_pid}.log'
+
+
+class _ReprAttributes(TypedDict, total=False):
+    """
+    Note:
+        We use this typed dict instead of directly supplying them in the
+        :py:meth:`_CallbackRepr.__init__()` signature, because we don't
+        want to bother with the default values there.
+    """
+    maxlevel: int
+    maxtuple: int
+    maxlist: int
+    maxarray: int
+    maxdict: int
+    maxset: int
+    maxfrozenset: int
+    maxdeque: int
+    maxstring: int
+    maxlog: int
+    maxother: int
+    fillvalue: str
+    indent: str | int | None
+
+
+class _CallbackRepr(Repr):
+    """
+    :py:class:`reprlib.Repr` subclass to help with representing cleanup
+    callbacks, special-casing certain relevant object types (see
+    examples below).
+
+    Example:
+        >>> from functools import partial
+        >>>
+        >>>
+        >>> class MyEnviron(dict):
+        ...     def some_method(self) -> None:
+        ...         ...
+        ...
+        >>>
+        >>> class MyRepr(_CallbackRepr):
+        ...     # Since we can't instantiate a new `os._Environ`, test
+        ...     # the relevant method with a mock
+        ...     repr_MyEnviron = _CallbackRepr.repr__Environ
+        ...
+        >>>
+        >>> r = MyRepr(maxenv=3, maxargs=4, maxstring=15)
+
+        Environ-dict formatting:
+
+        >>> my_env = MyEnviron(
+        ...     foo='1',
+        ...     bar='2',
+        ...     this_varname_is_long_but_isnt_truncated=(
+        ...         "THIS VALUE IS TRUNCATED BECAUSE IT'S TOO LONG"
+        ...     ),
+        ...     baz='4',
+        ... )
+        >>> print(r.repr(my_env))
+        environ({'foo': '1', 'bar': '2', \
+'this_varname_is_long_but_isnt_truncated': 'THIS ... LONG', ...})
+
+        Partial-object formatting:
+
+        >>> r.indent = 2
+        >>> callback_1 = partial(int, base=8)
+        >>> print(r.repr(callback_1))
+        functools.partial(
+          <class 'int'>,
+          base=8,
+        )
+
+        >>> callback_2 = partial(min, 5, 4, 3, 2, 1)
+        >>> r.indent = '----'
+        >>> print(r.repr(callback_2))
+        functools.partial(
+        ----<built-in function min>,
+        ----5,
+        ----4,
+        ----3,
+        ----2,
+        ----...,
+        )
+
+        Bound-method formatting:
+
+        >>> r.indent = '    '
+        >>> r.maxenv = 2
+        >>> print(r.repr(my_env.some_method))
+        <bound method MyEnviron.some_method of environ({
+                                                   'foo': '1',
+                                                   'bar': '2',
+                                                   ...,
+                                               })>
+        >>> r.indent = None
+        >>> r.maxenv = 0
+        >>> print(r.repr(my_env.some_method))
+        <bound method MyEnviron.some_method of environ({...})>
+    """
+    def __init__(
+        self,
+        *,
+        maxargs: int = 5,
+        maxenv: int = 3,
+        **kwargs: Unpack[_ReprAttributes]
+    ) -> None:
+        super().__init__()  # kwargs are 3.12+
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.maxargs = maxargs
+        self.maxenv = maxenv
+
+    def repr__Environ(self, env: os._Environ[AnyStr], level: int) -> str:
+        get: Callable[[AnyStr], str] = partial(self.repr1, level=level-1)
+        # Truncate envvar values, but not their names
+        envvars = ['{!r}: {}'.format(k, get(v)) for k, v in env.items()]
+        return self._format_items(envvars, ('environ({', '})'), self.maxenv)
+
+    def repr_method(self, method: MethodType, level: int) -> str:
+        instance = self.repr1(method.__self__, level-1)
+        func = getattr(method.__func__, '__qualname__', '?')
+        prefix, suffix = f'<bound method {func} of ', '>'
+        # Take care of possible multi-line reprs
+        return _indent_with_prefix(instance, prefix) + suffix
+
+    def repr_partial(self, ptl: partial, level: int) -> str:
+        get: Callable[[Any], str] = partial(self.repr1, level=level-1)
+        args = [get(arg) for arg in ptl.args]
+        args.extend('{}={}'.format(k, get(v)) for k, v in ptl.keywords.items())
+        args.insert(0, get(ptl.func))
+        name = '{0.__module__}.{0.__qualname__}'.format(type(ptl))
+        # The +1 is to account for `ptl.func`
+        return self._format_items(args, (name + '(', ')'), self.maxargs + 1)
+
+    def _format_items(
+        self,
+        items: Collection[str],
+        delims: tuple[str, str],
+        maxlen: int | None = None,
+    ) -> str:
+        start, end = delims
+        if maxlen is not None and len(items) > maxlen:
+            items = list(items)[:maxlen] + ['...']
+        if self.indent is None or not items:
+            return '{}{}{}'.format(start, ', '.join(items), end)
+        return '\n'.join([
+            start, *(indent(item + ',', self.indent) for item in items), end,
+        ])
+
+    @property
+    def indent(self) -> str | None:
+        return self._indent
+
+    @indent.setter
+    def indent(self, indent: str | int | None) -> None:
+        if indent is None or isinstance(indent, str):
+            self._indent = indent
+            return
+        self._indent = ' ' * indent
+
+
+_CALLBACK_REPR = _CallbackRepr(maxother=cast(int, float('inf'))).repr
 
 
 @dataclasses.dataclass
 class LineProfilingCache:
+    """
+    Helper object for coordinating a line-profiling session, caching the
+    info required to make profiling persist into child processes.
+    """
     cache_dir: os.PathLike[str] | str
     profiling_targets: Collection[str] = dataclasses.field(
         default_factory=list,
@@ -78,12 +251,13 @@ class LineProfilingCache:
             callbacks = self._cleanup_stacks.pop(priority)
             while callbacks:
                 callback = callbacks.pop()
+                callback_repr = _CALLBACK_REPR(callback)
                 try:
                     callback()
                 except Exception as e:
-                    msg = f'failed: {callback}: {type(e).__name__}: {e}'
+                    msg = f'failed: {callback_repr}: {type(e).__name__}: {e}'
                 else:
-                    msg = f'succeeded: {callback}'
+                    msg = f'succeeded: {callback_repr}'
                 self._debug_output('Cleanup ' + msg)
 
     def add_cleanup(
@@ -105,7 +279,7 @@ class LineProfilingCache:
         header = 'Cleanup callback added'
         if priority:
             header = f'{header} (priority: {priority})'
-        self._debug_output(f'{header}: {callback}')
+        self._debug_output(f'{header}: {_CALLBACK_REPR(callback)}')
 
     def copy(
         self, *,
@@ -199,6 +373,23 @@ class LineProfilingCache:
             return LineStats.get_empty_instance()
         return LineStats.from_files(*fnames, on_defective='ignore')
 
+    def _dump_debug_logs(self) -> None:
+        """
+        Gather the debug logfiles in child processes and write them to
+        the logger; to be called in the main process.
+        """
+        pattern = _DEBUG_LOG_FILENAME_PATTERN.format(
+            main_pid=self.main_pid, current_pid='*',
+        )
+        for log in sorted(Path(self.cache_dir).glob(pattern)):
+            if log == self._debug_log:  # Don't double dip
+                continue
+            *_, child_pid = log.stem.rpartition('_')
+            msg = 'Cache log messages from child process {}:\n{}'.format(
+                child_pid, indent(log.read_text(), '  '),
+            )
+            diagnostics.log.debug(msg)
+
     def inject_env_vars(
         self, env: dict[str, str] | None = None,
     ) -> None:
@@ -232,9 +423,55 @@ class LineProfilingCache:
             return
         try:
             with self._debug_log.open(mode='a') as fobj:
-                print(msg, file=fobj)
+                prefix = self._debug_message_timestamp + ' '
+                print(_indent_with_prefix(msg, prefix), file=fobj)
         except OSError:  # Cache dir may have been rm-ed during cleanup
             pass
+
+    def _setup_in_main_process(self, wrap_os_fork: bool = True) -> None:
+        """
+        Set up shop in the main process so that (line-)profiling can
+        extend into child processes.
+
+        Args:
+            wrap_os_fork (bool):
+                Whether to wrap :py:func:`os.fork` which handles
+                profiling
+
+        Side effects:
+
+            - Instance data written to :py:attr:`~.cache_dir`
+
+            - Environment variables injected
+              (see :py:meth:`~.inject_env_vars()`)
+
+            - A ``.pth`` file written so that child processes
+              automaticaly runs setup code (see
+              :py:func:`line_profiler._child_process_hook.pth_hook.\
+write_pth_hook`)
+
+            - :py:func:`os.fork` wrapped so that profiling set up in
+              forked processes is properly handled (if
+              ``wrap_os_fork=True``)
+
+            - :py:mod:`multiprocessing` wrapped so that child processes
+              managed by the package are properly handled
+
+            - Instance to be returned if :py:func:`~.load()` is called
+              from now on
+        """
+        this_subpkg, *_, _ = (lambda: None).__module__.rpartition('.')
+
+        self.dump()
+        self.inject_env_vars()
+        pth_hook = import_module(this_subpkg + '.pth_hook')
+        pth_hook.write_pth_hook(self)
+
+        self._wrap_os_fork()
+        mp_patches = import_module(this_subpkg + '.multiprocessing_patches')
+        mp_patches.apply(self)
+
+        self._replace_loaded_instance()
 
     def _setup_in_child_process(
         self,
@@ -421,8 +658,14 @@ class LineProfilingCache:
     def _debug_log(self) -> Path | None:
         if not self.debug:
             return None
-        fname = f'debug_log_{self.main_pid}_{os.getpid()}.log'
+        fname = _DEBUG_LOG_FILENAME_PATTERN.format(
+            main_pid=self.main_pid, current_pid=os.getpid(),
+        )
         return Path(self.cache_dir) / fname
+
+    @property
+    def _debug_message_timestamp(self) -> str:
+        return f'[cache-debug-log {datetime.now()} DEBUG]'
 
     @cached_property
     def _debug_message_header(self) -> str:
@@ -436,3 +679,8 @@ class LineProfilingCache:
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
         return type(self).load()._get_init_args() == self._get_init_args()
+
+
+def _indent_with_prefix(string: str, prefix: str, fill_char: str = ' ') -> str:
+    width = len(prefix)
+    return prefix + indent(string, fill_char * width)[width:]

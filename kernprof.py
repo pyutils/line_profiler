@@ -1225,6 +1225,9 @@ class _manage_profiler:
         try:
             extra_stats = None
             if self.set_up_child_profiling:
+                if self.cache.debug:
+                    # Recover debug output from child processes
+                    self.cache._dump_debug_logs()
                 try:
                     extra_stats = self.cache.gather_stats()
                 finally:
@@ -1340,10 +1343,6 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     Handle the (line-)profiling of spawned/forked child Python
     processes.
     """
-    from line_profiler._child_process_profiling import (
-        pth_hook, multiprocessing_patches,
-    )
-
     # Create the cache dir and cache file here; the cache instance will
     # be responsible for managing their lifetimes, while derivative
     # instances in child processes will merely inherit and use them
@@ -1356,11 +1355,10 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
         insert_builtin=options.builtin,
         debug=options.debug,
     )
-    clean_up = functools.partial(cache.add_cleanup, _remove)
+    clean_up = functools.partial(cache.add_cleanup, _remove, missing_ok=True)
     if not diagnostics.KEEP_TEMPDIRS:
-        clean_up(cache.cache_dir, recursive=True, missing_ok=True)
-    cache.dump()
-    clean_up(cache.filename, missing_ok=True)
+        clean_up(cache.cache_dir, recursive=True)
+    clean_up(cache.filename)
 
     # This file is handed to us at the end of
     # `_manage_profiler.__enter__()`;
@@ -1368,29 +1366,10 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     # child-process profiling is used, it is to persist for the lifetime
     # of the cache (so that child processes can do the same preimports)
     if not (preimports_file is None or diagnostics.KEEP_TEMPDIRS):
-        clean_up(preimports_file, missing_ok=True)
+        clean_up(preimports_file)
 
-    # Note: the following functions/methods all clean up after
-    # themselves, so there is no need to explicitly call
-    # `cache.add_cleanup()`
-
-    # Inject environment variables so that child Python processes can
-    # inherit them and resume profiling
-    cache.inject_env_vars()
-
-    # Create the .pth file which allows for setting up profiling in all
-    # the child Python processes (e.g. those created by `os.system()` or
-    # `subprocess.run()`
-    pth_hook.write_pth_hook(cache)
-
-    # Patch `multiprocessing` so that child processes are properly
-    # handled across all "start methods"
-    multiprocessing_patches.apply(cache)
-
-    # Misc. setup:
-    # - Set up the cache instance to be the default one `.load()`-ed
-    cache._replace_loaded_instance()
-    # - Set `cache.profiler`
+    # Handle various setup tasks (see docs thereof)
+    cache._setup_in_main_process()
     cache.profiler = prof
 
     return cache
