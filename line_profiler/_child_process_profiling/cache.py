@@ -7,6 +7,7 @@ from __future__ import annotations
 import atexit
 import dataclasses
 import os
+import sys
 try:
     import _pickle as pickle
 except ImportError:
@@ -86,8 +87,8 @@ class _CallbackRepr(Repr):
 
     Example:
         >>> from functools import partial
-        >>>
-        >>>
+        >>> from sys import version_info
+
         >>> class MyEnviron(dict):
         ...     def some_method(self) -> None:
         ...         ...
@@ -117,6 +118,28 @@ class _CallbackRepr(Repr):
 
         Partial-object formatting:
 
+        >>> r.maxenv = 0
+        >>> print(r.repr(my_env.some_method))
+        <bound method MyEnviron.some_method of environ({...})>
+
+        Bound-method formatting:
+
+        >>> r.maxargs = 0
+        >>> callback_1 = partial(int, base=8)
+        >>> print(r.repr(callback_1))
+        functools.partial(<class 'int'>, ...)
+
+        Indentation (Python 3.12+):
+
+        >>> if version_info < (3, 12):
+        ...     from pytest import skip
+        ...
+        ...     skip(
+        ...         '`Repr.indent` not available on {}.{},{}'
+        ...         .format(*sys.version_info)
+        ...     )
+
+        >>> r = MyRepr(maxenv=2, maxargs=4)
         >>> r.indent = 2
         >>> callback_1 = partial(int, base=8)
         >>> print(r.repr(callback_1))
@@ -137,8 +160,6 @@ class _CallbackRepr(Repr):
         ----...,
         )
 
-        Bound-method formatting:
-
         >>> r.indent = '    '
         >>> r.maxenv = 2
         >>> print(r.repr(my_env.some_method))
@@ -147,10 +168,6 @@ class _CallbackRepr(Repr):
                                                    'bar': '2',
                                                    ...,
                                                })>
-        >>> r.indent = None
-        >>> r.maxenv = 0
-        >>> print(r.repr(my_env.some_method))
-        <bound method MyEnviron.some_method of environ({...})>
     """
     def __init__(
         self,
@@ -196,22 +213,24 @@ class _CallbackRepr(Repr):
         start, end = delims
         if maxlen is not None and len(items) > maxlen:
             items = list(items)[:maxlen] + ['...']
-        if self.indent is None or not items:
+        indent_prefix: str | None = self._get_indent()
+        if indent_prefix is None or not items:
             return '{}{}{}'.format(start, ', '.join(items), end)
         return '\n'.join([
-            start, *(indent(item + ',', self.indent) for item in items), end,
+            start, *(indent(item + ',', indent_prefix) for item in items), end,
         ])
 
-    @property
-    def indent(self) -> str | None:
-        return self._indent
-
-    @indent.setter
-    def indent(self, indent: str | int | None) -> None:
-        if indent is None or isinstance(indent, str):
-            self._indent = indent
-            return
-        self._indent = ' ' * indent
+    if sys.version_info >= (3, 12):
+        # Note: `.indent` only available since 3.12
+        def _get_indent(self) -> str | None:
+            indent = self.indent
+            if indent is None or isinstance(indent, str):
+                return indent
+            return ' ' * indent
+    else:
+        @staticmethod
+        def _get_indent() -> None:
+            return None
 
 
 _CALLBACK_REPR = _CallbackRepr(maxother=cast(int, float('inf'))).repr
