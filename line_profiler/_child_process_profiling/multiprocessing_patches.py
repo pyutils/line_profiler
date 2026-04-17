@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import multiprocessing
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from functools import partial, wraps
 from importlib import import_module
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from time import sleep, monotonic
-from typing import Any, Literal, TypeVar, NoReturn
+from typing import Any, Generic, Literal, Protocol, TypeVar, NoReturn, cast
 from typing_extensions import Concatenate, ParamSpec, Self
 
 from .. import _diagnostics as diagnostics
@@ -34,7 +34,6 @@ from .runpy_patches import create_runpy_wrapper
 __all__ = ('apply',)
 
 
-S = TypeVar('S')
 T = TypeVar('T')
 PS = ParamSpec('PS')
 
@@ -60,6 +59,11 @@ _POLLING_ON_TIMEOUT: Literal['error', 'warn', 'ignore'] = 'warn'
 # internal logging messages to the log files; if `None`, logs are only
 # written if `LineProfilingCache.load().debug` is set to true.
 _INTERCEPT_MP_LOG_MESSAGES: bool | None = False
+
+
+class _Wrapper(Protocol, Generic[PS, T]):
+    def __call__(self, func: Callable[PS, T], /) -> Callable[PS, T]:
+        ...
 
 
 class PickleHook:
@@ -190,16 +194,41 @@ class _Poller:
 
 
 def _method_wrapper(
-    wrapper: Callable[Concatenate[S, Callable[Concatenate[S, PS], T], PS], T]
-) -> Callable[
-    [Callable[Concatenate[S, PS], T]], Callable[Concatenate[S, PS], T]
-]:
-    def inner_wrapper(
-        vanilla_impl: Callable[Concatenate[S, PS], T],
-    ) -> Callable[Concatenate[S, PS], T]:
+    wrapper: Callable[Concatenate[LineProfilingCache, Callable[PS, T], PS], T],
+) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
+    def inner_wrapper(vanilla_impl: Callable[PS, T]) -> Callable[PS, T]:
         @wraps(vanilla_impl)
-        def wrapped_impl(self: S, *a: PS.args, **k: PS.kwargs) -> T:
-            return wrapper(self, vanilla_impl, *a, **k)
+        def wrapped_impl(*args: PS.args, **kwargs: PS.kwargs) -> T:
+            cache = LineProfilingCache.load()
+            debug = cache._debug_output
+
+            arg_reprs: list[str] = [repr(arg) for arg in args]
+            arg_reprs.extend(f'{k}={v!r}' for k, v in kwargs.items())
+            formatted_call = '{}({})'.format(name, ', '.join(arg_reprs))
+
+            debug(f'Wrapped method call made: {formatted_call}...')
+            try:
+                result = wrapper(cache, vanilla_impl, *args, **kwargs)
+            except Exception as e:
+                debug(
+                    'Wrapped method call failed: '
+                    f'{formatted_call} -> {type(e).__name__}: {e}',
+                )
+                raise
+            else:
+                debug(
+                    'Wrapped method call succeeded: '
+                    f'{formatted_call} -> {result!r}',
+                )
+                return result
+
+        if (
+            hasattr(vanilla_impl, '__module__')
+            and hasattr(vanilla_impl, '__qualname__')
+        ):
+            name = '{0.__module__}.{0.__qualname__}'.format(vanilla_impl)
+        else:
+            name = f'<anonymous function at {id(vanilla_impl):#x}>'
 
         return wrapped_impl
 
@@ -213,7 +242,9 @@ def _method_wrapper(
 
 @_method_wrapper
 def wrap_start(
-    self: BaseProcess, vanilla_impl: Callable[[BaseProcess], None],
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[[BaseProcess], None],
+    self: BaseProcess,
 ) -> None:
     """
     Wrap around :py:meth:`BaseProcess.start` to specify the location for
@@ -221,7 +252,6 @@ def wrap_start(
     the parent. This is to ensure that the child can exit gracefully and
     complete any necessary cleanup.
     """
-    cache = LineProfilingCache.load()
     tempfile = cache.make_tempfile(prefix='process-term-lock-', suffix='.lock')
     setattr(self, _PROCESS_TERM_LOCK_LOC, tempfile)
     vanilla_impl(self)
@@ -229,7 +259,9 @@ def wrap_start(
 
 @_method_wrapper
 def wrap_terminate(
-    self: BaseProcess, vanilla_impl: Callable[[BaseProcess], None],
+    cache: LineProfilingCache,  # TODO: config timeouts
+    vanilla_impl: Callable[[BaseProcess], None],
+    self: BaseProcess,
 ) -> None:
     """
     Wrap around :py:meth:`BaseProcess.terminate` to make sure that we
@@ -281,14 +313,18 @@ def wrap_terminate(
     else:
         lock, callback = nullcontext(), _no_op
     with lock:
-        callback()
-        vanilla_impl(self)
+        try:
+            callback()
+        finally:  # Always call `Process.terminate()` to avoid orphans
+            vanilla_impl(self)
 
 
 @_method_wrapper
 def wrap_bootstrap(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[Concatenate[BaseProcess, PS], T],
     self: BaseProcess,
-    vanilla_impl: Callable[Concatenate[BaseProcess, PS], T], /,
+    /,
     *args: PS.args, **kwargs: PS.kwargs
 ) -> T:
     """
@@ -302,7 +338,6 @@ def wrap_bootstrap(
       ``.terminate()`` a failed child before the profiling results can
       be gathered.
     """
-    cache = LineProfilingCache.load()
     lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
 
     if lock_file:
@@ -431,13 +466,13 @@ def _apply_mp_patches(
         ))
 
     # Patch `multiprocessing.process.BaseProcess` methods
-    Method = Callable[Concatenate[S, PS], T]
-    patches: Mapping[str, Callable[[Method], Method]]
-    for submodule, target, patches in [  # type: ignore[assignment]
+    # Note: the type checkers seem to need some help figuring the
+    # `patches` out... so do explicit `cast()`s
+    for submodule, target, patches in [
         ('process', 'BaseProcess', {
-            'start': wrap_start,
-            'terminate': wrap_terminate,
-            '_bootstrap': wrap_bootstrap,
+            'start': cast(_Wrapper[..., None], wrap_start),
+            'terminate': cast(_Wrapper[..., None], wrap_terminate),
+            '_bootstrap': cast(_Wrapper[..., Any], wrap_bootstrap),
         }),
     ]:
         try:
