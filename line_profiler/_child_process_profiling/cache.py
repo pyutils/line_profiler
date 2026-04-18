@@ -243,6 +243,7 @@ class LineProfilingCache:
     info required to make profiling persist into child processes.
     """
     cache_dir: os.PathLike[str] | str
+    config: os.PathLike[str] | str | None = None
     profiling_targets: Collection[str] = dataclasses.field(
         default_factory=list,
     )

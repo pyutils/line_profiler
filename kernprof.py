@@ -1367,6 +1367,7 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     # instances in child processes will merely inherit and use them
     cache = LineProfilingCache(
         cache_dir=tempfile.mkdtemp(),
+        config=options.config,
         profiling_targets=options.prof_mod,
         rewrite_module=script_file,
         profile_imports=options.prof_imports,
