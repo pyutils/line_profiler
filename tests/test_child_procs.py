@@ -11,6 +11,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass
 from functools import partial
+from io import StringIO
 from pathlib import Path
 from sysconfig import get_path
 from tempfile import TemporaryDirectory
@@ -23,7 +24,12 @@ from uuid import uuid4
 import pytest
 import ubelt as ub
 
-from line_profiler.line_profiler import LineStats
+from line_profiler._child_process_profiling.cache import LineProfilingCache
+from line_profiler._child_process_profiling.runpy_patches import (
+    create_runpy_wrapper,
+)
+from line_profiler.curated_profiling import CuratedProfilerContext
+from line_profiler.line_profiler import LineProfiler, LineStats
 
 
 T = TypeVar('T')
@@ -239,6 +245,80 @@ def test_module(
         :py:data:`TEST_MODULE_TEMPLATE`
     """
     yield _ModuleFixture(_test_module, monkeypatch, [ext_module])
+
+
+@pytest.fixture
+def test_module_clone(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    _test_module: Path,
+    ext_module: _ModuleFixture,
+) -> Generator[_ModuleFixture, None, None]:
+    """
+    Yields:
+        :py:class:`_ModuleFixture` helper object containing the same
+        code as :py:data:`test_module`
+    """
+    tmpdir = tmp_path_factory.mktemp('my_path')
+    name = next(_ModuleFixture.propose_name('my_cloned_module'))
+    path = tmpdir / f'{name}.py'
+    path.write_text(_test_module.read_text())
+    yield _ModuleFixture(path, monkeypatch, [ext_module])
+
+
+@pytest.fixture
+def create_cache(
+    tmp_path_factory: pytest.TempPathFactory,
+    curated_profiler: LineProfiler,
+) -> Generator[Callable[..., LineProfilingCache], None, None]:
+    """
+    Wrapper around the :py:class:`LineProfilingCache` instantiator
+    which:
+
+    - Automatically creates a tempdir and provides it as the
+      :py:attr:`LineProfilingCache.cache_dir`,
+
+    - Automatically creates an instance of :py:class:`LineProfiler` that
+      is curated by a :py:class:`CuratedProfilerContext` and provides it
+      as the :py:attr:`LineProfilingCache.profiler`, and
+
+    - At teardown:
+
+      - Restores the value of the class' internal reference to the
+        :py:meth:`LineProfilingCache.load`-ed instance.
+
+      - Calls the `.cleanup()` method of each instance created.
+    """
+    def instantiate(**kwargs) -> LineProfilingCache:
+        tmpdir = tmp_path_factory.mktemp('my_cache_dir')
+        cache = LineProfilingCache(tmpdir, **kwargs)
+        cache.profiler = curated_profiler
+        instances.append(cache)
+        return cache
+
+    old_value = LineProfilingCache._loaded_instance
+    instances: list[LineProfilingCache] = []
+    try:
+        yield instantiate
+    finally:
+        LineProfilingCache._loaded_instance = old_value  # type: ignore
+        for cache in instances:
+            try:
+                cache.cleanup()
+            except Exception:
+                pass
+
+
+@pytest.fixture
+def curated_profiler() -> Generator[LineProfiler, None, None]:
+    """
+    Yields:
+        Fresh instance of :py:class:`LineProfiler` that is managed by a
+        :py:class:`CuratedProfilerContext`
+    """
+    prof = LineProfiler()
+    with CuratedProfilerContext(prof, insert_builtin=True):
+        yield prof
 
 
 # ========================== Helper functions ==========================
@@ -721,7 +801,109 @@ run_literal_code = partial(
     _run_test_module, _run_as_literal_code, profiled_code_is_tempfile=True,
 )
 
-# =============================== Tests ================================
+# ============================= Unit tests =============================
+
+
+@pytest.mark.parametrize(
+    ('run_profiled_code', 'label1'),
+    [(True, 'run-profiled'), (False, 'run-unrelated')])
+@pytest.mark.parametrize(
+    ('as_module', 'label2'),
+    [(True, 'run_module'), (False, 'run_path')])
+@pytest.mark.parametrize(
+    ('debug', 'label3'),
+    [(True, 'with-debug'), (False, 'no-debug')])
+def test_runpy_patches(
+    capsys: pytest.CaptureFixture[str],
+    ext_module: _ModuleFixture,
+    test_module: _ModuleFixture,
+    test_module_clone: _ModuleFixture,
+    create_cache: Callable[..., LineProfilingCache],
+    run_profiled_code: bool,
+    as_module: bool,
+    debug: bool,
+    label1: str, label2: str, label3: str,
+) -> None:
+    """
+    Test that the :py:mod:`runpy` clone created by
+    :py:func:`line_profiler._child_process_profiling\
+.create_runpy_wrapper`
+    correctly sets up profiling when its ``run_*()`` functions are
+    called.
+    """
+    class restore_argv:
+        def __enter__(self) -> None:
+            self.argv = list(sys.argv)
+
+        def __exit__(self, *_, **__) -> None:
+            sys.argv[:] = self.argv
+
+    cache = create_cache(
+        rewrite_module=test_module.path,
+        profiling_targets=[str(ext_module.path)],
+        profile_imports=True,
+        debug=debug,
+    )
+    assert cache.profiler is not None
+    runpy = create_runpy_wrapper(cache)
+
+    nnums = 42
+    nprocs = 2
+    # If we're running some unrelated code, the profiler should not be
+    # involved
+    if run_profiled_code:
+        module = test_module
+        num_invocations, num_loops = 1, nprocs
+        expected_funcs: list[str] = ['my_external_sum']
+    else:
+        module = test_module_clone
+        num_invocations, num_loops = 0, 0
+        expected_funcs = []
+    if as_module:
+        first_arg = module.name
+        runner = partial(runpy.run_module, alter_sys=True)
+        called_func = 'run_module'
+    else:
+        first_arg = str(module.path)
+        runner = runpy.run_path
+        called_func = 'run_path'
+
+    # Check that the code is run
+    module.install(local=True, deps_only=not as_module)
+    with restore_argv():
+        sys.argv[:] = [first_arg, f'--length={nnums}', '-n', str(nprocs)]
+        runner(first_arg, run_name='__main__')
+    stdout = capsys.readouterr().out
+    assert stdout.rstrip('\n') == str(nnums * (nnums + 1) // 2)
+
+    # Check that profiler has received the appropriate targets
+    funcs = [func.__name__ for func in getattr(cache.profiler, 'functions')]
+    assert funcs == expected_funcs
+
+    # Check that calls in the current process are profiled iif the
+    # correct file is executed
+    with StringIO() as sio:
+        cache.profiler.print_stats(sio)
+        stats = sio.getvalue()
+    _check_output(stats, 'EXT-INVOCATION', num_invocations)
+    _check_output(stats, 'EXT-LOOP', num_loops)
+
+    # Check the debug-log entries are correctly gathered
+    log = [entry.msg.lower() for entry in cache._gather_debug_log_entries()]
+    if debug:
+        assert (
+            sum(1 for msg in log if called_func in msg if 'call' in msg)
+            == 1
+        ), log
+        assert (
+            sum(1 for msg in log if 'exec' in msg if 'call' in msg)
+            == int(run_profiled_code)
+        ), log
+    else:
+        assert not log  # No logs written
+
+
+# ========================= Integration tests ==========================
 
 
 def _get_mp_start_method_fuzzer(label_name: str) -> _Params:

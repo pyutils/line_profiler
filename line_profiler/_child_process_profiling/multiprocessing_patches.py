@@ -78,6 +78,34 @@ class PickleHook:
 class _Poller:
     """
     Poll a callable until it returns true-y.
+
+    Example:
+        >>> from itertools import count
+        >>> from typing import Iterator
+        >>>
+        >>>
+        >>> def count_until(limit: int) -> bool:
+        ...     def counter_is_big_enough(
+        ...         counter: Iterator[int], limit: int,
+        ...     ) -> bool:
+        ...         return next(counter) >= limit
+        ...
+        ...     return _Poller.poll_until(
+        ...         counter_is_big_enough, count(), limit,
+        ...     )
+        ...
+        >>>
+        >>> with count_until(10).with_cooldown(.01).with_timeout(.25):
+        ...     print('We counted up to 10')
+        We counted up to 10
+        >>> with count_until(30).with_cooldown(.01).with_timeout(.25):
+        ...     print('We counted up to 30')  \
+# doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+          ...
+        line_profiler..._Poller.Timeout: ...
+        timed out (... s >= 0.25 s) waiting for
+        callback ...counter_is_big_enough... to return true
     """
     def __init__(
         self,
