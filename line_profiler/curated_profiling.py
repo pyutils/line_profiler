@@ -16,6 +16,9 @@ from typing import Any, TextIO, cast
 from typing_extensions import Self
 
 from . import _diagnostics as diagnostics, profile as _global_profiler
+from .autoprofile.autoprofile import (
+    _extend_line_profiler_for_profiling_imports as upgrade_profiler,
+)
 from .autoprofile.util_static import modpath_to_modname
 from .autoprofile.eager_preimports import (
     is_dotted_path, write_eager_import_module,
@@ -190,6 +193,9 @@ class CuratedProfilerContext:
 
         if self._installed:
             return
+        # Equip the profiler instance with the
+        # `.add_imported_function_or_module()` pseudo-method
+        upgrade_profiler(self.prof)
         # Overwrite the explicit profiler (`@line_profiler.profile`)
         self._global_install(self.prof)  # type: ignore
         # Set up hooks to deal with inserting `.prof` as a builtin name

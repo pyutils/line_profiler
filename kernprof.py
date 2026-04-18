@@ -1066,15 +1066,11 @@ def _write_preimports(prof, options, exclude, keep=False):
     Called by :py:func:`main()` to handle eager pre-imports;
     not to be invoked on its own.
     """
-    from line_profiler.autoprofile.autoprofile import (
-        _extend_line_profiler_for_profiling_imports as upgrade_profiler,
-    )
     from line_profiler.curated_profiling import ClassifiedPreimportTargets
 
     # We could've done everything in-memory with `io.StringIO` and `exec()`,
     # but that results in indecipherable tracebacks should anything goes wrong;
     # so we write to a tempfile and `execfile()` it
-    upgrade_profiler(prof)
     temp_mod_path = _touch_tempfile(
         dir=options.tmpdir, prefix='kernprof-eager-preimports-', suffix='.py'
     )

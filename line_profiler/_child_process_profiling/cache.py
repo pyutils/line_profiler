@@ -25,13 +25,6 @@ from typing import Any, ClassVar, TypeVar, TypedDict, cast
 from typing_extensions import Self, ParamSpec, Unpack
 
 from .. import _diagnostics as diagnostics
-from ..autoprofile.autoprofile import (
-    # Note: we need this to equip the profiler with the
-    # `.add_imported_function_or_module()` pseudo-method
-    # (see `kernprof.py::_write_preimports()`), which is required for
-    # the preimports to work
-    _extend_line_profiler_for_profiling_imports as upgrade_profiler,
-)
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
 from ._cache_logging import CacheLoggingEntry
@@ -578,7 +571,6 @@ write_pth_hook`)
         if prof is None:
             prof = LineProfiler()
         self.profiler = prof
-        upgrade_profiler(prof)
         ctx = CuratedProfilerContext(prof, insert_builtin=self.insert_builtin)
         ctx.install()
         self.add_cleanup(ctx.uninstall)
