@@ -249,9 +249,11 @@ class LineProfilingCache:
     insert_builtin: bool = True
     debug: bool = diagnostics.DEBUG
 
-    profiler: LineProfiler | None = dataclasses.field(default=None, init=False)
+    profiler: LineProfiler | None = dataclasses.field(
+        default=None, init=False, repr=False,
+    )
     _cleanup_stacks: dict[float, list[Callable[[], Any]]] = dataclasses.field(
-        default_factory=dict, init=False,
+        default_factory=dict, init=False, repr=False,
     )
     _loaded_instance: ClassVar[Self | None] = None
 
@@ -526,7 +528,8 @@ write_pth_hook`)
         pth_hook = import_module(this_subpkg + '.pth_hook')
         pth_hook.write_pth_hook(self)
 
-        self._wrap_os_fork()
+        if wrap_os_fork:
+            self._wrap_os_fork()
         mp_patches = import_module(this_subpkg + '.multiprocessing_patches')
         mp_patches.apply(self)
 
@@ -638,20 +641,29 @@ write_pth_hook`)
             forked._setup_in_child_process(False, 'fork', self.profiler)
             return result
 
-        # Note: type checkers have vastly different opinions on
-        # `os.fork = wrapper`:
-        # - `ty` wouldn't shut up about shadowing unless we explicitly
-        #   type-annotate the assignment (error type:
-        #   "invalid-assignment")
-        # - `mypy` is cool with the bare assignment, but complains about
-        #   declaring types in "assignment to non-self-attribute"
-        #   (error type: "misc")
-        # The only way to satisfy both seems to be either an
-        # unqualified "type: ignore" comment, or circumventing the
-        # attribute checks by `setattr()` or assigning to the module
-        # namespace dict.
-        os.fork = wrapper  # type: ignore
-        self.add_cleanup(setattr, os, 'fork', fork)
+        self.patch(os, 'fork', wrapper, name='os')
+
+    def patch(
+        self, obj: Any, attr: str, value: Any, *,
+        name: str | None = None, cleanup: bool = True,
+    ) -> None:
+        """
+        Patch ``attr`` on ``obj`` with ``value``. If ``cleanup`` is
+        true, register a cleanup callback to either reset or delete the
+        attribute.
+        """
+        add_cleanup = self.add_cleanup if cleanup else (lambda *_, **__: None)
+        try:
+            old = getattr(obj, attr)
+        except AttributeError:
+            add_cleanup(delattr, obj, attr)
+        else:
+            add_cleanup(setattr, obj, attr, old)
+        setattr(obj, attr, value)
+        if name is None:
+            name = repr(obj)
+        msg = 'Patched `{}.{}` -> `{}`'.format(name, attr, value)
+        self._debug_output(msg)
 
     def make_tempfile(self, **kwargs) -> Path:
         """

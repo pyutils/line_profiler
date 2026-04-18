@@ -42,7 +42,7 @@ __all__ = ('apply',)
 T = TypeVar('T')
 PS = ParamSpec('PS')
 
-_PATCHED_MARKER = '_line_profiler_patched_multiprocessing'
+_PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
 _PROCESS_TERM_LOCK_LOC = '_line_profiler_process_terminate_lock'
 
 
@@ -72,7 +72,7 @@ class PickleHook:
         # In a child process, we don't care about polluting the
         # `multiprocessing` namespace, so don't bother with cleanup
         if not getattr(multiprocessing, _PATCHED_MARKER, False):
-            _apply_mp_patches(lp_cache, _no_op)
+            _apply_mp_patches(lp_cache, add_cleanup=False)
 
 
 class _Poller:
@@ -293,7 +293,7 @@ def wrap_start(
 
 @_method_wrapper
 def wrap_terminate(
-    cache: LineProfilingCache,  # TODO: config timeouts
+    cache: LineProfilingCache,
     vanilla_impl: Callable[[BaseProcess], None],
     self: BaseProcess,
 ) -> None:
@@ -511,29 +511,15 @@ def apply(lp_cache: LineProfilingCache) -> None:
         - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
     """
     if not getattr(multiprocessing, _PATCHED_MARKER, False):
-        _apply_mp_patches(lp_cache, lp_cache.add_cleanup)
+        _apply_mp_patches(lp_cache)
 
 
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
-    add_cleanup: Callable[..., Any],
+    add_cleanup: bool = True,
     debug: bool | None = None,
 ) -> None:
-    def replace(
-        obj: Any, attr: str, value: Any, obj_name: str | None = None,
-    ) -> None:
-        try:
-            old = getattr(obj, attr)
-        except AttributeError:
-            add_cleanup(delattr, obj, attr)
-        else:
-            add_cleanup(setattr, obj, attr, old)
-        setattr(obj, attr, value)
-        if obj_name is None:
-            obj_name = repr(obj)
-        lp_cache._debug_output('Patched `{}.{}` -> `{}`'.format(
-            obj_name, attr, value,
-        ))
+    replace = partial(lp_cache.patch, cleanup=add_cleanup)
 
     # Patch `multiprocessing.process.BaseProcess` methods
     # Note: the type checkers seem to need some help figuring the
@@ -551,9 +537,10 @@ def _apply_mp_patches(
             continue
         Class = getattr(mod, target)
         name = f'{Class.__module__}.{Class.__qualname__}'
+        patch_class = partial(replace, Class, name=name)
         for method, method_wrapper in patches.items():
             vanilla = getattr(Class, method)
-            replace(Class, method, method_wrapper(vanilla), name)
+            patch_class(method, method_wrapper(vanilla))
 
     # Patch `multiprocessing.spawn`
     try:
@@ -561,14 +548,15 @@ def _apply_mp_patches(
     except ImportError:  # Incompatible platforms
         pass
     else:
+        patch_spawn = partial(replace, spawn, name=spawn.__name__)
         # Patch `get_preparation_data()`
         gpd_wrapper = wrap_get_preparation_data(spawn.get_preparation_data)
-        replace(spawn, 'get_preparation_data', gpd_wrapper, spawn.__name__)
+        patch_spawn('get_preparation_data', gpd_wrapper)
         # Patch `runpy` (do it locally instead of tempering with the
         # global `runpy` mmodule)
         if hasattr(spawn, 'runpy'):
             runpy_wrapper = create_runpy_wrapper(lp_cache)
-            replace(spawn, 'runpy', runpy_wrapper, spawn.__name__)
+            patch_spawn('runpy', runpy_wrapper)
 
     # Intercept `multiprocessing` debug messages
     if debug is None:
@@ -576,6 +564,7 @@ def _apply_mp_patches(
     if debug:
         from multiprocessing import util
 
+        patch_util = partial(replace, util, name=util.__name__)
         for logging_func in [
             'sub_debug', 'debug', 'info', 'sub_warning', 'warn',
         ]:
@@ -583,13 +572,10 @@ def _apply_mp_patches(
                 vanilla = getattr(util, logging_func)
             except AttributeError:
                 continue
-            replace(
-                util, logging_func, partial(tee_log, vanilla, logging_func),
-                'multiprocessing.util',
-            )
+            patch_util(logging_func, partial(tee_log, vanilla, logging_func))
 
     # Mark `multiprocessing` as having been patched
-    replace(multiprocessing, _PATCHED_MARKER, True)
+    replace(multiprocessing, _PATCHED_MARKER, True, name='multiprocessing')
 
 
 def _no_op(*_, **__) -> None:
