@@ -16,17 +16,22 @@ from __future__ import annotations
 
 import multiprocessing
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
-from functools import partial, wraps
+from functools import lru_cache, partial, wraps
 from importlib import import_module
 from multiprocessing.process import BaseProcess
+from os import PathLike
 from pathlib import Path
 from time import sleep, monotonic
-from typing import Any, Generic, Literal, Protocol, TypeVar, NoReturn, cast
+from types import MappingProxyType
+from typing import (
+    Any, Generic, Literal, Protocol, TypeVar, Union, NoReturn, cast,
+)
 from typing_extensions import Concatenate, ParamSpec, Self
 
 from .. import _diagnostics as diagnostics
+from ..toml_config import ConfigSource
 from .cache import LineProfilingCache
 from .runpy_patches import create_runpy_wrapper
 
@@ -39,26 +44,6 @@ PS = ParamSpec('PS')
 
 _PATCHED_MARKER = '_line_profiler_patched_multiprocessing'
 _PROCESS_TERM_LOCK_LOC = '_line_profiler_process_terminate_lock'
-
-# NOTE: polling behaviors for blocking `BaseProcess.terminate()` with
-# the lock file:
-# - _POLLING_COOLDOWN:
-#   Seconds between polling for the lock file; set to zero to poll in a
-#   hot loop (not recommended)
-# - _POLLING_TIMEOUT: second to block before timing out anyway; set to
-#   zero to disable timing out
-# - _POLLING_ON_TIMEOUT: what to do on timeout if enabled:
-#   - 'error': error out with `_Poller.Timeout`
-#   - 'warn': issue a warning and move on
-#   - 'ignore': move on without a warning
-_POLLING_COOLDOWN = 1. / 32
-_POLLING_TIMEOUT = 1.
-_POLLING_ON_TIMEOUT: Literal['error', 'warn', 'ignore'] = 'warn'
-
-# NOTE: Set this to `None` or `True` to tee the `multiprocessing`
-# internal logging messages to the log files; if `None`, logs are only
-# written if `LineProfilingCache.load().debug` is set to true.
-_INTERCEPT_MP_LOG_MESSAGES: bool | None = False
 
 
 class _Wrapper(Protocol, Generic[PS, T]):
@@ -193,6 +178,27 @@ class _Poller:
         pass
 
 
+def _get_config(
+    config: PathLike[str] | str | bool | None = None,
+) -> Mapping[str, Any]:
+    if config not in (True, False, None):
+        config = str(config)
+    return _get_config_cached(cast(Union[str, bool, None], config))
+
+
+@lru_cache()
+def _get_config_cached(
+    config: PathLike[str] | str | bool | None = None,
+) -> Mapping[str, Any]:
+    cd = dict(
+        ConfigSource.from_config(config)
+        .get_subconfig('multiprocessing', copy=True)
+        .conf_dict
+    )
+    assert isinstance(cd.get('polling'), Mapping)
+    return MappingProxyType({**cd, 'polling': MappingProxyType(cd['polling'])})
+
+
 def _method_wrapper(
     wrapper: Callable[Concatenate[LineProfilingCache, Callable[PS, T], PS], T],
 ) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
@@ -206,18 +212,18 @@ def _method_wrapper(
             arg_reprs.extend(f'{k}={v!r}' for k, v in kwargs.items())
             formatted_call = '{}({})'.format(name, ', '.join(arg_reprs))
 
-            debug(f'Wrapped method call made: {formatted_call}...')
+            debug(f'Wrapped call made: {formatted_call}...')
             try:
                 result = wrapper(cache, vanilla_impl, *args, **kwargs)
             except Exception as e:
                 debug(
-                    'Wrapped method call failed: '
+                    'Wrapped call failed: '
                     f'{formatted_call} -> {type(e).__name__}: {e}',
                 )
                 raise
             else:
                 debug(
-                    'Wrapped method call succeeded: '
+                    'Wrapped call succeeded: '
                     f'{formatted_call} -> {result!r}',
                 )
                 return result
@@ -302,21 +308,53 @@ def wrap_terminate(
         except AttributeError:
             pass
 
-    lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
-    if lock_file:
-        lock: AbstractContextManager[Any] = (
-            _Poller.poll_while(lock_file.exists)
-            .with_cooldown(_POLLING_COOLDOWN)
-            .with_timeout(_POLLING_TIMEOUT, _POLLING_ON_TIMEOUT)
-        )
-        callback = discard_lock
-    else:
-        lock, callback = nullcontext(), _no_op
-    with lock:
+    def get_poller_args(
+        config: PathLike[str] | str | bool | None = None,
+    ) -> tuple[float, float, str | None]:
+        values = _get_config(config)['polling']
         try:
+            cooldown = max(float(values['cooldown']), 0)
+        except (TypeError, ValueError):
+            cooldown = 0
+        try:
+            timeout = max(float(values['timeout']), 0)
+        except (TypeError, ValueError):
+            timeout = 0
+        try:
+            on_timeout: str | None = values['on_timeout'].lower()
+        except Exception:  # Fallback (use `_Poller`'s default)
+            on_timeout = None
+        return cooldown, timeout, on_timeout
+
+    def wait_for_deletion(
+        path: Path, config: PathLike[str] | str | None = None,
+    ) -> _Poller:
+        cooldown, timeout, on_timeout = get_poller_args(config)
+        # `False` -> no resolution, force loading the vanilla file
+        *_, default_on_timeout = get_poller_args(False)
+        if on_timeout not in ('ignore', 'warn', 'error'):
+            on_timeout = default_on_timeout
+        return (
+            _Poller.poll_while(path.exists)
+            .with_cooldown(cooldown)
+            .with_timeout(
+                timeout, cast(Literal['ignore', 'warn', 'error'], on_timeout),
+            )
+        )
+
+    try:
+        lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
+        if lock_file:
+            lock: AbstractContextManager[Any] = wait_for_deletion(
+                lock_file, cache.config,
+            )
+            callback = discard_lock
+        else:
+            lock, callback = nullcontext(), _no_op
+        with lock:
             callback()
-        finally:  # Always call `Process.terminate()` to avoid orphans
-            vanilla_impl(self)
+    finally:  # Always call `Process.terminate()` to avoid orphans
+        vanilla_impl(self)
 
 
 @_method_wrapper
@@ -386,7 +424,11 @@ def tee_log(
     )
 
 
-def get_preparation_data(
+@_method_wrapper
+def wrap_get_preparation_data(
+    # We don't use the cache here, but `@_method_wrapper` expects it in
+    # the signature (and we want the debug output)
+    _,
     vanilla_impl: Callable[PS, dict[str, Any]],
     /,
     *args: PS.args,
@@ -447,7 +489,7 @@ def apply(lp_cache: LineProfilingCache) -> None:
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
     add_cleanup: Callable[..., Any],
-    debug: bool | None = _INTERCEPT_MP_LOG_MESSAGES,
+    debug: bool | None = None,
 ) -> None:
     def replace(
         obj: Any, attr: str, value: Any, obj_name: str | None = None,
@@ -492,9 +534,7 @@ def _apply_mp_patches(
         pass
     else:
         # Patch `get_preparation_data()`
-        gpd_wrapper = partial(  # type: ignore[call-arg]
-            get_preparation_data, spawn.get_preparation_data,
-        )
+        gpd_wrapper = wrap_get_preparation_data(spawn.get_preparation_data)
         replace(spawn, 'get_preparation_data', gpd_wrapper, spawn.__name__)
         # Patch `runpy` (do it locally instead of tempering with the
         # global `runpy` mmodule)
@@ -504,7 +544,7 @@ def _apply_mp_patches(
 
     # Intercept `multiprocessing` debug messages
     if debug is None:
-        debug = lp_cache.debug
+        debug = _get_config(lp_cache.config)['intercept_logs']
     if debug:
         from multiprocessing import util
 
