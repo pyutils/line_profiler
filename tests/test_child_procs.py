@@ -49,7 +49,7 @@ C = TypeVar('C', bound=Callable[..., Any])
 NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
-_WRITE_DEBUG_LOGS = True
+_DEBUG = True
 
 
 def strip(s: str) -> str:
@@ -363,7 +363,7 @@ def create_cache(
     def print_result(
         cache: LineProfilingCache, topic: str, result: str,
     ) -> None:
-        header = f'{topic} (cache instance {id(cache):#x}'
+        header = f'{topic} (cache instance {id(cache):#x}):'
         print(header, indent(result, '  '), sep='\n')
 
     def print_profiler_stats(cache: LineProfilingCache) -> None:
@@ -382,9 +382,12 @@ def create_cache(
         print_result(cache, 'Gathered profiler stats', result)
 
     def print_debug_logs(cache: LineProfilingCache) -> None:
-        result = '\n'.join(
-            entry.to_text() for entry in cache._gather_debug_log_entries()
-        )
+        if cache.debug:
+            result = '\n'.join(
+                entry.to_text() for entry in cache._gather_debug_log_entries()
+            )
+        else:
+            result = '<N/A: no debug logs>'
         print_result(cache, 'Gathered debug logs', result)
 
     instances: list[LineProfilingCache] = []
@@ -634,6 +637,8 @@ class _Params:
 
 
 class _CallableContextManager(ABC, Generic[TCtx_]):
+    debug: bool
+
     @abstractmethod
     def __enter__(self) -> TCtx_:
         ...
@@ -654,27 +659,53 @@ class _CallableContextManager(ABC, Generic[TCtx_]):
 
         return wrapper
 
+    def _debug(self, msg: str, **kwargs) -> None:
+        if not self.debug:
+            return
+        header = f'{os.environ["PYTEST_CURRENT_TEST"]}: {type(self).__name__}'
+        print(f'{header}: {msg}', **kwargs)
+
 
 class _preserve_obj_attributes(_CallableContextManager[dict[str, Any]]):
-    def __init__(self, obj: Any, attrs: Collection[str]) -> None:
+    def __init__(
+        self, obj: Any, attrs: Collection[str], debug: bool = _DEBUG,
+    ) -> None:
         self.obj = obj
         self.attrs = set(attrs)
         self._callbacks: list[Callable[[], None]] = []
+        self.debug = debug
 
     def __enter__(self) -> dict[str, Any]:
-        def delete(obj: Any, attr: str) -> None:
+        def get_repr(attr: str) -> str:
             try:
-                delattr(obj, attr)
+                value = getattr(self.obj, attr)
+            except ValueError:
+                return '<N/A>'
+            else:
+                return repr(value)
+
+        def delete(attr: str) -> None:
+            try:
+                self._debug('Deleted attr `.{} = {}` on `{!r}`'.format(
+                    attr, get_repr(attr), self.obj,
+                ))
+                delattr(self.obj, attr)
             except AttributeError:
                 pass
+
+        def reset(attr: str, value: Any) -> None:
+            self._debug('Reset attr `.{} = {} -> {!r}` on `{!r}`'.format(
+                attr, get_repr(attr), value, self.obj,
+            ))
+            setattr(self.obj, attr, value)
 
         result: dict[str, Any] = {}
         for attr in self.attrs:
             old = getattr(self.obj, attr, _NotSupplied.NOT_SUPPLIED)
             if old is _NotSupplied.NOT_SUPPLIED:
-                callback = partial(delete, self.obj, attr)
+                callback = partial(delete, attr)
             else:
-                callback = partial(setattr, self.obj, attr, old)
+                callback = partial(reset, attr, old)
             result[attr] = old
             self._callbacks.append(callback)
         return result
@@ -709,12 +740,13 @@ class _preserve_attributes(_CallableContextManager[dict[str, dict[str, Any]]]):
         ...     return old_main(*a, **k)
         ...
         >>>
-        >>> with _preserve_attributes({
+        >>> preserved = {
         ...     'line_profiler.curated_profiling'
         ...     '.CuratedProfilerContext': {'foo'},
         ...     'line_profiler.line_profiler': {'main'},
-        ... }) as old_values:
-        ...     assert old_values == {
+        ... }
+        >>> with _preserve_attributes(preserved, debug=False) as old:
+        ...     assert old == {
         ...         'line_profiler.curated_profiling'
         ...         '.CuratedProfilerContext': {
         ...             'foo': _NotSupplied.NOT_SUPPLIED,
@@ -727,13 +759,19 @@ class _preserve_attributes(_CallableContextManager[dict[str, dict[str, Any]]]):
         ...
         ok
         >>> assert not hasattr(CuratedProfilerContext, 'foo')
-        >>> assert main is not line_profiler.main is old_main
+        >>> assert old_main is \
+old['line_profiler.line_profiler']['main']
+        >>> assert old_main is line_profiler.main
+        >>> assert main is not line_profiler.main
     """
-    def __init__(self, targets: Mapping[str, Collection[str]]) -> None:
+    def __init__(
+        self, targets: Mapping[str, Collection[str]], debug: bool = _DEBUG,
+    ) -> None:
         self.targets = {
             target: set(attrs) for target, attrs in targets.items()
         }
         self._stacks: list[ExitStack] = []
+        self.debug = debug
 
     def __enter__(self) -> dict[str, dict[str, Any]]:
         stack = ExitStack()
@@ -741,7 +779,7 @@ class _preserve_attributes(_CallableContextManager[dict[str, dict[str, Any]]]):
         result: dict[str, Any] = {}
         for target, attrs in self.targets.items():
             result[target] = stack.enter_context(_preserve_obj_attributes(
-                _import_target(target), attrs,
+                _import_target(target), attrs, debug=self.debug,
             ))
         return result
 
@@ -750,12 +788,16 @@ class _preserve_attributes(_CallableContextManager[dict[str, dict[str, Any]]]):
 
 
 class _preserve_pth_files(_CallableContextManager[frozenset[str]]):
+    def __init__(self, debug: bool = _DEBUG) -> None:
+        self.debug = debug
+
     def __enter__(self) -> frozenset[str]:
         self.old = self.get_pth_files()
         return self.old
 
     def __exit__(self, *_, **__) -> None:
         for new_pth_file in self.get_pth_files() - self.old:
+            self._debug(f'Deleting stray .pth file: {new_pth_file!r}')
             (self._get_path() / new_pth_file).unlink(missing_ok=True)
         del self.old
 
@@ -1511,9 +1553,10 @@ def test_apply_mp_patches(
         Pool = multiprocessing.get_context(start_method).Pool
 
     with Pool(2) as pool:
-        pool.starmap(func, _SAFE_TARGET_ARGS)
+        par_result = pool.starmap(func, _SAFE_TARGET_ARGS)
         pool.close()
         pool.join()
+    assert par_result == [func(*args) for args in _SAFE_TARGET_ARGS]
 
     # Check that calls in children are traced
     if start_method == 'dummy':
@@ -1778,7 +1821,7 @@ def test_profiling_multiproc_script(
         nprocs=nprocs,
         timeout=timeout,
         debug_log=(
-            'debug.log' if prof_child_procs and _WRITE_DEBUG_LOGS else None
+            'debug.log' if prof_child_procs and _DEBUG else None
         ),
     )
 
@@ -1825,7 +1868,7 @@ def test_profiling_bare_python(
 
     out_file = temp_dir / 'out.lprof'
     debug_log_file = temp_dir / 'debug.log'
-    write_debug = _WRITE_DEBUG_LOGS and prof_child_procs
+    write_debug = _DEBUG and prof_child_procs
     cmd = [
         'kernprof', '-lv', '--preimports',
         f'--prof-mod={ext_module.name}',
