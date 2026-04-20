@@ -69,10 +69,8 @@ class PickleHook:
         # up shop here.
         lp_cache = LineProfilingCache.load()
         lp_cache._setup_in_child_process(False, 'multiprocessing')
-        # In a child process, we don't care about polluting the
-        # `multiprocessing` namespace, so don't bother with cleanup
         if not getattr(multiprocessing, _PATCHED_MARKER, False):
-            _apply_mp_patches(lp_cache, add_cleanup=False)
+            _apply_mp_patches(lp_cache, main_process=False)
 
 
 class _Poller:
@@ -509,6 +507,19 @@ def apply(lp_cache: LineProfilingCache) -> None:
           - :py:func:`multiprocessing.spawn.get_preparation_data`
 
         - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
+
+    Note:
+        When ``lp_cache.cleanup()`` is run, the global
+        :py:class:`multiprocessing.forkserver.ForkServer` object will be
+        rebooted. This is necessary because the server process staticly
+        inherits the environment when it is first spun up
+        (see :py:func:`multiprocessing.forkserver.ensure_running`).
+        Thus, if in the same Python process we ever start up two
+        separate profliing sessions managed by different caches, the
+        child processes forked from the server will fail to inherit the
+        updated environment variables injected by the newer cache
+        instance, leading to the setup code in this subpackage not being
+        loaded.
     """
     if not getattr(multiprocessing, _PATCHED_MARKER, False):
         _apply_mp_patches(lp_cache)
@@ -516,10 +527,12 @@ def apply(lp_cache: LineProfilingCache) -> None:
 
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
-    add_cleanup: bool = True,
+    main_process: bool = True,
     debug: bool | None = None,
 ) -> None:
-    replace = partial(lp_cache.patch, cleanup=add_cleanup)
+    # In a child process, we don't care about polluting the
+    # `multiprocessing` namespace, so don't bother with cleanup
+    replace = partial(lp_cache.patch, cleanup=main_process)
 
     # Patch `multiprocessing.process.BaseProcess` methods
     # Note: the type checkers seem to need some help figuring the
@@ -573,6 +586,21 @@ def _apply_mp_patches(
             except AttributeError:
                 continue
             patch_util(logging_func, partial(tee_log, vanilla, logging_func))
+
+    # Stop the current `ForkServer` server process as a part of cache
+    # cleanup (this uses `ForkServer._stop()` which is private API, but
+    # it's the same hack used in Python's own test suite -- see the
+    # comment to said method)
+    if main_process:
+        try:
+            from multiprocessing import forkserver
+        except ImportError:  # Incompatible platform
+            pass
+        else:
+            server_instance: forkserver.ForkServer = forkserver._forkserver
+            stop = getattr(server_instance, '_stop', None)
+            assert callable(stop)  # Appease the type checker
+            lp_cache.add_cleanup(stop)
 
     # Mark `multiprocessing` as having been patched
     replace(multiprocessing, _PATCHED_MARKER, True, name='multiprocessing')
