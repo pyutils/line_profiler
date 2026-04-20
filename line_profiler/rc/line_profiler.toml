@@ -230,15 +230,15 @@ intercept_logs = false
 cooldown = 0.03125  # 1/32-nd of a second
 # - `polling.timeout` (float):
 #   Time (seconds) before the main process disregards the existence of
-#   lock file and unblocks calls to `.terminate()` a child process
-#   anyway (set to <= 0 to disable timeouts)
-timeout = 1
+#   lock file and unblocks calls to `.terminate()` a (most probably
+#   errored-out) child process anyway (set to <= 0 to disable timeouts)
+timeout = 0.25
 # - `polling.on_timeout` (Literal['error', 'warn', 'ignore'])
 #   What to do when the above timeout is exhausted, before actually
 #   `.terminate()`-ing the child process:
 #   - 'error': raise an error
 #   - `warn`: issue a warning
 #   - `ignore`: nothing
-on_timeout = 'error'
+on_timeout = 'warn'
 
 # XXX: --- End of implementation details ---

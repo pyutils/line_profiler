@@ -17,12 +17,10 @@ from __future__ import annotations
 import multiprocessing
 import warnings
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager, nullcontext
 from functools import lru_cache, partial, wraps
 from importlib import import_module
 from multiprocessing.process import BaseProcess
 from os import PathLike
-from pathlib import Path
 from time import sleep, monotonic
 from types import MappingProxyType
 from typing import (
@@ -41,9 +39,9 @@ __all__ = ('apply',)
 
 T = TypeVar('T')
 PS = ParamSpec('PS')
+_OnTimeout = Literal['ignore', 'warn', 'error']
 
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
-_PROCESS_TERM_LOCK_LOC = '_line_profiler_process_terminate_lock'
 
 
 class _Wrapper(Protocol, Generic[PS, T]):
@@ -110,7 +108,7 @@ class _Poller:
         func: Callable[[], Any],
         cooldown: float = 0,
         timeout: float = 0,
-        on_timeout: Literal['ignore', 'warn', 'error'] = 'error',
+        on_timeout: _OnTimeout = 'error',
     ) -> None:
         if cooldown < 0:
             cooldown = 0
@@ -134,7 +132,7 @@ class _Poller:
     def with_timeout(
         self,
         timeout: float | None = None,
-        on_timeout: Literal['ignore', 'warn', 'error'] | None = None,
+        on_timeout: _OnTimeout | None = None,
     ) -> Self:
         if timeout is None:
             timeout = self._timeout
@@ -273,23 +271,6 @@ def _method_wrapper(
 
 
 @_method_wrapper
-def wrap_start(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[[BaseProcess], None],
-    self: BaseProcess,
-) -> None:
-    """
-    Wrap around :py:meth:`BaseProcess.start` to specify the location for
-    a lock file, which is managed by the child process and checked by
-    the parent. This is to ensure that the child can exit gracefully and
-    complete any necessary cleanup.
-    """
-    tempfile = cache.make_tempfile(prefix='process-term-lock-', suffix='.lock')
-    setattr(self, _PROCESS_TERM_LOCK_LOC, tempfile)
-    vanilla_impl(self)
-
-
-@_method_wrapper
 def wrap_terminate(
     cache: LineProfilingCache,
     vanilla_impl: Callable[[BaseProcess], None],
@@ -298,42 +279,16 @@ def wrap_terminate(
     """
     Wrap around :py:meth:`BaseProcess.terminate` to make sure that we
     don't actually kill the child (OS-level) process before it has the
-    chance to properly clean up. This is done by blocking the call as
-    long as a lock file exists, which is specified by the parent process
-    and managed by the child.
+    chance to properly clean up.
 
     Note:
-        We're technically polling in a hot loop, but:
-
-        - We're only calling this when explicitly terminating processes,
-          which isn't that bad; and
-
-        - Such calls typically only happen:
-
-          - When e.g. the parallel function exectued in child
-            processes raised an error, so we're already on a "bad"
-            path; and
-
-          - AFTER the performance-critical part of the code (the
-            parallelly-run function).
-
-        To circumvent this we may use dedicated FS-watching APIs like
-        :py:mod:`watchdog` (which use syscalls to do this), but we'll
-        think about introducing extra dependencies when we REALLY have
-        to.
+        We're technically polling in a loop, but it isn't actually
+        *that* bad: typically ``.terminate()`` is only called when we're
+        on the bad path (e.g. the parallel workload errored out), and
+        after the performance-critical part of the code (said workload).
     """
     # XXX: why can `coverage` get away with not doing all these
     # lock-file hijinks and just patching `BaseProcess._bootstrap()`?
-
-    def discard_lock() -> None:
-        assert lock_file is not None
-        # This should have already happened unless we timed out
-        lock_file.unlink(missing_ok=True)
-        try:
-            delattr(self, _PROCESS_TERM_LOCK_LOC)
-        except AttributeError:
-            pass
-
     def get_poller_args(
         config: PathLike[str] | str | bool | None = None,
     ) -> tuple[float, float, str | None]:
@@ -352,8 +307,21 @@ def wrap_terminate(
             on_timeout = None
         return cooldown, timeout, on_timeout
 
-    def wait_for_deletion(
-        path: Path, config: PathLike[str] | str | None = None,
+    def process_has_returned(proc: BaseProcess, timeout: float) -> bool:
+        popen = getattr(proc, '_popen', None)
+        if popen is None:
+            msg, result = 'No associated process', True
+        else:
+            result = popen.wait(timeout) is not None
+            if result:
+                msg = f'Process {popen.pid} has returned'
+            else:
+                msg = f'Waiting for process {popen.pid} to return...'
+        cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
+        return result
+
+    def wait_for_return(
+        config: PathLike[str] | str | None = None,
     ) -> _Poller:
         cooldown, timeout, on_timeout = get_poller_args(config)
         # `False` -> no resolution, force loading the vanilla file
@@ -361,24 +329,13 @@ def wrap_terminate(
         if on_timeout not in ('ignore', 'warn', 'error'):
             on_timeout = default_on_timeout
         return (
-            _Poller.poll_while(path.exists)
-            .with_cooldown(cooldown)
-            .with_timeout(
-                timeout, cast(Literal['ignore', 'warn', 'error'], on_timeout),
-            )
+            _Poller.poll_until(process_has_returned, self, cooldown)
+            .with_timeout(timeout, cast(_OnTimeout, on_timeout))
         )
 
     try:
-        lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
-        if lock_file:
-            lock: AbstractContextManager[Any] = wait_for_deletion(
-                lock_file, cache.config,
-            )
-            callback = discard_lock
-        else:
-            lock, callback = nullcontext(), _no_op
-        with lock:
-            callback()
+        with wait_for_return(cache.config):
+            pass
     finally:  # Always call `Process.terminate()` to avoid orphans
         vanilla_impl(self)
 
@@ -392,27 +349,15 @@ def wrap_bootstrap(
     *args: PS.args, **kwargs: PS.kwargs
 ) -> T:
     """
-    Wrap around :py:meth:`BaseProcess._bootstrap` to:
-
-    - Run ``LineProfilingCache.load().cleanup()`` so that profiling
-      results can be gathered; and
-
-    - Write a lock file before executing ``vanilla_impl()`` and deleted
-      it thereafter, to ensure that a parant process doesn't prematurely
-      ``.terminate()`` a failed child before the profiling results can
-      be gathered.
+    Wrap around :py:meth:`BaseProcess._bootstrap` to run
+    ``LineProfilingCache.load().cleanup()`` so that profiling results
+    can be gathered.
     """
-    lock_file: Path | None = getattr(self, _PROCESS_TERM_LOCK_LOC, None)
-
-    if lock_file:
-        lock_file.touch()
-        cache.add_cleanup(lock_file.unlink, missing_ok=True)
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
-        cache._debug_output(
-            'Calling cleanup hook via `BaseProcess._bootstrap`'
-        )
+        msg = 'Calling cleanup hook via `BaseProcess._bootstrap`'
+        cache._debug_output(msg)
         cache.cleanup()
 
 
@@ -539,7 +484,6 @@ def _apply_mp_patches(
     # `patches` out... so do explicit `cast()`s
     for submodule, target, patches in [
         ('process', 'BaseProcess', {
-            'start': cast(_Wrapper[..., None], wrap_start),
             'terminate': cast(_Wrapper[..., None], wrap_terminate),
             '_bootstrap': cast(_Wrapper[..., Any], wrap_bootstrap),
         }),
