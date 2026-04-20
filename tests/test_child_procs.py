@@ -1144,7 +1144,7 @@ run_literal_code = partial(
 
 _MP_PATCHED_NAMES = {
     'multiprocessing.process.BaseProcess': frozenset({
-        '_bootstrap', 'start', 'terminate'
+        '_bootstrap', 'terminate',
     }),
     'multiprocessing.spawn': frozenset({'get_preparation_data', 'runpy'}),
 }
@@ -1354,9 +1354,11 @@ def test_cache_setup_main_process(
         for target, maybe_patches in patches.items():
             obj = targets[target]
             for attr, is_patched in maybe_patches.items():
-                assert (
-                    getattr(obj, attr) is patched[target][attr]
-                ) != is_patched
+                orig_value = patched[target][attr]
+                if orig_value is _NotSupplied.NOT_SUPPLIED:
+                    assert not hasattr(obj, attr)
+                else:
+                    assert (getattr(obj, attr) is orig_value) != is_patched
         # Check whether the patches are reversed
         cache.cleanup()
         for target, orig_attrs in patched.items():
@@ -1460,7 +1462,10 @@ def test_cache_setup_child(
             callback()
             gathered = cache.gather_stats()
             assert any(gathered.timings.values()) == has_prof_data, gathered
-            assert (os.fork is not old_fork) == fork_patched
+            if hasattr(os, 'fork'):
+                assert (os.fork is not old_fork) == fork_patched
+            else:  # E.g. Windows
+                assert old_fork == _NotSupplied.NOT_SUPPLIED
 
     # Check that profiling results have been written to the cache
     # directory
@@ -1530,6 +1535,7 @@ def test_apply_mp_patches(
     #   preimports. To may the results more consistent between
     #   `start_method='dummy'` and the others, manually do them below.
     cache._setup_in_main_process()  # This calls `apply()`
+    assert cache.profiler is not None
     assert cache.preimports_module is not None
     run_path(str(cache.preimports_module), {'profile': cache.profiler})
 
@@ -1544,6 +1550,10 @@ def test_apply_mp_patches(
     Pool: Callable[..., multiprocessing.pool.Pool]
     if start_method == 'dummy':
         Pool = _import_target('multiprocessing.dummy.Pool')
+        # Twice the counted calls because we're also collecting the
+        # checking calls in this process
+        expected_ncalls = len(_SAFE_TARGET_ARGS) * 2
+        get_stats: Callable[[], LineStats] = cache.profiler.get_stats
     elif start_method not in START_METHODS:
         pytest.skip(
             f'`multiprocessing` start method {start_method!r} '
@@ -1551,6 +1561,8 @@ def test_apply_mp_patches(
         )
     else:
         Pool = multiprocessing.get_context(start_method).Pool
+        expected_ncalls = len(_SAFE_TARGET_ARGS)
+        get_stats = cache.gather_stats
 
     with Pool(2) as pool:
         par_result = pool.starmap(func, _SAFE_TARGET_ARGS)
@@ -1559,18 +1571,13 @@ def test_apply_mp_patches(
     assert par_result == [func(*args) for args in _SAFE_TARGET_ARGS]
 
     # Check that calls in children are traced
-    if start_method == 'dummy':
-        assert cache.profiler is not None
-        stats = cache.profiler.get_stats()
-    else:
-        stats = cache.gather_stats()
-    line_entries = stats.timings[
+    line_entries = get_stats().timings[
         inspect.getfile(func), inspect.getsourcelines(func)[1], func.__name__,
     ]
     num_returns = sum(
         nhits for lineno, nhits, _ in line_entries if lineno in return_lines
     )
-    assert num_returns == len(_SAFE_TARGET_ARGS)
+    assert num_returns == expected_ncalls
 
     # Check the debug logs to see if we have done everything right, esp.
     # the logging interception part not covered by other tests
