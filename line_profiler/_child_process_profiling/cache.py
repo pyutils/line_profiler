@@ -21,8 +21,8 @@ from pickle import HIGHEST_PROTOCOL
 from reprlib import Repr
 from textwrap import indent
 from types import MethodType
-from typing import Any, ClassVar, TypeVar, TypedDict, cast
-from typing_extensions import Self, ParamSpec, Unpack
+from typing import Any, ClassVar, TypeVar, TypedDict, cast, overload
+from typing_extensions import Concatenate, ParamSpec, Self, Unpack
 
 from .. import _diagnostics as diagnostics
 from ..curated_profiling import CuratedProfilerContext
@@ -39,6 +39,7 @@ from .pth_hook import INHERITED_PID_ENV_VARNAME
 __all__ = ('LineProfilingCache',)
 
 
+T = TypeVar('T')
 PS = ParamSpec('PS')
 # Note: `typing.AnyStr` deprecated since 3.13
 AnyStr = TypeVar('AnyStr', str, bytes)
@@ -515,8 +516,9 @@ write_pth_hook`)
               forked processes is properly handled (if
               ``wrap_os_fork=True``)
 
-            - :py:mod:`multiprocessing` wrapped so that child processes
-              managed by the package are properly handled
+            - :py:mod:`multiprocessing` and :py:mod:`threading` patched
+              so that child processes and threads managed thereby are
+              properly handled
 
             - Instance to be returned if :py:func:`~.load()` is called
               from now on
@@ -532,6 +534,8 @@ write_pth_hook`)
             self._wrap_os_fork()
         mp_patches = import_module(this_subpkg + '.multiprocessing_patches')
         mp_patches.apply(self)
+        th_patches = import_module(this_subpkg + '.threading_patches')
+        th_patches.apply(self)
 
         self._replace_loaded_instance()
 
@@ -703,6 +707,115 @@ write_pth_hook`)
     @staticmethod
     def _get_filename(cache_dir: os.PathLike[str] | str) -> str:
         return os.path.join(cache_dir, CACHE_FILENAME)
+
+    @overload
+    @classmethod
+    def _method_wrapper(
+        cls,
+        wrapper: Callable[Concatenate[Self, Callable[PS, T], PS], T],
+        debug: bool | None = None,
+    ) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
+        ...
+
+    @overload
+    @classmethod
+    def _method_wrapper(
+        cls, wrapper: None = None, debug: bool | None = None,
+    ) -> Callable[
+        [Callable[Concatenate[Self, Callable[PS, T], PS], T]],
+        Callable[[Callable[PS, T]], Callable[PS, T]]
+    ]:
+        ...
+
+    @classmethod
+    def _method_wrapper(
+        cls,
+        wrapper: (
+            Callable[Concatenate[Self, Callable[PS, T], PS], T] | None
+        ) = None,
+        debug: bool | None = None,
+    ) -> (
+        Callable[
+            [Callable[Concatenate[Self, Callable[PS, T], PS], T]],
+            Callable[[Callable[PS, T]], Callable[PS, T]]
+        ]
+        | Callable[[Callable[PS, T]], Callable[PS, T]]
+    ):
+        """
+        Convenience wrapper decorator for functions which use the
+        :py:meth:`load`-ed session instance and wrap another callable.
+
+        Args:
+            wrapper (Callable[..., T])
+                Callable with the call signature
+                ``(cache, vanilla_impl, *args, **kwargs) -> retval``;
+                ``*args``, ``**kwargs``, and ``retval`` should be
+                consistent with that of ``vanilla_impl()``'s.
+            debug (bool | None)
+                Whether to format and write debug messages before and
+                after the call to the ``wrapper`` callable;
+                if ``debug`` is not set, it will be taken from the
+                session instance.
+
+        Returns:
+            inner_wrapper (Callable[[Callable[PS, T]], Callable[PS, T]])
+                Wrapper(-maker) which takes the ``vanilla_impl`` and
+                return a wrapper around it.
+        """
+        if wrapper is None:
+            # `ty` doesn't quite support `partial` yet, see issue #1536
+            return cast(
+                Callable[[Callable[PS, T]], Callable[PS, T]],
+                partial(cls._method_wrapper, debug=debug),
+            )
+
+        def inner_wrapper(vanilla_impl: Callable[PS, T]) -> Callable[PS, T]:
+            @wraps(vanilla_impl)
+            def wrapped_impl(*args: PS.args, **kwargs: PS.kwargs) -> T:
+                cache = cls.load()
+                write = cache._debug_output
+                debug_: bool | None = debug
+                if debug_ is None:
+                    debug_ = cache.debug
+
+                if debug_:
+                    arg_reprs: list[str] = [repr(arg) for arg in args]
+                    arg_reprs.extend(f'{k}={v!r}' for k, v in kwargs.items())
+                    formatted_call = f'{name}({", ".join(arg_reprs)})'
+                    write(f'Wrapped call made: {formatted_call}...')
+                try:
+                    result = wrapper(cache, vanilla_impl, *args, **kwargs)
+                except Exception as e:
+                    if debug_:
+                        write(
+                            'Wrapped call failed: '
+                            f'{formatted_call} -> {type(e).__name__}: {e}',
+                        )
+                    raise
+                else:
+                    if debug_:
+                        write(
+                            'Wrapped call succeeded: '
+                            f'{formatted_call} -> {result!r}',
+                        )
+                    return result
+
+            if (
+                hasattr(vanilla_impl, '__module__')
+                and hasattr(vanilla_impl, '__qualname__')
+            ):
+                name = '{0.__module__}.{0.__qualname__}'.format(vanilla_impl)
+            else:
+                name = f'<anonymous function at {id(vanilla_impl):#x}>'
+
+            return wrapped_impl
+
+        for field in 'name', 'qualname', 'doc':
+            dunder = f'__{field}__'
+            value = getattr(wrapper, dunder, None)
+            if value is not None:
+                setattr(inner_wrapper, dunder, value)
+        return inner_wrapper
 
     @property
     def environ(self) -> dict[str, str]:

@@ -361,19 +361,23 @@ def create_cache(
         return cache
 
     def print_result(
-        cache: LineProfilingCache, topic: str, result: str,
+        cache: LineProfilingCache, topic: str, result: str, *notes: str,
     ) -> None:
-        header = f'{topic} (cache instance {id(cache):#x}):'
+        header = '{} ({}):'.format(
+            topic, '; '.join([f'cache instance {id(cache):#x}', *notes]),
+        )
         print(header, indent(result, '  '), sep='\n')
 
     def print_profiler_stats(cache: LineProfilingCache) -> None:
         if cache.profiler is None:
             result = '<N/A: no `.profiler` assigned>'
+            notes = []
         else:
             with StringIO() as sio:
                 cache.profiler.print_stats(sio)
                 result = sio.getvalue()
-        print_result(cache, 'Native profiler stats', result)
+            notes = [f'profiler instance {id(cache.profiler):#x}']
+        print_result(cache, 'Native profiler stats', result, *notes)
 
     def print_gathered_stats(cache: LineProfilingCache) -> None:
         with StringIO() as sio:
@@ -1142,11 +1146,13 @@ run_literal_code = partial(
 # tested APIs and behaviors MUST NOT be relied upon by end-users.
 
 
-_MP_PATCHED_NAMES = {
+_GLOBAL_PATCHES = {
     'multiprocessing.process.BaseProcess': frozenset({
         '_bootstrap', 'terminate',
     }),
     'multiprocessing.spawn': frozenset({'get_preparation_data', 'runpy'}),
+    'threading.Thread': frozenset({'__init__'}),
+    'os': frozenset({'fork'}),
 }
 # NOTE: we need a function which isn't used by the codebase itself
 # (esp. during cache cleanup); otherwise the profiling results may
@@ -1336,11 +1342,11 @@ def test_cache_setup_main_process(
     as expected.
     """
     cache = create_cache(debug=debug)
-    patches: dict[str, dict[str, bool]] = {'os': {'fork': wrap_os_fork}}
-    patches.update(
-        (target, dict.fromkeys(attrs, True))
-        for target, attrs in _MP_PATCHED_NAMES.items()
-    )
+    patches: dict[str, dict[str, bool]] = {
+        target: dict.fromkeys(attrs, True)
+        for target, attrs in _GLOBAL_PATCHES.items()
+    }
+    patches['os']['fork'] = wrap_os_fork
     targets: dict[str, Any] = {
         target: _import_target(target) for target in patches
     }
@@ -1488,7 +1494,7 @@ def test_cache_setup_child(
 @pytest.mark.parametrize(('debug', 'label'),
                          [(True, 'with-debug'), (False, 'no-debug')])
 @_preserve_pth_files()
-@_preserve_attributes(_MP_PATCHED_NAMES)
+@_preserve_attributes(_GLOBAL_PATCHES)
 def test_apply_mp_patches(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],

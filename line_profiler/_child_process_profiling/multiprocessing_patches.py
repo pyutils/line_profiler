@@ -17,7 +17,7 @@ from __future__ import annotations
 import multiprocessing
 import warnings
 from collections.abc import Callable, Mapping
-from functools import lru_cache, partial, wraps
+from functools import lru_cache, partial
 from importlib import import_module
 from multiprocessing.process import BaseProcess
 from os import PathLike
@@ -223,54 +223,7 @@ def _get_config_cached(
     return MappingProxyType({**cd, 'polling': MappingProxyType(cd['polling'])})
 
 
-def _method_wrapper(
-    wrapper: Callable[Concatenate[LineProfilingCache, Callable[PS, T], PS], T],
-) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
-    def inner_wrapper(vanilla_impl: Callable[PS, T]) -> Callable[PS, T]:
-        @wraps(vanilla_impl)
-        def wrapped_impl(*args: PS.args, **kwargs: PS.kwargs) -> T:
-            cache = LineProfilingCache.load()
-            debug = cache._debug_output
-
-            arg_reprs: list[str] = [repr(arg) for arg in args]
-            arg_reprs.extend(f'{k}={v!r}' for k, v in kwargs.items())
-            formatted_call = '{}({})'.format(name, ', '.join(arg_reprs))
-
-            debug(f'Wrapped call made: {formatted_call}...')
-            try:
-                result = wrapper(cache, vanilla_impl, *args, **kwargs)
-            except Exception as e:
-                debug(
-                    'Wrapped call failed: '
-                    f'{formatted_call} -> {type(e).__name__}: {e}',
-                )
-                raise
-            else:
-                debug(
-                    'Wrapped call succeeded: '
-                    f'{formatted_call} -> {result!r}',
-                )
-                return result
-
-        if (
-            hasattr(vanilla_impl, '__module__')
-            and hasattr(vanilla_impl, '__qualname__')
-        ):
-            name = '{0.__module__}.{0.__qualname__}'.format(vanilla_impl)
-        else:
-            name = f'<anonymous function at {id(vanilla_impl):#x}>'
-
-        return wrapped_impl
-
-    for field in 'name', 'qualname', 'doc':
-        dunder = f'__{field}__'
-        value = getattr(wrapper, dunder, None)
-        if value is not None:
-            setattr(inner_wrapper, dunder, value)
-    return inner_wrapper
-
-
-@_method_wrapper
+@LineProfilingCache._method_wrapper
 def wrap_terminate(
     cache: LineProfilingCache,
     vanilla_impl: Callable[[BaseProcess], None],
@@ -340,7 +293,7 @@ def wrap_terminate(
         vanilla_impl(self)
 
 
-@_method_wrapper
+@LineProfilingCache._method_wrapper
 def wrap_bootstrap(
     cache: LineProfilingCache,
     vanilla_impl: Callable[Concatenate[BaseProcess, PS], T],
@@ -395,10 +348,11 @@ def tee_log(
     )
 
 
-@_method_wrapper
+@LineProfilingCache._method_wrapper
 def wrap_get_preparation_data(
-    # We don't use the cache here, but `@_method_wrapper` expects it in
-    # the signature (and we want the debug output)
+    # We don't use the cache here, but
+    # `@LineProfilingCache._method_wrapper` expects it in the signature
+    # (and we want the debug output)
     _,
     vanilla_impl: Callable[PS, dict[str, Any]],
     /,
@@ -443,7 +397,6 @@ def apply(lp_cache: LineProfilingCache) -> None:
         - :py:mod:`multiprocessing` marked as having been set up
 
         - The following methods and functions patched:
-          - :py:meth:`multiprocessing.process.BaseProcess.start`
 
           - :py:meth:`multiprocessing.process.BaseProcess.terminate`
 
