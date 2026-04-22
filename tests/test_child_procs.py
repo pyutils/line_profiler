@@ -1350,7 +1350,7 @@ def test_cache_setup_main_process(
         target: dict.fromkeys(attrs, True)
         for target, attrs in _GLOBAL_PATCHES.items()
     }
-    patches['os']['fork'] = wrap_os_fork
+    patches['os']['fork'] = wrap_os_fork and (sys.platform != 'win32')
     targets: dict[str, Any] = {
         target: _import_target(target) for target in patches
     }
