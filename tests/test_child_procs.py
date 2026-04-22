@@ -35,6 +35,9 @@ from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
+from line_profiler._child_process_profiling.threading_patches import (
+    SHOULD_PATCH_THREADING,
+)
 from line_profiler.curated_profiling import (
     CuratedProfilerContext, ClassifiedPreimportTargets,
 )
@@ -1145,15 +1148,16 @@ run_literal_code = partial(
 # XXX: Tests in this section concerns implementation details, and the
 # tested APIs and behaviors MUST NOT be relied upon by end-users.
 
-
 _GLOBAL_PATCHES = {
     'multiprocessing.process.BaseProcess': frozenset({
         '_bootstrap', 'terminate',
     }),
     'multiprocessing.spawn': frozenset({'get_preparation_data', 'runpy'}),
-    'threading.Thread': frozenset({'__init__'}),
     'os': frozenset({'fork'}),
 }
+if SHOULD_PATCH_THREADING:
+    _GLOBAL_PATCHES['threading.Thread'] = frozenset({'__init__'})
+
 # NOTE: we need a function which isn't used by the codebase itself
 # (esp. during cache cleanup); otherwise the profiling results may
 # be skewed

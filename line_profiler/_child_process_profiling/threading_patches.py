@@ -10,11 +10,14 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 from typing_extensions import ParamSpec
 
+from .._line_profiler import (  # type: ignore
+    USE_LEGACY_TRACE as SHOULD_PATCH_THREADING,
+)
 from ..line_profiler import LineProfiler
 from .cache import LineProfilingCache
 
 
-__all__ = ('apply',)
+__all__ = ('apply', 'SHOULD_PATCH_THREADING')
 
 
 T = TypeVar('T')
@@ -32,6 +35,10 @@ def make_syncing_wrapper(
     :py:attr:`line_profiler.line_profiler.LineProfiler.enable_count`  of
     the active profiler (stored at the cache instance loaded from
     :py:meth:`LineProfilingCache.load`) with ``enable_count``.
+
+    Note:
+        This only seems to work as intended when using the legacy trace
+        system...
     """
     @wraps(func)
     def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
@@ -98,7 +105,13 @@ def apply(lp_cache: LineProfilingCache) -> None:
           - :py:meth:`threading.Thread.__init__`
 
         - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
+
+    Note:
+        This is a no-op when using :py:mod:`sys.monitoring`-based
+        profiling.
     """
+    if not SHOULD_PATCH_THREADING:
+        return
     if getattr(threading, _PATCHED_MARKER, False):
         return
     init_wrapper = wrap_init(threading.Thread.__init__)
