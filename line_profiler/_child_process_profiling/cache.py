@@ -20,7 +20,7 @@ from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from reprlib import Repr
 from textwrap import indent
-from types import MethodType
+from types import MethodType, ModuleType
 from typing import Any, ClassVar, TypeVar, TypedDict, cast, overload
 from typing_extensions import Concatenate, ParamSpec, Self, Unpack
 
@@ -44,11 +44,16 @@ PS = ParamSpec('PS')
 # Note: `typing.AnyStr` deprecated since 3.13
 AnyStr = TypeVar('AnyStr', str, bytes)
 
+_THIS_SUBPACKAGE, *_ = (lambda: None).__module__.rpartition('.')
 INHERITED_CACHE_ENV_VARNAME_PREFIX = (
     'LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_DIR'
 )
 CACHE_FILENAME = 'line_profiler_cache.pkl'
 _DEBUG_LOG_FILENAME_PATTERN = 'debug_log_{main_pid}_{current_pid}.log'
+
+
+def _import_sibling(submodule: str) -> ModuleType:
+    return import_module(f'{_THIS_SUBPACKAGE}.{submodule}')
 
 
 class _ReprAttributes(TypedDict, total=False):
@@ -523,20 +528,10 @@ write_pth_hook`)
             - Instance to be returned if :py:func:`~.load()` is called
               from now on
         """
-        this_subpkg, *_, _ = (lambda: None).__module__.rpartition('.')
-
         self.dump()
         self.inject_env_vars()
-        pth_hook = import_module(this_subpkg + '.pth_hook')
-        pth_hook.write_pth_hook(self)
-
-        if wrap_os_fork:
-            self._wrap_os_fork()
-        mp_patches = import_module(this_subpkg + '.multiprocessing_patches')
-        mp_patches.apply(self)
-        th_patches = import_module(this_subpkg + '.threading_patches')
-        th_patches.apply(self)
-
+        _import_sibling('pth_hook').write_pth_hook(self)
+        self._setup_common(wrap_os_fork, reboot_forkserver=True)
         self._replace_loaded_instance()
 
     def _setup_in_child_process(
@@ -601,10 +596,8 @@ write_pth_hook`)
         )
         self._add_cleanup(prof.dump_stats, -1, prof_outfile)
 
-        # Set up `os.fork()` wrapping if needed (i.e. in a spawned
-        # process)
-        if wrap_os_fork:
-            self._wrap_os_fork()
+        # Various setups
+        self._setup_common(wrap_os_fork, reboot_forkserver=False)
 
         # Set `.cleanup()` as an atexit hook to handle everything when
         # the child process is about to terminate
@@ -612,6 +605,16 @@ write_pth_hook`)
 
         self._debug_output(f'Setup successful ({context})')
         return True
+
+    def _setup_common(
+        self, wrap_os_fork: bool, reboot_forkserver: bool,
+    ) -> None:
+        if wrap_os_fork:
+            self._wrap_os_fork()
+        _import_sibling('multiprocessing_patches').apply(
+            self, reboot_forkserver,
+        )
+        _import_sibling('threading_patches').apply(self)
 
     def _wrap_os_fork(self) -> None:
         """
@@ -630,11 +633,14 @@ write_pth_hook`)
 
         @wraps(fork)
         def wrapper() -> int:
+            ppid = os.getpid()
             result = fork()
             if result:
                 return result
             # If we're here, we are in the fork
+            pid = os.getpid()
             forked = self.copy()  # Ditch inherited cleanups
+            forked._debug_output(f'Forked: {ppid} -> {pid}')
             if forked._replace_loaded_instance():
                 forked._debug_output(
                     'Superseded cached `.load()`-ed instance in forked process'

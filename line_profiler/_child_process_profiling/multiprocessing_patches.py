@@ -49,28 +49,6 @@ class _Wrapper(Protocol, Generic[PS, T]):
         ...
 
 
-class PickleHook:
-    """
-    Object which, when unpickled, sets up profiling in the
-    :py:mod:`multiprocessing`-created process.
-
-    See also:
-        :py:class:`coverage.multiproc.Stowaway`
-    """
-    def __getstate__(_) -> int:
-        # Cannot return `None`, or nothing will be pickled and
-        # `.__getstate__()` will not be invoked in the child
-        return 1
-
-    def __setstate__(*_) -> None:
-        # We're in a child process created by `multiprocessing`, so set
-        # up shop here.
-        lp_cache = LineProfilingCache.load()
-        lp_cache._setup_in_child_process(False, 'multiprocessing')
-        if not getattr(multiprocessing, _PATCHED_MARKER, False):
-            _apply_mp_patches(lp_cache, main_process=False)
-
-
 class _Poller:
     """
     Poll a callable until it returns true-y.
@@ -327,8 +305,8 @@ def _cache_hook(
 
 
 def tee_log(
-    vanilla_impl: Callable[Concatenate[str, PS], None],
     marker: str,
+    vanilla_impl: Callable[Concatenate[str, PS], None],
     /,
     msg: str,
     *args: PS.args,
@@ -348,50 +326,21 @@ def tee_log(
     )
 
 
-@LineProfilingCache._method_wrapper
-def wrap_get_preparation_data(
-    # We don't use the cache here, but
-    # `@LineProfilingCache._method_wrapper` expects it in the signature
-    # (and we want the debug output)
-    _,
-    vanilla_impl: Callable[PS, dict[str, Any]],
-    /,
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> dict[str, Any]:
-    """
-    Wrap around :py:func:`multiprocessing.spawn.get_preparation_data`,
-    slipping a :py:class:`PickleHook` into the returned dictionary so
-    that profiling is triggered upon unpickling.
-
-    Args:
-        vanilla_impl
-            Vanilla
-            :py:func:`multiprocessing.spawn.get_preparation_data`
-        *args
-        **kwargs
-            Passed to
-            :py:func:`multiprocessing.spawn.get_preparation_data`
-
-    Returns
-        Dictionary returned by
-        ``get_preparation_data(*args, **kwargs)`` with an extra key
-    """
-    key = 'line_profiler_pickle_hook'  # Doesn't matter
-    data = vanilla_impl(*args, **kwargs)
-    assert key not in data
-    data[key] = PickleHook()
-    return data
-
-
-def apply(lp_cache: LineProfilingCache) -> None:
+def apply(
+    lp_cache: LineProfilingCache, reboot_forkserver: bool = True,
+) -> None:
     """
     Set up profiling in :py:mod:`multiprocessing` child processes by
     applying patches to the module.
 
     Args:
-        lp_cache (LineProfilingCache)
+        lp_cache (LineProfilingCache):
             Cache instance governing the profiling run
+        reboot_forkserver (bool):
+            Whether to reboot the global
+            :py:class`multiprocessing.forkserver.ForkServer` instance
+            so as to ensure that profiling happens on processes forked
+            therefrom (see Note)
 
     Side effects:
         - :py:mod:`multiprocessing` marked as having been set up
@@ -402,93 +351,112 @@ def apply(lp_cache: LineProfilingCache) -> None:
 
           - :py:meth:`multiprocessing.process.BaseProcess._bootstrap`
 
-          - :py:func:`multiprocessing.spawn.get_preparation_data`
+        - If ``reboot_forkserver=True``, fork-server process rebooted:
+
+          - Immediately
+
+          - When ``lp_cache.cleanup()`` is run
 
         - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
 
     Note:
-        When ``lp_cache.cleanup()`` is run, the global
-        :py:class:`multiprocessing.forkserver.ForkServer` object will be
-        rebooted. This is necessary because the server process staticly
-        inherits the environment when it is first spun up
+        Rebooting the fork server is necessary because its process
+        staticly inherits the environment when it is first spun up
         (see :py:func:`multiprocessing.forkserver.ensure_running`).
-        Thus, if in the same Python process we ever start up two
-        separate profliing sessions managed by different caches, the
-        child processes forked from the server will fail to inherit the
-        updated environment variables injected by the newer cache
-        instance, leading to the setup code in this subpackage not being
-        loaded.
+        Thus, without the reboots:
+
+        - If in the same Python process we ever start up two separate
+          profliing sessions managed by different caches, the child
+          processes forked from the server will fail to inherit the
+          updated environment variables injected by the newer cache
+          instance, leading to the setup code in this subpackage not
+          being loaded.
+
+        - Since 3.13.8 and 3.14.1, the bug where the ``main_path``
+          argument to :py:func:`multiprocessing.forkserver.main` is
+          unused has been fixed (see ``cpython`` issue `GH-126631`_).
+          This causes ``sys.modules['__main__']`` to be set up in the
+          fork-server process, meaning that children forked therefrom
+          will NOT redo the setup. Thus, the fork-server process itself
+          will also need to be properly set up for profiling.
+
+    .. _GH-126631: https://github.com/python/cpython/issues/126631
     """
     if not getattr(multiprocessing, _PATCHED_MARKER, False):
-        _apply_mp_patches(lp_cache)
+        _apply_mp_patches(lp_cache, reboot_forkserver)
+
+
+def _apply_patches_generic(
+    lp_cache: LineProfilingCache,
+    submodule: str,
+    targets: Mapping[str, Mapping[str, Callable[[Any], Any]]],
+    cleanup: bool = True,
+) -> None:
+    submod_name = 'multiprocessing.' + submodule
+    try:
+        mod = import_module(submod_name)
+    except ImportError:
+        return
+    for target, patches in targets.items():
+        if target:
+            try:
+                obj: Any = getattr(mod, target)
+            except AttributeError:
+                continue
+            name = f'{submod_name}.{target}'
+        else:
+            obj, name = mod, submod_name
+        replace = partial(lp_cache.patch, obj, cleanup=cleanup, name=name)
+        for method, method_wrapper in patches.items():
+            try:
+                vanilla = getattr(obj, method)
+            except AttributeError:
+                continue
+            replace(method, method_wrapper(vanilla))
 
 
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
-    main_process: bool = True,
+    reboot_forkserver: bool = True,
     debug: bool | None = None,
 ) -> None:
     # In a child process, we don't care about polluting the
     # `multiprocessing` namespace, so don't bother with cleanup
-    replace = partial(lp_cache.patch, cleanup=main_process)
-
+    apply_patches = partial(_apply_patches_generic, lp_cache)
     # Patch `multiprocessing.process.BaseProcess` methods
     # Note: the type checkers seem to need some help figuring the
     # `patches` out... so do explicit `cast()`s
-    for submodule, target, patches in [
-        ('process', 'BaseProcess', {
-            'terminate': cast(_Wrapper[..., None], wrap_terminate),
-            '_bootstrap': cast(_Wrapper[..., Any], wrap_bootstrap),
-        }),
-    ]:
-        try:
-            mod = import_module('multiprocessing.' + submodule)
-        except ImportError:
-            continue
-        Class = getattr(mod, target)
-        name = f'{Class.__module__}.{Class.__qualname__}'
-        patch_class = partial(replace, Class, name=name)
-        for method, method_wrapper in patches.items():
-            vanilla = getattr(Class, method)
-            patch_class(method, method_wrapper(vanilla))
-
+    apply_patches(
+        'process',
+        {'BaseProcess': {'terminate': wrap_terminate,
+                         '_bootstrap': wrap_bootstrap}},
+    )
     # Patch `multiprocessing.spawn`
     try:
         from multiprocessing import spawn
-    except ImportError:  # Incompatible platforms
+    except ImportError:
         pass
     else:
-        patch_spawn = partial(replace, spawn, name=spawn.__name__)
-        # Patch `get_preparation_data()`
-        gpd_wrapper = wrap_get_preparation_data(spawn.get_preparation_data)
-        patch_spawn('get_preparation_data', gpd_wrapper)
-        # Patch `runpy` (do it locally instead of tempering with the
-        # global `runpy` mmodule)
         if hasattr(spawn, 'runpy'):
-            runpy_wrapper = create_runpy_wrapper(lp_cache)
-            patch_spawn('runpy', runpy_wrapper)
-
+            lp_cache.patch(
+                spawn, 'runpy', create_runpy_wrapper(lp_cache),
+                name='multiprocessing.spawn',
+            )
     # Intercept `multiprocessing` debug messages
     if debug is None:
         debug = _get_config(lp_cache.config)['intercept_logs']
     if debug:
-        from multiprocessing import util
-
-        patch_util = partial(replace, util, name=util.__name__)
-        for logging_func in [
-            'sub_debug', 'debug', 'info', 'sub_warning', 'warn',
-        ]:
-            try:
-                vanilla = getattr(util, logging_func)
-            except AttributeError:
-                continue
-            patch_util(logging_func, partial(tee_log, vanilla, logging_func))
-
-    # Stop the current `ForkServer` server process as a part of cache
-    # cleanup (this uses `ForkServer._stop()` which is private API, but
-    # it's the same hack used in Python's own test suite -- see the
-    # comment to said method)
-    if main_process:
+        lfuncs = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
+        lpatches = {func: partial(partial, tee_log, func) for func in lfuncs}
+        apply_patches('util', {'': lpatches})
+    # Stop the current `ForkServer` server process:
+    # - Now, so that the (rebooted) fork-server process has profiling
+    #   set up; and
+    # - Also as a part of cache cleanup
+    # (this uses `ForkServer._stop()` which is private API, but it's the
+    # same hack used in Python's own test suite -- see the comment to
+    # said method)
+    if reboot_forkserver:
         try:
             from multiprocessing import forkserver
         except ImportError:  # Incompatible platform
@@ -497,10 +465,12 @@ def _apply_mp_patches(
             server_instance: forkserver.ForkServer = forkserver._forkserver
             stop = getattr(server_instance, '_stop', None)
             assert callable(stop)  # Appease the type checker
+            stop()
             lp_cache.add_cleanup(stop)
-
     # Mark `multiprocessing` as having been patched
-    replace(multiprocessing, _PATCHED_MARKER, True, name='multiprocessing')
+    lp_cache.patch(
+        multiprocessing, _PATCHED_MARKER, True, name='multiprocessing',
+    )
 
 
 def _no_op(*_, **__) -> None:

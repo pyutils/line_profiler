@@ -1152,7 +1152,7 @@ _GLOBAL_PATCHES = {
     'multiprocessing.process.BaseProcess': frozenset({
         '_bootstrap', 'terminate',
     }),
-    'multiprocessing.spawn': frozenset({'get_preparation_data', 'runpy'}),
+    'multiprocessing.spawn': frozenset({'runpy'}),
     'os': frozenset({'fork'}),
 }
 if SHOULD_PATCH_THREADING:
@@ -1511,10 +1511,6 @@ def test_apply_mp_patches(
 .multiprocessing_patches.apply`
     works as expected.
     """
-    def gpd_wrapper(name: str) -> dict[str, Any]:
-        impl = _import_target('multiprocessing.spawn.get_preparation_data')
-        return impl(name)
-
     def is_valid_stats_file(path: os.PathLike[str] | str) -> bool:
         try:
             LineStats.from_files(path, on_defective='error')
@@ -1536,7 +1532,6 @@ def test_apply_mp_patches(
         config=config,
         debug=True,
     )
-    old_data = gpd_wrapper('my_name')
     # Note:
     # - The reversibility of the patches have already been tested in
     #   `test_cache_setup_main_process()`, so we just actually test the
@@ -1548,12 +1543,6 @@ def test_apply_mp_patches(
     assert cache.profiler is not None
     assert cache.preimports_module is not None
     run_path(str(cache.preimports_module), {'profile': cache.profiler})
-
-    # Check for the insertion of the `PickleHook` by the patched
-    # `get_preparation_data()`
-    new_data = gpd_wrapper('my_name')
-    inserted_key, = set(new_data) - set(old_data)
-    assert type(new_data[inserted_key]).__name__ == 'PickleHook'
 
     func = _import_target(_SAFE_TARGET)
     return_lines = _find_return_lines(_SAFE_TARGET)
