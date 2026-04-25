@@ -2,6 +2,8 @@
 A simple :py:deco:`pytest.mark.retry` decorator.
 Function-scoped fixtures are re-fetched bewteen retries.
 """
+from __future__ import annotations
+
 import dataclasses
 from collections.abc import (
     Callable, Collection, Generator, Hashable, Iterable, Mapping,
@@ -300,11 +302,11 @@ def pytest_configure(config: pytest.Config) -> None:
     Register the :py:deco:`pytest.mark.retry` marker.
     """
     help_text = ' '.join("""
-    retry[(retries=1, exceptions=Exception, reset_fixtures=True)]:
+    retry(retries=1, exceptions=Exception, reset_fixtures=True):
 
     mark the test for retrying upon failure.
 
-    Args:
+    Args (all optional):
         retries (int):
             Max number of retries for the (sub-)test;
         exceptions (type[Exception] | tuple[type[Exception], ...]):
