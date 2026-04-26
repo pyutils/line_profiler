@@ -7,28 +7,25 @@ from __future__ import annotations
 import atexit
 import dataclasses
 import os
-import sys
 try:
     import _pickle as pickle
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
-from collections.abc import Collection, Callable, Iterable
+from collections.abc import Collection, Callable, MutableMapping, Iterable
 from functools import partial, cached_property, wraps
 from importlib import import_module
-from operator import setitem
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
-from reprlib import Repr
 from textwrap import indent
-from types import MethodType, ModuleType
-from typing import Any, ClassVar, TypeVar, TypedDict, cast, overload
-from typing_extensions import Concatenate, ParamSpec, Self, Unpack
+from types import ModuleType
+from typing import Any, ClassVar, TypeVar, cast, final, overload
+from typing_extensions import Concatenate, ParamSpec, Self
 
 from .. import _diagnostics as diagnostics
+from ..cleanup import Cleanup
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
 from ._cache_logging import CacheLoggingEntry
-from .misc_utils import block_indent, make_tempfile
 # Note: this should have been defined here in this file, but we moved it
 # over to `~._child_process_hook` because that module contains the .pth
 # hook, which must run with minimal overhead when a Python process isn't
@@ -56,187 +53,9 @@ def _import_sibling(submodule: str) -> ModuleType:
     return import_module(f'{_THIS_SUBPACKAGE}.{submodule}')
 
 
-class _ReprAttributes(TypedDict, total=False):
-    """
-    Note:
-        We use this typed dict instead of directly supplying them in the
-        :py:meth:`_CallbackRepr.__init__()` signature, because we don't
-        want to bother with the default values there.
-    """
-    maxlevel: int
-    maxtuple: int
-    maxlist: int
-    maxarray: int
-    maxdict: int
-    maxset: int
-    maxfrozenset: int
-    maxdeque: int
-    maxstring: int
-    maxlog: int
-    maxother: int
-    fillvalue: str
-    indent: str | int | None
-
-
-class _CallbackRepr(Repr):
-    """
-    :py:class:`reprlib.Repr` subclass to help with representing cleanup
-    callbacks, special-casing certain relevant object types (see
-    examples below).
-
-    Example:
-        >>> from functools import partial
-        >>> from sys import version_info
-
-        >>> class MyEnviron(dict):
-        ...     def some_method(self) -> None:
-        ...         ...
-        ...
-        >>>
-        >>> class MyRepr(_CallbackRepr):
-        ...     # Since we can't instantiate a new `os._Environ`, test
-        ...     # the relevant method with a mock
-        ...     repr_MyEnviron = _CallbackRepr.repr__Environ
-        ...
-        >>>
-        >>> r = MyRepr(maxenv=3, maxargs=4, maxstring=15)
-
-        Environ-dict formatting:
-
-        >>> my_env = MyEnviron(
-        ...     foo='1',
-        ...     bar='2',
-        ...     this_varname_is_long_but_isnt_truncated=(
-        ...         "THIS VALUE IS TRUNCATED BECAUSE IT'S TOO LONG"
-        ...     ),
-        ...     baz='4',
-        ... )
-        >>> print(r.repr(my_env))
-        environ({'foo': '1', 'bar': '2', \
-'this_varname_is_long_but_isnt_truncated': 'THIS ... LONG', ...})
-
-        Partial-object formatting:
-
-        >>> r.maxenv = 0
-        >>> print(r.repr(my_env.some_method))
-        <bound method MyEnviron.some_method of environ({...})>
-
-        Bound-method formatting:
-
-        >>> r.maxargs = 0
-        >>> callback_1 = partial(int, base=8)
-        >>> print(r.repr(callback_1))
-        functools.partial(<class 'int'>, ...)
-
-        Indentation (Python 3.12+):
-
-        >>> if version_info < (3, 12):
-        ...     from pytest import skip
-        ...
-        ...     skip(
-        ...         '`Repr.indent` not available on {}.{},{}'
-        ...         .format(*sys.version_info)
-        ...     )
-
-        >>> r = MyRepr(maxenv=2, maxargs=4)
-        >>> r.indent = 2
-        >>> callback_1 = partial(int, base=8)
-        >>> print(r.repr(callback_1))
-        functools.partial(
-          <class 'int'>,
-          base=8,
-        )
-
-        >>> callback_2 = partial(min, 5, 4, 3, 2, 1)
-        >>> r.indent = '----'
-        >>> print(r.repr(callback_2))
-        functools.partial(
-        ----<built-in function min>,
-        ----5,
-        ----4,
-        ----3,
-        ----2,
-        ----...,
-        )
-
-        >>> r.indent = '    '
-        >>> r.maxenv = 2
-        >>> print(r.repr(my_env.some_method))
-        <bound method MyEnviron.some_method of environ({
-                                                   'foo': '1',
-                                                   'bar': '2',
-                                                   ...,
-                                               })>
-    """
-    def __init__(
-        self,
-        *,
-        maxargs: int = 5,
-        maxenv: int = 3,
-        **kwargs: Unpack[_ReprAttributes]
-    ) -> None:
-        super().__init__()  # kwargs are 3.12+
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-        self.maxargs = maxargs
-        self.maxenv = maxenv
-
-    def repr__Environ(self, env: os._Environ[AnyStr], level: int) -> str:
-        get: Callable[[AnyStr], str] = partial(self.repr1, level=level-1)
-        # Truncate envvar values, but not their names
-        envvars = ['{!r}: {}'.format(k, get(v)) for k, v in env.items()]
-        return self._format_items(envvars, ('environ({', '})'), self.maxenv)
-
-    def repr_method(self, method: MethodType, level: int) -> str:
-        instance = self.repr1(method.__self__, level-1)
-        func = getattr(method.__func__, '__qualname__', '?')
-        prefix, suffix = f'<bound method {func} of ', '>'
-        # Take care of possible multi-line reprs
-        return block_indent(instance, prefix) + suffix
-
-    def repr_partial(self, ptl: partial, level: int) -> str:
-        get: Callable[[Any], str] = partial(self.repr1, level=level-1)
-        args = [get(arg) for arg in ptl.args]
-        args.extend('{}={}'.format(k, get(v)) for k, v in ptl.keywords.items())
-        args.insert(0, get(ptl.func))
-        name = '{0.__module__}.{0.__qualname__}'.format(type(ptl))
-        # The +1 is to account for `ptl.func`
-        return self._format_items(args, (name + '(', ')'), self.maxargs + 1)
-
-    def _format_items(
-        self,
-        items: Collection[str],
-        delims: tuple[str, str],
-        maxlen: int | None = None,
-    ) -> str:
-        start, end = delims
-        if maxlen is not None and len(items) > maxlen:
-            items = list(items)[:maxlen] + ['...']
-        indent_prefix: str | None = self._get_indent()
-        if indent_prefix is None or not items:
-            return '{}{}{}'.format(start, ', '.join(items), end)
-        return '\n'.join([
-            start, *(indent(item + ',', indent_prefix) for item in items), end,
-        ])
-
-    if sys.version_info >= (3, 12):
-        # Note: `.indent` only available since 3.12
-        def _get_indent(self) -> str | None:
-            indent = self.indent
-            if indent is None or isinstance(indent, str):
-                return indent
-            return ' ' * indent
-    else:
-        @staticmethod
-        def _get_indent() -> None:
-            return None
-
-
-_CALLBACK_REPR = _CallbackRepr(maxother=cast(int, float('inf'))).repr
-
-
+@final
 @dataclasses.dataclass
-class LineProfilingCache:
+class LineProfilingCache(Cleanup):
     """
     Helper object for coordinating a line-profiling session, caching the
     info required to make profiling persist into child processes.
@@ -261,65 +80,10 @@ class LineProfilingCache:
     _cleanup_stacks: dict[float, list[Callable[[], Any]]] = dataclasses.field(
         default_factory=dict, init=False, repr=False,
     )
-    _loaded_instance: ClassVar[Self | None] = None
+    _loaded_instance: ClassVar[LineProfilingCache | None] = None
 
-    def cleanup(self) -> None:
-        """
-        Pop all the cleanup callbacks from the internal stack added via
-        :py:meth:`~.add_cleanup` and call them in order.
-        """
-        stacks = self._cleanup_stacks
-        ncallbacks_total = sum(len(stack) for stack in stacks.values())
-        if not ncallbacks_total:
-            self._debug_output('Cleanup aborted (no registered callbacks)')
-            return
-        # Bookend the cleanup loop with log messages to help detect if
-        # child processes are prematurely terminated
-        self._debug_output(
-            f'Starting cleanup ({ncallbacks_total} callback(s))...',
-        )
-        ncallbacks_run = 0
-        for priority in sorted(stacks):
-            callbacks = stacks.pop(priority)
-            while callbacks:
-                callback = callbacks.pop()
-                callback_repr = _CALLBACK_REPR(callback)
-                ncallbacks_run += 1
-                try:
-                    callback()
-                except Exception as e:
-                    state = 'failed'
-                    msg = f'{callback_repr}: {type(e).__name__}: {e}'
-                else:
-                    state, msg = 'succeeded', f'{callback_repr}'
-                self._debug_output(
-                    f'- Cleanup {state} '
-                    f'({ncallbacks_run}/{ncallbacks_total}): {msg}',
-                )
-        self._debug_output(
-            f'... cleanup completed ({ncallbacks_total} callback(s))',
-        )
-
-    def add_cleanup(
-        self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
-    ) -> None:
-        """
-        Add a cleanup callback to the internal stack; they can be later
-        called by :py:meth:`~.cleanup`.
-        """
-        self._add_cleanup(callback, 0, *args, **kwargs)
-
-    def _add_cleanup(
-        self, callback: Callable[PS, Any], priority: float,
-        *args: PS.args, **kwargs: PS.kwargs,
-    ) -> None:
-        if args or kwargs:
-            callback = partial(callback, *args, **kwargs)
-        self._cleanup_stacks.setdefault(priority, []).append(callback)
-        header = 'Cleanup callback added'
-        if priority:
-            header = f'{header} (priority: {priority})'
-        self._debug_output(f'{header}: {_CALLBACK_REPR(callback)}')
+    def __post_init__(self) -> None:
+        super().__init__()
 
     def copy(
         self, *,
@@ -369,7 +133,9 @@ class LineProfilingCache:
             If a previously :py:meth:`.~.load`-ed instance exists, it is
             returned instead of a new instance.
         """
-        instance = cls._loaded_instance
+        # `ty` needs some help here, evenif we've marked the class to be
+        # `@final`
+        instance = cast(Self | None, cls._loaded_instance)
         if instance is None:
             pid = os.environ[INHERITED_PID_ENV_VARNAME]
             cache_varname = f'{INHERITED_CACHE_ENV_VARNAME_PREFIX}_{pid}'
@@ -464,32 +230,28 @@ class LineProfilingCache:
         return Path(self.cache_dir).glob(pattern)
 
     def inject_env_vars(
-        self, env: dict[str, str] | None = None,
+        self, env: MutableMapping[str, str] | None = None,
     ) -> None:
         """
         Inject the :py:attr:`~.environ` variables into ``env`` and add
         cleanup callbacks to reverse them.
 
         Args:
-            env (dict[str, str] | None):
+            env (MutableMapping[str, str] | None):
                 Dictionary in the format of :py:data:`os.environ`;
                 default is to use that
         """
-        if env is None:
-            env = cast(dict[str, str], os.environ)
-        for name, value in self.environ.items():
-            try:
-                old = env[name]
-            except KeyError:
-                self.add_cleanup(env.pop, name, None)
-                change = f'{value!r} (new)'
-            else:
-                self.add_cleanup(setitem, env, name, old)
-                change = f'{old!r} -> {value!r}'
-            self._debug_output(f'Injecting env var ${{{name}}}: {change}')
-            env[name] = value
+        self.update_mapping(
+            os.environ if env is None else env,
+            self.environ,
+            _format_debug_msg='Injecting env var ${{{1}}}: {2}'.format,
+        )
 
     def _debug_output(self, msg: str) -> None:
+        """
+        Beside writing to the logger, also write to the
+        :py:attr:`~._debug_log`.
+        """
         try:
             self._make_debug_entry(msg).write(self._debug_log)
         except OSError:  # Cache dir may have been rm-ed during cleanup
@@ -592,8 +354,9 @@ write_pth_hook`)
             prefix='child-prof-output-{}-{}-{:#x}-'
             .format(self.main_pid, os.getpid(), id(prof)),
             suffix='.lprof',
+            delete=False,
         )
-        self._add_cleanup(prof.dump_stats, -1, prof_outfile)
+        self.add_cleanup_with_priority(prof.dump_stats, 1, prof_outfile)
 
         # Various setups
         self._setup_common(wrap_os_fork, reboot_forkserver=False)
@@ -651,28 +414,6 @@ write_pth_hook`)
 
         self.patch(os, 'fork', wrapper, name='os')
 
-    def patch(
-        self, obj: Any, attr: str, value: Any, *,
-        name: str | None = None, cleanup: bool = True,
-    ) -> None:
-        """
-        Patch ``attr`` on ``obj`` with ``value``. If ``cleanup`` is
-        true, register a cleanup callback to either reset or delete the
-        attribute.
-        """
-        add_cleanup = self.add_cleanup if cleanup else (lambda *_, **__: None)
-        try:
-            old = getattr(obj, attr)
-        except AttributeError:
-            add_cleanup(delattr, obj, attr)
-        else:
-            add_cleanup(setattr, obj, attr, old)
-        setattr(obj, attr, value)
-        if name is None:
-            name = repr(obj)
-        msg = 'Patched `{}.{}` -> `{}`'.format(name, attr, value)
-        self._debug_output(msg)
-
     def make_tempfile(self, **kwargs) -> Path:
         """
         Create a fresh tempfile under :py:attr:`~.cache_dir`. The other
@@ -682,17 +423,16 @@ write_pth_hook`)
             path (Path):
                 Path to the created file.
         """
-        path = make_tempfile(dir=self.cache_dir, **kwargs)
-        self._debug_output(f'Created tempfile: {path.name!r}')
-        return path
+        kwargs.setdefault('dir', self.cache_dir)
+        kwargs.setdefault(
+            '_format_debug_msg', 'Created tempfile: {0.name!r}'.format,
+        )
+        return super().make_tempfile(**kwargs)
 
     def _replace_loaded_instance(self, force: bool = False) -> bool:
         cls = type(self)
         if force or self._consistent_with_loaded_instance:
-            # Note: `ty` REALLY hates assigning an instance to
-            # `ClassVar[Self]` (#3274); no choice but to ignore it for
-            # the time being...
-            cls._loaded_instance = self  # type: ignore
+            cls._loaded_instance = self
             return True
         return False
 

@@ -51,13 +51,12 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
     """
     import os
     from sysconfig import get_path
-    from .misc_utils import make_tempfile
 
     if not os.path.exists(cache.filename):
         cache.dump()
         assert os.path.exists(cache.filename)
 
-    fpath = make_tempfile(
+    fpath = cache.make_tempfile(
         prefix='_line_profiler_profiling_hook_',
         suffix='.pth',
         dir=get_path('purelib'),
@@ -67,7 +66,6 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
             (lambda: None).__module__, cache.main_pid,
         )
         fpath.write_text(pth_content)
-        cache.add_cleanup(fpath.unlink, missing_ok=True)
     except Exception:
         fpath.unlink(missing_ok=True)
         raise

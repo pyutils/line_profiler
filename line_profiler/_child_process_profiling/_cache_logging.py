@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple, TextIO, overload
 from typing_extensions import Self
 
 from .. import _diagnostics as diagnostics
-from .misc_utils import block_indent
+from ..line_profiler_utils import block_indent
 
 
 __all__ = ('CacheLoggingEntry',)

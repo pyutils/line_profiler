@@ -436,7 +436,7 @@ class Cleanup:
         delete: bool = True,
         priority: float = 0,
         _format_debug_msg: Callable[[Path], str] = (
-            lambda path: f'Created tempfile: {path.name!r}'
+            'Created tempfile: {}'.format
         ),
         **kwargs
     ) -> Path:
