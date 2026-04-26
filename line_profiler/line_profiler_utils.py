@@ -5,10 +5,15 @@ Miscellaneous utilities that :py:mod:`line_profiler` uses.
 from __future__ import annotations
 
 import enum
-import typing
+import os
+from pathlib import Path
+from tempfile import mkstemp
+from textwrap import indent
+from typing import TYPE_CHECKING
+from typing_extensions import Self
 
-if typing.TYPE_CHECKING:
-    from typing_extensions import Self
+
+__all__ = ('StringEnum', 'block_indent', 'make_tempfile')
 
 
 class _StrEnumBase(str, enum.Enum):
@@ -49,7 +54,7 @@ class _StrEnumBase(str, enum.Enum):
 try:
     from enum import StrEnum as _StrEnum
 except ImportError:
-    if not typing.TYPE_CHECKING:  # Don't confuse the typechecker
+    if not TYPE_CHECKING:  # Don't confuse the typechecker
         _StrEnum = _StrEnumBase
 
 
@@ -89,3 +94,33 @@ class StringEnum(_StrEnum):
             for name, instance in cls.__members__.items()
         }
         return members.get(value.casefold())
+
+
+def block_indent(string: str, prefix: str, fill_char: str = ' ') -> str:
+    r"""
+    Example:
+        >>> string = 'foo\nbar\nbaz'
+        >>> print(string)
+        foo
+        bar
+        baz
+        >>> print(block_indent(string, '++++', '-'))
+        ++++foo
+        ----bar
+        ----baz
+    """
+    width = len(prefix)
+    return prefix + indent(string, fill_char * width)[width:]
+
+
+def make_tempfile(**kwargs) -> Path:
+    """
+    Convenience wrapper around :py:func:`tempfile.mkstemp`, discarding
+    and closing the integer handle (which if left unattended causes
+    problems on some platforms).
+    """
+    handle, fname = mkstemp(**kwargs)
+    try:
+        return Path(fname)
+    finally:
+        os.close(handle)
