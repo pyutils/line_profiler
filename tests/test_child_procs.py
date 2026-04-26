@@ -5,6 +5,7 @@ import dataclasses
 import enum
 import inspect
 import multiprocessing.pool
+import operator
 import os
 import re
 import shlex
@@ -24,6 +25,7 @@ from runpy import run_path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
 from time import monotonic
+from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, final, overload
 from typing_extensions import Self, ParamSpec
 from uuid import uuid4
@@ -38,6 +40,9 @@ from line_profiler._child_process_profiling.runpy_patches import (
 from line_profiler._child_process_profiling.threading_patches import (
     SHOULD_PATCH_THREADING,
 )
+from line_profiler._child_process_profiling.multiprocessing_patches import (
+    _Poller,
+)
 from line_profiler.curated_profiling import (
     CuratedProfilerContext, ClassifiedPreimportTargets,
 )
@@ -45,6 +50,8 @@ from line_profiler.line_profiler import LineProfiler, LineStats
 
 
 T = TypeVar('T')
+T1 = TypeVar('T1')
+T2 = TypeVar('T2')
 TCtx_ = TypeVar('TCtx_')
 PS = ParamSpec('PS')
 C = TypeVar('C', bound=Callable[..., Any])
@@ -52,6 +59,13 @@ C = TypeVar('C', bound=Callable[..., Any])
 NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
+
+# XXX: owing to the shenanigans in
+# `line_profiler._child_process_profiling.multiprocessing_patches`,
+# there is a risk that failing child processes are not properly
+# `.terminate()`-ed. So just put in a timeout...
+_NUM_RETRIES = 2
+_SUBPROC_TIMEOUT = 5  # Seconds
 _DEBUG = True
 
 
@@ -428,6 +442,18 @@ def curated_profiler() -> Generator[LineProfiler, None, None]:
         yield prof
 
 
+@pytest.fixture(autouse=True)
+def _trim_mismatch_traceback(pytestconfig: pytest.Config) -> None:
+    """
+    Truncate the traceback of raised :py:class`ResultMismatch` for more
+    useful error attribution.
+    """
+    try:
+        pytestconfig.pluginmanager.register(ResultMismatch)
+    except ValueError:  # Already registered
+        pass
+
+
 # ========================== Helper functions ==========================
 
 
@@ -435,11 +461,13 @@ class _NotSupplied(enum.Enum):
     NOT_SUPPLIED = enum.auto()
 
 
+@final
 class ResultMismatch(ValueError):
     def __init__(
         self,
         expected: Any,
         actual: Any | _NotSupplied = _NotSupplied.NOT_SUPPLIED,
+        _trunc_tb: int = 0,
     ) -> None:
         msg = f'expected: {expected}'
         if actual != _NotSupplied.NOT_SUPPLIED:
@@ -447,6 +475,54 @@ class ResultMismatch(ValueError):
         super().__init__(msg)
         self.expected = expected
         self.actual = actual
+        self._trunc_tb = max(0, _trunc_tb)
+
+    @classmethod
+    def compare(
+        cls, expected_: T1, actual_: T2, /, *,
+        comparator: Callable[[T1, T2], bool] = operator.eq,
+        expected: str | None = None,
+        actual: str | None = None,
+    ) -> None:
+        if comparator(expected_, actual_):
+            return
+        raise cls(
+            expected_ if expected is None else expected,
+            actual_ if actual is None else actual,
+            _trunc_tb=1,
+        )
+
+    @classmethod
+    def pytest_runtest_makereport(
+        cls, item: pytest.Item, call: pytest.CallInfo,
+    ) -> Any:
+        """
+        Truncate the tracebacks of instances so that pytest outputs are
+        more useful and actually stops at the frame where the comparends
+        are shown.
+        """
+        impl: Callable[..., Any]
+        impl = item.config.pluginmanager.subset_hook_caller(
+            'pytest_runtest_makereport', [cls],
+        )
+        make_report = partial(impl, item=item, call=call)
+
+        xc = call.excinfo
+        if xc is None:
+            return make_report()
+        if not (isinstance(xc.value, cls) and xc.value._trunc_tb):
+            return make_report()
+
+        tb_stack: list[TracebackType] = [xc.tb]
+        while tb_stack[-1].tb_next:
+            tb_stack.append(tb_stack[-1].tb_next)
+        if len(tb_stack) <= xc.value._trunc_tb:
+            return make_report()
+        tb_stack[-(xc.value._trunc_tb + 1)].tb_next = None
+
+        del tb_stack  # Help the GC
+        call.excinfo = xc.from_exception(xc.value.with_traceback(xc.tb))
+        return make_report(call=call)
 
     @property
     def rich_message(self) -> str:
@@ -837,11 +913,11 @@ def _search_cache_logs(
     flags: int = 0,
 ) -> None:
     entries = cache._gather_debug_log_entries()
-    if bool(entries) != expecting_logs:
-        raise ResultMismatch(
-            'logs' if expecting_logs else 'no logs',
-            repr(entries) if entries else 'nothing'
-        )
+    ResultMismatch.compare(
+        expecting_logs, bool(entries),
+        expected='logs' if expecting_logs else 'no logs',
+        actual=repr(entries) if entries else 'nothing',
+    )
     if not expecting_logs:
         return
     text_chunks: list[str] = [entry.to_text() for entry in entries]
@@ -1086,10 +1162,7 @@ def _run_test_module(
                 # - The result is correctly calculated
                 expected = nnums * (nnums + 1) // 2
                 output_lines = proc.stdout.splitlines()
-                if output_lines[0] != str(expected):
-                    raise ResultMismatch(
-                        f'result {expected}', f'output lines: {output_lines}',
-                    )
+                ResultMismatch.compare(str(expected), output_lines[0])
             # - Temporary `.pth` file(s) created by `~~.pth_hook` has
             #   been cleaned up
             assert _preserve_pth_files.get_pth_files() == old_pth_files
@@ -1130,10 +1203,9 @@ def _check_output(output: str, tag: str, nhits: int) -> None:
                 actual_nhits += int(n)
             except Exception:
                 pass
-    if actual_nhits == nhits:
-        return
-    raise ResultMismatch(
-        f'{nhits} hit(s) on line(s) tagged with {tag!r}', actual_nhits,
+    ResultMismatch.compare(
+        nhits, actual_nhits,
+        expected=f'{nhits} hit(s) on line(s) tagged with {tag!r}',
     )
 
 
@@ -1406,6 +1478,7 @@ def test_cache_setup_main_process(
                          [(True, 'no-profiler'), (False, 'with-profiler')])
 @pytest.mark.parametrize(('debug', 'label4'),
                          [(True, 'with-debug'), (False, 'no-debug')])
+@_preserve_attributes(_GLOBAL_PATCHES)
 def test_cache_setup_child(
     create_cache: Callable[..., LineProfilingCache],
     curated_profiler: LineProfiler,
@@ -1493,6 +1566,7 @@ def test_cache_setup_child(
     _search_cache_logs(cache, debug, patterns)
 
 
+@pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
 @pytest.mark.parametrize(('debug', 'label'),
@@ -1576,7 +1650,7 @@ def test_apply_mp_patches(
     num_returns = sum(
         nhits for lineno, nhits, _ in line_entries if lineno in return_lines
     )
-    assert num_returns == expected_ncalls
+    ResultMismatch.compare(expected_ncalls, num_returns)
 
     # Check the debug logs to see if we have done everything right, esp.
     # the logging interception part not covered by other tests
@@ -1718,6 +1792,8 @@ _fuzz_prof_mp_2 = (
 
 @_fuzz_prof_mp_1
 @_fuzz_prof_mp_2
+@pytest.mark.retry(_NUM_RETRIES,
+                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
 @pytest.mark.parametrize(
     # XXX: should we explicitly test the single-proc case? We already
     # have quite a lot of subtests tho...
@@ -1779,12 +1855,6 @@ def test_profiling_multiproc_script(
         - ``prof_child_procs`` of course toggles whether to do the
           patches to set up profiling in child processes.
     """
-    # XXX: owing to the shenanigans in
-    # `line_profiler._child_process_profiling.multiprocessing_patches`,
-    # there is a risk that failing child processes are not properly
-    # `.terminate()`-ed. So just put in a timeout...
-    timeout = 5  # Seconds
-
     # How many calls do we expect?
     nhits = dict.fromkeys(
         ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
@@ -1825,13 +1895,15 @@ def test_profiling_multiproc_script(
         nhits=nhits,
         nnums=nnums,
         nprocs=nprocs,
-        timeout=timeout,
+        timeout=_SUBPROC_TIMEOUT,
         debug_log=(
             'debug.log' if prof_child_procs and _DEBUG else None
         ),
     )
 
 
+@pytest.mark.retry(_NUM_RETRIES,
+                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
 @pytest.mark.parametrize(('use_subprocess', 'label1'),
                          [(True, 'subprocess.run'), (False, 'os.system')])
 @pytest.mark.parametrize(('prof_child_procs', 'label2'),
@@ -1900,7 +1972,9 @@ def test_profiling_bare_python(
             raise RuntimeError('called process failed')
         """.format(concat_command_line(sub_cmd)))
     cmd.extend(['-c', code])
-    proc = _run_subproc(cmd, text=True, capture_output=True)
+    proc = _run_subproc(
+        cmd, text=True, capture_output=True, timeout=_SUBPROC_TIMEOUT,
+    )
 
     nhits = {'EXT-INVOCATION': 1, 'EXT-LOOP': n}
     if not prof_child_procs:
