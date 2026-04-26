@@ -92,7 +92,12 @@ class _RetryEntry:
                 seen.add(id(node))
             if isinstance(node, (pytest.Module, pytest.Package)):
                 if node.path:
-                    path = str(node.path.relative_to(Path.cwd()))
+                    npath = node.path
+                    try:
+                        npath = npath.relative_to(Path.cwd())
+                    except ValueError:  # Not a subpath
+                        pass
+                    path = str(npath)
                 else:
                     path = repr(node)
                 break

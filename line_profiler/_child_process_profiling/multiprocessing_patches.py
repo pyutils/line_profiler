@@ -69,7 +69,10 @@ class _Poller:
         ...     )
         ...
         >>>
-        >>> with count_until(10).with_cooldown(.01).with_timeout(.25):
+        >>> with count_until(10).with_cooldown(.01).with_timeout(.5):
+        ...     # Note: we shouldn't really need that much time, but
+        ...     # something in CI seems to be slowing down the polling
+        ...     # loop...
         ...     print('We counted up to 10')
         We counted up to 10
         >>> with count_until(30).with_cooldown(.01).with_timeout(.25):
