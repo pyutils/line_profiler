@@ -1,6 +1,6 @@
 """
-Patch :py:mod:`threading` so that profiling extends into processes
-it creates.
+Patch :py:mod:`threading` so that profiling extends consistenly into
+processes it creates.
 """
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import threading
 from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
-from typing_extensions import ParamSpec
+from typing_extensions import ParamSpec, Concatenate
 
-from .._line_profiler import (  # type: ignore
+from ._line_profiler import (  # type: ignore
     USE_LEGACY_TRACE as SHOULD_PATCH_THREADING,
 )
-from ..line_profiler import LineProfiler
-from .cache import LineProfilingCache
+from .line_profiler import LineProfiler
+from .cleanup import Cleanup
 
 
 __all__ = ('apply', 'SHOULD_PATCH_THREADING')
@@ -61,41 +61,46 @@ def make_syncing_wrapper(
     return wrapper
 
 
-# Threads are supposed to be lightweight, so don't waste time formatting
-# debug messages during startup
-
-
-@LineProfilingCache._method_wrapper(debug=False)
-def wrap_init(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[..., None],
-    self: threading.Thread,
-    group: None = None,
-    target: Callable[..., Any] | None = None,
-    *a, **k
-) -> None:
+def make_thread_init_wrapper(
+    prof: LineProfiler,
+    vanilla_impl: Callable[
+        Concatenate[threading.Thread, None, Callable[..., Any] | None, PS],
+        None
+    ],
+) -> Callable[
+    Concatenate[threading.Thread, None, Callable[..., Any] | None, PS], None
+]:
     """
     Wrap the initializer of :py:class:`threading.Thread` so that the
     profiler's :py:attr:`LineProfiler.enable_count` is synced up on
     newly spun-up threads.
     """
-    prof = cache.profiler
-    enable_count: int | None = getattr(prof, 'enable_count', None)
-    if target is not None and enable_count:
-        if TYPE_CHECKING:
-            assert prof is not None
-        target = make_syncing_wrapper(target, prof, enable_count)
-    vanilla_impl(self, group, target, *a, **k)
+    @wraps(vanilla_impl)
+    def wrapper(
+        self: threading.Thread,
+        group: None = None,
+        target: Callable[..., Any] | None = None,
+        *args: PS.args,
+        **kwargs: PS.kwargs
+    ) -> None:
+        enable_count: int | None = getattr(prof, 'enable_count', None)
+        if target is not None and enable_count:
+            if TYPE_CHECKING:
+                assert prof is not None
+            target = make_syncing_wrapper(target, prof, enable_count)
+        vanilla_impl(self, group, target, *args, **kwargs)
+
+    return wrapper
 
 
-def apply(lp_cache: LineProfilingCache) -> None:
+def apply(cleanup: Cleanup, prof: LineProfiler) -> None:
     """
     Set up profiling in threads started by :py:mod:`threading` by
     applying patches to the module.
 
     Args:
-        lp_cache (LineProfilingCache)
-            Cache instance governing the profiling run
+        cleanup (Cleanup)
+            Cleanup instance managing the profiling session
 
     Side effects:
         - :py:mod:`threading` marked as having been set up
@@ -104,7 +109,7 @@ def apply(lp_cache: LineProfilingCache) -> None:
 
           - :py:meth:`threading.Thread.__init__`
 
-        - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
+        - Cleanup callbacks registered via ``cleanup.add_cleanup()``
 
     Note:
         This is a no-op when using :py:mod:`sys.monitoring`-based
@@ -114,8 +119,6 @@ def apply(lp_cache: LineProfilingCache) -> None:
         return
     if getattr(threading, _PATCHED_MARKER, False):
         return
-    init_wrapper = wrap_init(threading.Thread.__init__)
-    lp_cache.patch(
-        threading.Thread, '__init__', init_wrapper, name='threading.Thread',
-    )
-    lp_cache.patch(threading, _PATCHED_MARKER, True, name='threading')
+    init_wrapper = make_thread_init_wrapper(prof, threading.Thread.__init__)
+    cleanup.patch(threading.Thread, '__init__', init_wrapper)
+    cleanup.patch(threading, _PATCHED_MARKER, True)

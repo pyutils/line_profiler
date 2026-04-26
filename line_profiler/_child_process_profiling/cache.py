@@ -521,9 +521,8 @@ write_pth_hook`)
               forked processes is properly handled (if
               ``wrap_os_fork=True``)
 
-            - :py:mod:`multiprocessing` and :py:mod:`threading` patched
-              so that child processes and threads managed thereby are
-              properly handled
+            - :py:mod:`multiprocessing` patched so that child processes
+              managed thereby are properly handled
 
             - Instance to be returned if :py:func:`~.load()` is called
               from now on
@@ -614,7 +613,6 @@ write_pth_hook`)
         _import_sibling('multiprocessing_patches').apply(
             self, reboot_forkserver,
         )
-        _import_sibling('threading_patches').apply(self)
 
     def _wrap_os_fork(self) -> None:
         """

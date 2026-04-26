@@ -6,16 +6,16 @@ from __future__ import annotations
 
 import builtins
 import dataclasses
-import functools
 import os
 import warnings
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from io import StringIO
 from textwrap import indent
 from typing import Any, TextIO, cast
 from typing_extensions import Self
 
 from . import _diagnostics as diagnostics, profile as _global_profiler
+from ._threading_patches import apply as apply_threading_patches
 from .autoprofile.autoprofile import (
     _extend_line_profiler_for_profiling_imports as upgrade_profiler,
 )
@@ -23,6 +23,7 @@ from .autoprofile.util_static import modpath_to_modname
 from .autoprofile.eager_preimports import (
     is_dotted_path, write_eager_import_module,
 )
+from .cleanup import Cleanup
 from .cli_utils import short_string_path
 from .line_profiler import LineProfiler
 from .profiler_mixin import ByCountProfilerMixin
@@ -150,20 +151,27 @@ class ClassifiedPreimportTargets:
         return cls(filtered_targets, recurse_targets, invalid_targets)
 
 
-class CuratedProfilerContext:
+class CuratedProfilerContext(Cleanup):
     """
     Context manager for handling various bookkeeping tasks when setting
     up and tearing down profiling:
 
     - Slipping ``prof`` into the builtin namespace (if
       ``insert_builtin`` is true) and :py::deco:`~.profile`
+    - Patch :py:class:`threading.Thread` so that line-profiling is
+      enabled on new threads if it is on the spawning threads
     - At exit, clearing the ``enable_count`` of ``prof``, properly
       disabling it
 
-    Note:
-        The attributes on this object are to be considered
-        implementation details, but not its methods and their
-        signatures.
+    Notes:
+
+        - The attributes on this object are to be considered
+          implementation details, but not its methods and their
+          signatures.
+
+        - In contrast to the base class (:py:class:`Cleanup`), while
+          this context manager is still reentrant, reentering in nested
+          `with: ...` statements is a no-op.
     """
     def __init__(
         self,
@@ -171,6 +179,7 @@ class CuratedProfilerContext:
         insert_builtin: bool = False,
         builtin_loc: str = 'profile',
     ) -> None:
+        super().__init__()
         self.prof = prof
         self.insert_builtin = insert_builtin
         self.builtin_loc = builtin_loc
@@ -185,48 +194,33 @@ class CuratedProfilerContext:
         self._kpo(cast(LineProfiler, prof))
 
     def install(self) -> None:
-        def del_builtin_profile() -> None:
-            delattr(builtins, self.builtin_loc)
-
-        def set_builtin_profile(old: Any) -> None:
-            setattr(builtins, self.builtin_loc, old)
-
         if self._installed:
             return
         # Equip the profiler instance with the
         # `.add_imported_function_or_module()` pseudo-method
         upgrade_profiler(self.prof)
         # Overwrite the explicit profiler (`@line_profiler.profile`)
-        self._global_install(self.prof)  # type: ignore
+        self._global_install(self.prof)
+        self.add_cleanup(self._global_install, None)
+        # Patch `threading`
+        if isinstance(self.prof, LineProfiler):
+            apply_threading_patches(self, self.prof)
         # Set up hooks to deal with inserting `.prof` as a builtin name
         if self.insert_builtin:
-            try:
-                old = getattr(builtins, self.builtin_loc)
-            except AttributeError:
-                self._restore: Callable[[], None] = del_builtin_profile
-            else:
-                self._restore = functools.partial(set_builtin_profile, old)
-            set_builtin_profile(self.prof)
-        self._installed = True
+            self.patch(builtins, self.builtin_loc, self.prof)
+        self.patch(self, '_installed', True)
 
     def uninstall(self) -> None:
         if not self._installed:
             return
-        # Restore the `builtins` namespace
-        if (
-            self.insert_builtin
-            and getattr(builtins, self.builtin_loc, None) is self.prof
-        ):
-            self._restore()
         # Fully disable the profiler
         for _i in range(getattr(self.prof, 'enable_count', 0)):
             self.prof.disable_by_count()
-        # Restore the state of the global `@line_profiler.profile`
-        self._global_install(None)
-        self._installed = False
+        self.cleanup()
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> Self:
         self.install()
+        return self
 
     def __exit__(self, *_, **__) -> None:
         self.uninstall()
