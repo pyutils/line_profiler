@@ -5,13 +5,15 @@ works.
 from __future__ import annotations
 
 import re
+import pprint
 import textwrap
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from functools import partial
+from operator import attrgetter
 from pathlib import Path
 from shutil import rmtree
-from typing import Literal
+from typing import Any, Literal, cast
 from typing_extensions import Self
 
 import pytest
@@ -139,6 +141,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Callable, Generator
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -153,6 +156,11 @@ def my_temp_dir(pytestconfig: pytest.Config) -> Generator[Path, None, None]:
     else:
         yield path
 
+@pytest.fixture(scope='module')
+def my_log(pytestconfig: pytest.Config) -> Path | None:
+    path: Path | None = getattr(pytestconfig.option, 'my_log', None)
+    return path
+
 
 def _tempfile(*args, **kwargs) -> Path:
     handle, path = tempfile.mkstemp(*args, **kwargs)
@@ -164,25 +172,41 @@ def _tempfile(*args, **kwargs) -> Path:
 
 @pytest.fixture
 def maketemp(
-    my_temp_dir: Path,
+    my_temp_dir: Path, my_log: Path | None,
 ) -> Generator[Callable[..., Path], None, None]:
     paths: list[Path] = []
-    try:
-        def _maketemp(*args, **kwargs) -> Path:
-            path = _tempfile(*args, **kwargs)
-            paths.append(path)
-            print(f'maketemp() @ {id(_maketemp):#x}: created tempfile {path}')
-            return path
 
+    def _maketemp(*args, **kwargs) -> Path:
+        path = _tempfile(*args, **kwargs)
+        paths.append(path)
+        log(f'created tempfile {path}')
+        return path
+
+    log = partial(_log, _maketemp, my_log)
+    try:
         yield _maketemp
     finally:
         for path in paths:
             path.unlink(missing_ok=True)
-            print(f'maketemp() @ {id(_maketemp):#x}: removed tempfile {path}')
+            log(f'removed tempfile {path}')
+
+
+def _log(maketemp: Any, my_log: Path | None, msg: str) -> None:
+    chunks: list[str] = [
+        os.environ['PYTEST_CURRENT_TEST'],
+        f'maketemp() @ {id(maketemp):#x}',
+        msg,
+    ]
+    msg = ': '.join(chunks)
+    print(msg)
+    if my_log is None:
+        return
+    with my_log.open(mode='a') as fobj:
+        print(msg, file=fobj)
 
 
 @pytest.mark.retry(reset_fixtures=True)
-def test_no_fixture_reset(
+def test_with_fixture_reset(
     my_temp_dir: Path, maketemp: Callable[..., Path],
 ) -> None:
     path = maketemp(dir=my_temp_dir)
@@ -190,7 +214,7 @@ def test_no_fixture_reset(
 
 
 @pytest.mark.retry(2, reset_fixtures=False)
-def test_with_fixture_reset(
+def test_no_fixture_reset(
     my_temp_dir: Path, maketemp: Callable[..., Path],
 ) -> None:
     path = maketemp(dir=my_temp_dir)
@@ -470,6 +494,34 @@ class _TestModule:
         return textwrap.dedent(text).strip('\n')
 
 
+def _identical_items_are_adjacent(items: Iterable[Any]) -> bool:
+    """
+    Example:
+        >>> _identical_items_are_adjacent([])
+        True
+        >>> _identical_items_are_adjacent([1])
+        True
+        >>> _identical_items_are_adjacent([1, 10])
+        True
+        >>> _identical_items_are_adjacent([1, 10, 1])
+        False
+        >>> _identical_items_are_adjacent('AAcCb')
+        True
+        >>> _identical_items_are_adjacent('AcCAb')
+        False
+    """
+    past: set[Any] = set()
+    sentinel = object()
+    last: Any = sentinel
+    for item in items:
+        if last is not sentinel and last != item:
+            past.add(last)
+        if item in past:
+            return False
+        last = item
+    return True
+
+
 @pytest.fixture
 def counters_module(
     pytester: pytest.Pytester,
@@ -515,9 +567,9 @@ def teardown_module(
         TEST_TEARDOWN,
         {
             'test_no_fixture_reset':
-            [_TestOutcome('test_no_fixture_reset', 'failed', 1)],
+            [_TestOutcome('test_no_fixture_reset', 'failed', 2)],
             'test_with_fixture_reset':
-            [_TestOutcome('test_with_fixture_reset', 'failed', 2)],
+            [_TestOutcome('test_with_fixture_reset', 'failed', 1)],
         },
         pytester,
         conftest="""
@@ -533,6 +585,11 @@ def teardown_module(
                 '--my-temp-dir',
                 type=Path,
                 help=f'persisted tempdir location for {__file__!r}',
+            )
+            parser.addoption(
+                '--my-log',
+                type=Path,
+                help=f'log file location for tempfile creation/deletion',
             )
         """,
     )
@@ -576,16 +633,64 @@ def test_fixture_teardown(
 ) -> None:
     """
     Test that the decorator correctly handles teardown for additional
-    fixture copies incurred by retries.
+    fixture copies incurred by retries; in particular, superseded
+    function-scoped fixtures should be torn down before their
+    replacements are set up.
     """
+    Stage = Literal['setup', 'call', 'teardown']
+
+    @dataclass
+    class LogEntry:
+        test: str
+        stage: Stage
+        fixture_id: int
+        msg: str
+
+        @classmethod
+        def parse_line(cls, line: str) -> Self:
+            test, ident, *remainder = line.split(': ')
+            msg = ': '.join(remainder)
+            test_match = re.fullmatch(
+                r'(.+) +\((setup|call|teardown)\)', test,
+            )
+            assert test_match
+            test, stage = test_match.group(1, 2)
+            assert stage in ('setup', 'call', 'teardown')
+            ident_match = re.fullmatch(
+                r'maketemp\(\) @ 0x([0-9a-f]+)', ident,
+            )
+            assert ident_match
+            fixture_id = int(ident_match.group(1), base=16)
+            return cls(test, cast(Stage, stage), fixture_id, msg)
+
     tempdir = tmp_path_factory.mktemp('my_temp')
-    print(tempdir)
+    log = tempdir / 'tempfiles.log'
     teardown_module.run(
-        '--verbose', f'--my-temp-dir={tempdir}',
+        '--verbose', f'--my-temp-dir={tempdir}', f'--my-log={log}',
         check_results=True, check_summary='verbose', check_warnings=0,
     )
+
+    # Check that all the tempfiles ahve been wiped
     files = {path.name for path in tempdir.iterdir()}
-    assert not files
+    assert not (files - {log.name})
+
+    # Check that tempfiles are deleted as soon as the fixture value
+    # that created them went obsolete, before the next rerun;
+    # we can verify that by checking that the ids of the `makefile()`
+    # fixtures appear in contiguous blocks
+    with log.open() as fobj:
+        entries = [LogEntry.parse_line(line.rstrip('\n')) for line in fobj]
+    pprint.pprint(entries)
+    field: tuple[str, ...] | str
+    for field in ('test', 'stage'), 'fixture_id':
+        if isinstance(field, str):
+            getter: Callable[[LogEntry], Any] = attrgetter(field)
+        else:
+            getter = attrgetter(*field)
+        values = [getter(entry) for entry in entries]
+        assert _identical_items_are_adjacent(values), (
+            f'Inconsistency in {field} order: {values!r}'
+        )
 
 
 def test_exception_restrictions(exceptions_module: _TestModule) -> None:

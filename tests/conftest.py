@@ -5,6 +5,7 @@ Function-scoped fixtures are re-fetched bewteen retries.
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from collections.abc import (
     Callable, Collection, Generator, Hashable, Iterable, Mapping,
 )
@@ -16,7 +17,10 @@ from typing import (
 )
 
 import pytest
+from _pytest.compat import NOTSET
+from _pytest.fixtures import SubRequest
 from _pytest.nodes import Node
+from _pytest.scope import Scope
 from _pytest.unittest import TestCaseFunction
 try:
     from pytest import TerminalReporter
@@ -28,6 +32,8 @@ _Status = Literal['passed', 'failed', 'skipped']
 F = TypeVar('F', bound=TestCaseFunction)
 FCls = TypeVar('FCls', bound=type[TestCaseFunction])
 T = TypeVar('T')
+
+_FUNCTION_SCOPE = Scope.Function
 
 
 class _PyfuncCallImpl(Protocol):
@@ -98,6 +104,7 @@ class _RetryEntry:
 
 
 _RETRY_ENTRIES_KEY = pytest.StashKey[list[_RetryEntry]]()
+_NEXTITEMS_KEY = pytest.StashKey[dict[pytest.Item, pytest.Item | None]]()
 
 
 @final
@@ -189,13 +196,46 @@ class _RetryHelper:
         reset_fixtures: bool = False,
         should_reset: Callable[[str], bool] = lambda _: False,
     ) -> None:
-        def clear_fixture_cache(fixture_def: pytest.FixtureDef[Any]) -> None:
-            if (
-                fixture_def.scope == 'function'
-                and should_reset(fixture_def.argname)
-                and hasattr(fixture_def, 'cached_result')
+        """
+        Note:
+            This makes HEAVY use of :py:mod`_pytest` internals.
+        """
+        def cleanup_fixture(fdef: pytest.FixtureDef[Any]) -> None:
+            if not (
+                fdef.scope == 'function'
+                and should_reset(fdef.argname)
+                and getattr(fdef, 'cached_result', None) is not None
             ):
-                fixture_def.cached_result = None
+                return
+            fdef.cached_result = None
+            finalize(fdef)
+
+        def finalize(fdef: pytest.FixtureDef[Any]) -> None:
+            assert fdef.scope == 'function'
+
+            # Plagiarized code from
+            # `FixtureRequest._get_active_fixture_def()`
+            try:
+                callspec = func.callspec
+            except AttributeError:
+                callspec = None
+            if callspec is not None and fdef.argname in callspec.params:
+                value = callspec.params[fdef.argname]
+                index = callspec.indices[fdef.argname]
+            else:
+                value, index = NOTSET, 0
+
+            with warnings.catch_warnings():
+                warnings.simplefilter(
+                    'ignore', pytest.PytestDeprecationWarning,
+                )
+                fdef.finish(SubRequest(
+                    request=func._request,
+                    scope=_FUNCTION_SCOPE,
+                    param=value,
+                    param_index=index,
+                    fixturedef=fdef,
+                ))
 
         def unique(
             items: Iterable[T], key: Callable[[T], Hashable] = id,
@@ -226,7 +266,7 @@ class _RetryHelper:
             # the `TopRequest` instance that `func` has (`._request`)
             func._initrequest()
             for fixture_def in unique(iter_all_fixture_defs(func)):
-                clear_fixture_cache(fixture_def)
+                cleanup_fixture(fixture_def)
         else:
             # Fixture values will naturally refill, possibly from caches
             func.funcargs.clear()
@@ -317,10 +357,6 @@ def pytest_configure(config: pytest.Config) -> None:
             `False` none thereof
     """.split())
     config.addinivalue_line('markers', help_text)
-
-
-# TODO: do we need to call `pytest_runtest_teardown()` between retries
-# to make sure that the reset fixtures are properly cleaned up?`
 
 
 def pytest_terminal_summary(
