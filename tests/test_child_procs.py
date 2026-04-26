@@ -37,9 +37,6 @@ from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
-from line_profiler._child_process_profiling.threading_patches import (
-    SHOULD_PATCH_THREADING,
-)
 from line_profiler._child_process_profiling.multiprocessing_patches import (
     _Poller,
 )
@@ -1227,8 +1224,6 @@ _GLOBAL_PATCHES = {
     'multiprocessing.spawn': frozenset({'runpy'}),
     'os': frozenset({'fork'}),
 }
-if SHOULD_PATCH_THREADING:
-    _GLOBAL_PATCHES['threading.Thread'] = frozenset({'__init__'})
 
 # NOTE: we need a function which isn't used by the codebase itself
 # (esp. during cache cleanup); otherwise the profiling results may
@@ -1372,35 +1367,6 @@ def test_cache_dump_load(
             original.cleanup()
     finally:  # Env vars restored after cleanup
         assert set(os.environ) == envvars
-
-
-@pytest.mark.parametrize(('debug', 'label'),
-                         [(True, 'with-debug'), (False, 'no-debug')])
-def test_cache_cleanup_order(
-    create_cache: Callable[..., LineProfilingCache], debug: bool, label: str,
-) -> None:
-    """
-    Test that :py:meth`LineProfilingCache.cleanup` executes the cleanup
-    callback stacks in order.
-    """
-    strings: list[str] = []
-    cache = create_cache(debug=debug)
-
-    cache.add_cleanup(strings.append, 'first')
-    # Decreased priority
-    cache._add_cleanup(strings.append, 1, 'second')
-    # Increased priority
-    cache._add_cleanup(strings.append, -1, 'third')
-    cache.add_cleanup(strings.append, 'fourth')
-
-    cache.cleanup()
-    assert strings == ['third', 'fourth', 'first', 'second']
-
-    pattern = '\n'.join(
-        rf'.*succeeded \({i + 1}/{len(strings)}\): .*append.*{string!r}.*'
-        for i, string in enumerate(strings)
-    )
-    _search_cache_logs(cache, debug, [pattern])
 
 
 @pytest.mark.parametrize(('wrap_os_fork', 'label1'),

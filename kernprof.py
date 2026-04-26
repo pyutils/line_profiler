@@ -230,6 +230,9 @@ from line_profiler.cli_utils import (
     positive_float,
     short_string_path,
 )
+from line_profiler.line_profiler_utils import (
+    make_tempfile as _touch_tempfile,  # Compatibility
+)
 from line_profiler.profiler_mixin import ByCountProfilerMixin
 from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._logger import Logger
@@ -237,9 +240,9 @@ from line_profiler import _diagnostics as diagnostics
 
 
 DIAGNOSITICS_VERBOSITY = 2
-CLEANUP_PRIORITIES = {  # Bigger number -> more delayed
-    'rm_cache_dir': 1024,
-    'gather_logs': 1,
+CLEANUP_PRIORITIES = {  # More negative number -> more delayed
+    'rm_cache_dir': -1024,
+    'gather_logs': -1,
 }
 
 
@@ -1012,21 +1015,6 @@ def main(args=None, *, exit_on_error=True):
             cleanup()
 
 
-def _touch_tempfile(*args, **kwargs):
-    """
-    Wrapper around :py:func:`tempfile.mkstemp()` which drops and closes
-    the integer handle (which we don't need and may cause issues on some
-    platforms).
-    """
-    handle, path = tempfile.mkstemp(*args, **kwargs)
-    try:
-        os.close(handle)
-    except Exception:
-        os.remove(path)
-        raise
-    return path
-
-
 def _write_tempfile(source, content, options):
     """
     Called by :py:func:`main()` to handle :command:`kernprof -c` and
@@ -1218,13 +1206,20 @@ class _manage_profiler:
             keep_preimports_file=self.set_up_child_profiling,
         )
         if self.set_up_child_profiling:
-            self.cache = _prepare_child_profiling_cache(
+            self.cache = cache = _prepare_child_profiling_cache(
                 self.options, self.prof, preimports_file, script_file,
             )
-            # Add a deferred callback for gathering debug logfiles
-            # (should run right before `.cache.cache_dir` is wiped)
+            self._ctx.add_cleanup(cache.cleanup)
+            # Add deferred callbacks for gathering debug logfiles
+            # (should run right before `.cache.cache_dir` is wiped):
+            # - Write the debug logs to the `._diagnostics` logger
+            if cache.debug:
+                cache.add_cleanup_with_priority(
+                    cache._dump_debug_logs, CLEANUP_PRIORITIES['gather_logs'],
+                )
+            # - Write the debug logs to a specific file
             if self.options.debug_log:
-                self.cache._add_cleanup(
+                cache.add_cleanup_with_priority(
                     self._gather_debug_log,
                     CLEANUP_PRIORITIES['gather_logs'],
                     self.options.debug_log,
@@ -1235,15 +1230,11 @@ class _manage_profiler:
         try:
             extra_stats = None
             if self.set_up_child_profiling:
-                try:
-                    if self.cache.debug:
-                        # Recover debug output from child processes
-                        self.cache._dump_debug_logs()
-                    extra_stats = self.cache.gather_stats()
-                finally:
-                    self.cache.cleanup()
+                extra_stats = self.cache.gather_stats()
             _post_profile(self.options, self.prof, extra_stats)
         finally:
+            # This also calls its `.cleanup()`, and in turn that of
+            # `.cache`'s
             self._ctx.uninstall()
 
     def _gather_debug_log(self, logfile):
@@ -1374,7 +1365,7 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     clean_up = functools.partial(cache.add_cleanup, _remove, missing_ok=True)
     if not diagnostics.KEEP_TEMPDIRS:
         # Defer the scrubbing of the cache dir
-        cache._add_cleanup(
+        cache.add_cleanup_with_priority(
             _remove, CLEANUP_PRIORITIES['rm_cache_dir'], cache.cache_dir,
             recursive=True,
         )
