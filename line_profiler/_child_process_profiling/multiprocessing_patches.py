@@ -54,35 +54,79 @@ class _Poller:
     Poll a callable until it returns true-y.
 
     Example:
+        >>> import warnings
+        >>> from contextlib import ExitStack
+        >>> from functools import partial
         >>> from itertools import count
-        >>> from typing import Iterator
-        >>>
-        >>>
-        >>> def count_until(limit: int) -> bool:
+        >>> from typing import Iterator, Literal
+
+        >>> def count_until(
+        ...     limit: int, mode: Literal['until', 'while'] = 'until',
+        ... ) -> bool:
         ...     def counter_is_big_enough(
         ...         counter: Iterator[int], limit: int,
         ...     ) -> bool:
         ...         return next(counter) >= limit
         ...
-        ...     return _Poller.poll_until(
-        ...         counter_is_big_enough, count(), limit,
-        ...     )
+        ...     def counter_is_small_enough(
+        ...         counter: Iterator[int], limit: int,
+        ...     ) -> bool:
+        ...         return next(counter) < limit
         ...
-        >>>
-        >>> with count_until(10).with_cooldown(.01).with_timeout(.5):
+        ...     # The branches are ultimately equal in results, but we
+        ...     # want to explicitly test both `.poll_until()` and
+        ...     # `.poll_while()`
+        ...     if mode == 'until':
+        ...         get_poller = partial(
+        ...             _Poller.poll_until, counter_is_big_enough,
+        ...         )
+        ...     else:
+        ...         get_poller = partial(
+        ...             _Poller.poll_while, counter_is_small_enough,
+        ...         )
+        ...     return get_poller(count(), limit)
+
+        >>> with count_until(10).with_cooldown(.01).with_timeout(1):
         ...     # Note: we shouldn't really need that much time, but
         ...     # something in CI seems to be slowing down the polling
         ...     # loop...
         ...     print('We counted up to 10')
         We counted up to 10
-        >>> with count_until(30).with_cooldown(.01).with_timeout(.25):
-        ...     print('We counted up to 30')  \
-# doctest: +NORMALIZE_WHITESPACE
+
+        >>> with (
+        ...     count_until(100)
+        ...     .with_cooldown(.01)
+        ...     .with_timeout(.5)  # `[on_]timeout` separately supplied
+        ...     .with_timeout(on_timeout='ignore')
+        ... ):
+        ...     print("We probably didn't count up to 100 but whatever")
+        We probably didn't count up to 100 but whatever
+
+        >>> with (  # doctest: +NORMALIZE_WHITESPACE
+        ...     count_until(30).with_cooldown(.01).with_timeout(.25)
+        ... ):
+        ...     print('We counted up to 30')
         Traceback (most recent call last):
           ...
         line_profiler..._Poller.Timeout: ...
         timed out (... s >= 0.25 s) waiting for
         callback ...counter_is_big_enough... to return true
+
+        >>> with ExitStack() as stack:  # doctest: +NORMALIZE_WHITESPACE
+        ...     enter = stack.enter_context
+        ...     enter(warnings.catch_warnings())
+        ...     warnings.simplefilter('error', _Poller.TimeoutWarning)
+        ...     enter(
+        ...         count_until(30, 'while')
+        ...         .with_cooldown(.01)
+        ...         .with_timeout(.25, 'warn')
+        ...     )
+        ...     print('We counted up to 30 again')
+        Traceback (most recent call last):
+          ...
+        line_profiler..._Poller.TimeoutWarning: ...
+        timed out (... s >= 0.25 s) waiting for
+        callback ...counter_is_small_enough... to return true
     """
     def __init__(
         self,
@@ -91,13 +135,9 @@ class _Poller:
         timeout: float = 0,
         on_timeout: _OnTimeout = 'error',
     ) -> None:
-        if cooldown < 0:
-            cooldown = 0
-        if timeout < 0:
-            timeout = 0
         self._func: Callable[[], Any] = func
-        self._cooldown = cooldown
-        self._timeout = timeout
+        self._cooldown = max(0, cooldown)
+        self._timeout = max(0, timeout)
         self._on_timeout = on_timeout
 
     def sleep(self):
@@ -145,7 +185,7 @@ class _Poller:
             raise type(self).Timeout(msg)
 
         def warn(msg: str) -> None:
-            warnings.warn(msg)
+            warnings.warn(msg, type(self).TimeoutWarning, stacklevel=3)
             diagnostics.log.warning(msg)
 
         def ignore(_):
@@ -179,6 +219,12 @@ class _Poller:
     class Timeout(RuntimeError):
         """
         Raised when a :py:class:`_Poller` is timed out when polling.
+        """
+        pass
+
+    class TimeoutWarning(Timeout, UserWarning):
+        """
+        Issued when a :py:class:`_Poller` is timed out when polling.
         """
         pass
 
@@ -274,7 +320,7 @@ def wrap_terminate(
         vanilla_impl(self)
 
 
-@LineProfilingCache._method_wrapper
+@LineProfilingCache._method_wrapper  # nocover
 def wrap_bootstrap(
     cache: LineProfilingCache,
     vanilla_impl: Callable[Concatenate[BaseProcess, PS], T],
@@ -286,6 +332,13 @@ def wrap_bootstrap(
     Wrap around :py:meth:`BaseProcess._bootstrap` to run
     ``LineProfilingCache.load().cleanup()`` so that profiling results
     can be gathered.
+
+    Note:
+        This is only invoked in child processes, and :py:mod:`coverage`
+        seem to be having trouble with them in the current setup,
+        probably due to issues with .pth file precendence causing
+        :py:mod:`line_profiler` to be loaded before it. Hence the
+        ``# nocover``.
     """
     try:
         return vanilla_impl(self, *args, **kwargs)
@@ -398,13 +451,13 @@ def _apply_patches_generic(
     submod_name = 'multiprocessing.' + submodule
     try:
         mod = import_module(submod_name)
-    except ImportError:
+    except ImportError:  # nocover
         return
     for target, patches in targets.items():
         if target:
             try:
                 obj: Any = getattr(mod, target)
-            except AttributeError:
+            except AttributeError:  # nocover
                 continue
             name = f'{submod_name}.{target}'
         else:
@@ -462,7 +515,7 @@ def _apply_mp_patches(
     if reboot_forkserver:
         try:
             from multiprocessing import forkserver
-        except ImportError:  # Incompatible platform
+        except ImportError:  # Incompatible platform  # nocover
             pass
         else:
             server_instance: forkserver.ForkServer = forkserver._forkserver
