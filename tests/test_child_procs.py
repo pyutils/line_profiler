@@ -88,7 +88,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 from collections.abc import Callable
-from multiprocessing import get_context, Pool
+from multiprocessing import dummy, get_context, Pool
 from typing import Literal
 
 from {EXT_MODULE} import my_external_sum
@@ -107,7 +107,9 @@ def my_local_sum(x: list[int], fail: bool = False) -> int:
 
 def sum_in_child_procs(
     length: int, n: int, my_sum: Callable[[list[int]], int],
-    start_method: Literal['fork', 'forkserver', 'spawn'] | None = None,
+    start_method: Literal[
+        'fork', 'forkserver', 'spawn', 'dummy'
+    ] | None = None,
     fail: bool = False,
 ) -> int:
     my_list: list[int] = list(range(1, length + 1))
@@ -119,7 +121,9 @@ def sum_in_child_procs(
     while my_list:
         sublist, my_list = my_list[:sublength], my_list[sublength:]
         sublists.append(sublist)
-    if start_method:
+    if start_method == 'dummy':
+        pool = dummy.Pool(n)
+    elif start_method:
         pool = get_context(start_method).Pool(n)
     else:
         pool = Pool(n)
@@ -317,6 +321,19 @@ def ext_module_object(
         the test
     """
     yield from ext_module._import_module_helper()
+
+
+@pytest.fixture
+def test_module_object(
+    test_module: _ModuleFixture, ext_module_object: ModuleType,
+) -> Generator[ModuleType, None, None]:
+    """
+    Yields:
+        :py:class:`ModuleType` object containing the code at
+        :py:data:`TEST_MODULE_TEMPLATE`, and is torn down at the end of
+        the test
+    """
+    yield from test_module._import_module_helper()
 
 
 @pytest.fixture
@@ -1640,17 +1657,19 @@ def test_load_pth_hook(
                          [(True, 'with-debug'), (False, 'no-debug')])
 @pytest.mark.parametrize(('fail', 'label2'),
                          [(True, 'failure'), (False, 'success')])
-@pytest.mark.parametrize('n', [[100, 200, 1000]])
+@pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
 def test_apply_mp_patches(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
+    test_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     debug: bool,
     fail: bool,
-    n: list[int],
+    n: int,
+    nprocs: int,
     label1: str, label2: str,
 ) -> None:
     """
@@ -1674,16 +1693,29 @@ def test_apply_mp_patches(
             f'Did not find line containing {query!r} in {path!r}',
         )
 
-    config: Path | None = None
+    config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
+    cfg_chunks: list[str] = []
     if debug:
-        config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
-        config.write_text(
+        cfg_chunks.append(
             '[tool.line_profiler.child_processes.multiprocessing]\n'
             'intercept_logs = true'
         )
+    cfg_chunks.append(
+        '[tool.line_profiler.child_processes.multiprocessing.polling]\n'
+        'on_timeout = "error"'
+    )
+    config.write_text('\n\n'.join(cfg_chunks))
 
-    func = ext_module_object.my_external_sum
-    func_name = f'{func.__module__}.{func.__qualname__}'
+    profiled_func = ext_module_object.my_external_sum
+    called_func = partial(
+        test_module_object.sum_in_child_procs,
+        n=nprocs,
+        my_sum=profiled_func,
+        start_method=start_method,
+        fail=fail,
+    )
+
+    func_name = f'{profiled_func.__module__}.{profiled_func.__qualname__}'
     cache = create_cache(
         profiling_targets=[func_name],
         preimports_module=True,
@@ -1702,52 +1734,39 @@ def test_apply_mp_patches(
     assert cache.preimports_module is not None
     run_path(str(cache.preimports_module), {'profile': cache.profiler})
 
-    ranges = [range(1, x + 1) for x in n]
-    expected_nloops = sum(n)
     timing_key = (
-        inspect.getfile(func),
-        inspect.getsourcelines(func)[1],
-        func.__qualname__,
+        inspect.getfile(profiled_func),
+        inspect.getsourcelines(profiled_func)[1],
+        profiled_func.__qualname__,
     )
     assert ext_module_object.__file__
     loop_line = get_lineno(ext_module_object.__file__, 'EXT-LOOP')
-    Pool: Callable[..., multiprocessing.pool.Pool]
 
     if fail:
         xc_context: AbstractContextManager[Any] = pytest.raises(RuntimeError)
+        nloops_expected = n
     else:
         xc_context = nullcontext()
+        nloops_expected = n + nprocs
 
-    if start_method == 'dummy':
-        Pool = _import_target('multiprocessing.dummy.Pool')
-        get_stats: Callable[[], LineStats] = cache.profiler.get_stats
-    elif start_method not in START_METHODS:
+    if start_method not in ('dummy', *START_METHODS):
         pytest.skip(
             f'`multiprocessing` start method {start_method!r} '
             'not available on the platform'
         )
-    else:
-        Pool = multiprocessing.get_context(start_method).Pool
-        get_stats = cache.gather_stats
 
-    with ExitStack() as stack:
-        pool = stack.enter_context(Pool(2))
-        # Check for the expected error (if `fail`)
-        stack.enter_context(xc_context)
-        try:
-            par_result = pool.starmap(func, [(r, fail) for r in ranges])
-        finally:
-            pool.close()
-            pool.join()
-
-    # Check correctness of the results
-    if not fail:
-        assert par_result == [x * (x + 1) // 2 for x in n]
+    with xc_context:
+        result = called_func(n)
+        # Check correctness of the results
+        if not fail:
+            assert result == n * (n + 1) // 2
 
     # Check that calls in children are traced
-    entries = get_stats().timings[timing_key]
+    stats = cache.profiler.get_stats()
+    stats += cache.gather_stats()
+    entries = stats.timings[timing_key]
     nloops = sum(nhits for ln, nhits, _ in entries if ln == loop_line)
-    ResultMismatch.compare(expected_nloops, nloops)
+    ResultMismatch.compare(nloops_expected, nloops)
 
     # Check the debug logs to see if we have done everything right, esp.
     # the logging interception part not covered by other tests
