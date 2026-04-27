@@ -110,10 +110,11 @@ def load_pth_hook(ppid):  # type: (int) -> None
     try:
         cache = LineProfilingCache.load()
         cache._setup_in_child_process(True, 'pth')
-    except Exception as e:
+    except Exception as e:  # nocover
         if DEBUG:
             msg = f'{type(e)}: {e}'
             warnings.warn(msg)
             log.warning(msg)
-    finally:
         load_pth_hook.called = True  # type: ignore
+    else:
+        cache.patch(load_pth_hook, 'called', True)

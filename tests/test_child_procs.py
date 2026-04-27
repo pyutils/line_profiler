@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import dataclasses
 import enum
 import inspect
@@ -16,8 +15,8 @@ from abc import ABC, abstractmethod
 from collections.abc import (
     Callable, Collection, Generator, Iterable, Mapping, Sequence,
 )
-from contextlib import ExitStack
-from functools import lru_cache, partial, wraps
+from contextlib import AbstractContextManager, ExitStack, nullcontext
+from functools import partial, wraps
 from io import StringIO
 from importlib import import_module
 from pathlib import Path
@@ -25,7 +24,7 @@ from runpy import run_path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
 from time import monotonic
-from types import TracebackType
+from types import ModuleType, TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, final, overload
 from typing_extensions import Self, ParamSpec
 from uuid import uuid4
@@ -37,6 +36,7 @@ from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
+from line_profiler._child_process_profiling.pth_hook import load_pth_hook
 from line_profiler._child_process_profiling.multiprocessing_patches import (
     _Poller,
 )
@@ -200,6 +200,21 @@ class _ModuleFixture:
         if children:
             self.monkeypatch.setenv('PYTHONPATH', path, prepend=os.pathsep)
 
+    def _import_module_helper(self) -> Generator[ModuleType, None, None]:
+        def iter_module_names(
+            module: _ModuleFixture,
+        ) -> Generator[str, None, None]:
+            yield module.name
+            for dep in module.dependencies:
+                yield from iter_module_names(dep)
+
+        self.install(local=True, children=True)
+        try:
+            yield import_module(self.name)
+        finally:
+            for name in set(iter_module_names(self)):
+                sys.modules.pop(name, None)
+
     @staticmethod
     def propose_name(prefix: str) -> Generator[str, None, None]:
         """
@@ -289,6 +304,19 @@ def test_module_clone(
     path = tmpdir / f'{name}.py'
     path.write_text(_test_module.read_text())
     yield _ModuleFixture(path, monkeypatch, [ext_module])
+
+
+@pytest.fixture
+def ext_module_object(
+    ext_module: _ModuleFixture,
+) -> Generator[ModuleType, None, None]:
+    """
+    Yields:
+        :py:class:`ModuleType` object containing the code at
+        :py:data:`EXTERNAL_MODULE_BODY`, and is torn down at the end of
+        the test
+    """
+    yield from ext_module._import_module_helper()
 
 
 @pytest.fixture
@@ -437,6 +465,17 @@ def curated_profiler() -> Generator[LineProfiler, None, None]:
     prof = LineProfiler()
     with CuratedProfilerContext(prof, insert_builtin=True):
         yield prof
+
+
+@pytest.fixture
+def another_pid() -> int:
+    """
+    Get a PID which is distinct from the current one.
+    """
+    curr_pid = os.getpid()
+    pid = (curr_pid - 42) % (2 * 16)
+    assert pid != curr_pid
+    return pid
 
 
 @pytest.fixture(autouse=True)
@@ -866,6 +905,43 @@ old['line_profiler.line_profiler']['main']
     def __exit__(self, *_, **__) -> None:
         self._stacks.pop().close()
 
+    @staticmethod
+    def fetch_current_values(
+        targets: Mapping[str, Collection[str]],
+    ) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        na = _NotSupplied.NOT_SUPPLIED
+        for target, attrs in targets.items():
+            obj = _import_target(target)
+            result[target] = {attr: getattr(obj, attr, na) for attr in attrs}
+        return result
+
+    @classmethod
+    def compare_with_current_values(
+        cls,
+        old: Mapping[str, Mapping[str, Any]],
+        comparator: Callable[[Any, Any], bool] = operator.is_,
+        assert_true: bool = True,
+    ) -> dict[str, dict[str, bool]]:
+        result: dict[str, dict[str, bool]] = {}
+        new = cls.fetch_current_values(old)
+        for target, old_values in old.items():
+            new_values = new[target]
+            cmp_results = result[target] = {}
+            for attr, old_value in old_values.items():
+                print(f'Checking: {target}.{attr}')
+                new_value = new_values[attr]
+                if assert_true:
+                    assert cmp_results.setdefault(
+                        attr, comparator(new_value, old_value),
+                    )
+                else:
+                    # There's probably a more concise way to write this,
+                    # but we want more info to be available in the
+                    # traceback should the above assertion fail...
+                    cmp_results[attr] = comparator(new_value, old_value)
+        return result
+
 
 class _preserve_pth_files(_CallableContextManager[frozenset[str]]):
     def __init__(self, debug: bool = _DEBUG) -> None:
@@ -935,25 +1011,6 @@ def _search_cache_logs(
             f'pattern {pattern!r} to {"" if should_match else "not "}match '
             f'{cache!r}\'s logs: {text_chunks!r}'
         )
-
-
-@lru_cache()
-def _find_return_lines(func: str) -> list[int]:
-    class FindReturns(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.found: set[int] = set()
-
-        def visit_Return(self, node: ast.Return) -> None:
-            self.found.add(node.lineno)
-            self.generic_visit(node)
-
-    func_obj = _import_target(func)
-    assert inspect.isfunction(func_obj)
-    lines, start = inspect.getsourcelines(func_obj)
-    tree = ast.parse(''.join(lines))
-    finder = FindReturns()
-    finder.visit(tree)
-    return sorted(lineno + start - 1 for lineno in finder.found)
 
 
 # `shlex.join()` doesn't work properly on Windows, so use
@@ -1225,16 +1282,6 @@ _GLOBAL_PATCHES = {
     'os': frozenset({'fork'}),
 }
 
-# NOTE: we need a function which isn't used by the codebase itself
-# (esp. during cache cleanup); otherwise the profiling results may
-# be skewed
-_SAFE_TARGET = 'calendar.weekday'
-_SAFE_TARGET_ARGS = [
-    (1970, 1, 1),
-    (2000, 12, 31),
-    (2008, 9, 16),  # Where the repo started
-]
-
 
 @pytest.mark.parametrize(('run_profiled_code', 'label1'),
                          [(True, 'run-profiled'), (False, 'run-unrelated')])
@@ -1389,33 +1436,21 @@ def test_cache_setup_main_process(
         for target, attrs in _GLOBAL_PATCHES.items()
     }
     patches['os']['fork'] = wrap_os_fork and (sys.platform != 'win32')
-    targets: dict[str, Any] = {
-        target: _import_target(target) for target in patches
-    }
     with ExitStack() as stack:
         patched = stack.enter_context(_preserve_attributes(patches))
+        compare_patched = partial(
+            _preserve_attributes.compare_with_current_values, patched,
+        )
         original_pths = stack.enter_context(_preserve_pth_files())
         cache._setup_in_main_process(wrap_os_fork=wrap_os_fork)
         # There should be exactly one extra `.pth` file
         new_pth_hook, = _preserve_pth_files.get_pth_files() - original_pths
         # Check whether the patches are applied
-        for target, maybe_patches in patches.items():
-            obj = targets[target]
-            for attr, is_patched in maybe_patches.items():
-                orig_value = patched[target][attr]
-                if orig_value is _NotSupplied.NOT_SUPPLIED:
-                    assert not hasattr(obj, attr)
-                else:
-                    assert (getattr(obj, attr) is orig_value) != is_patched
+        patch_summary = compare_patched(operator.is_not, assert_true=False)
+        assert patch_summary == patches
         # Check whether the patches are reversed
         cache.cleanup()
-        for target, orig_attrs in patched.items():
-            obj = targets[target]
-            for attr, orig_value in orig_attrs.items():
-                if orig_value is _NotSupplied.NOT_SUPPLIED:
-                    assert not hasattr(obj, attr)
-                else:
-                    assert getattr(obj, attr) is orig_value
+        compare_patched()
         # Check that the instance is set as the `.load()`-ed one
         assert cache is cache.load()
 
@@ -1444,14 +1479,18 @@ def test_cache_setup_main_process(
                          [(True, 'no-profiler'), (False, 'with-profiler')])
 @pytest.mark.parametrize(('debug', 'label4'),
                          [(True, 'with-debug'), (False, 'no-debug')])
+@pytest.mark.parametrize('n', [100])
 @_preserve_attributes(_GLOBAL_PATCHES)
 def test_cache_setup_child(
     create_cache: Callable[..., LineProfilingCache],
     curated_profiler: LineProfiler,
+    ext_module_object: ModuleType,
+    another_pid: int,
     wrap_os_fork: bool,
     preimports: bool,
     new_profiler: bool,
     debug: bool,
+    n: int,
     label1: str, label2: str, label3: str, label4: str,
 ) -> None:
     """
@@ -1464,16 +1503,12 @@ def test_cache_setup_child(
             for func in getattr(cache.profiler, 'functions', [])
         ]
 
-    # Make sure we get a different PID from the current process
-    curr_pid = os.getpid()
-    main_pid = (curr_pid - 42) % (2 * 16)
-    assert main_pid != curr_pid
-
+    func = ext_module_object.my_external_sum
     cache = create_cache(
-        profiling_targets=[_SAFE_TARGET],
+        profiling_targets=[f'{func.__module__}.{func.__qualname__}'],
         preimports_module=preimports,
         _use_curated_profiler=not new_profiler,
-        main_pid=main_pid,
+        main_pid=another_pid,
         debug=debug,
     )
     assert (cache.profiler is None) == new_profiler
@@ -1502,7 +1537,7 @@ def test_cache_setup_child(
         # Check that on cache cleanup:
         # - Profiling data is collected
         # - `os.fork()` is restored
-        _import_target(_SAFE_TARGET)(*_SAFE_TARGET_ARGS[0])
+        assert func(range(1, n + 1)) == n * (n + 1) // 2
         stats = cache.profiler.get_stats()
         for callback, has_prof_data, fork_patched in [
             (lambda: None, False, wrap_os_fork),
@@ -1532,19 +1567,91 @@ def test_cache_setup_child(
     _search_cache_logs(cache, debug, patterns)
 
 
+@_preserve_attributes({
+    **_GLOBAL_PATCHES,
+    'line_profiler._child_process_profiling.pth_hook.load_pth_hook':
+    frozenset({'called'}),
+})
+@pytest.mark.parametrize('ppid_should_match', [True, False, None])
+def test_load_pth_hook(
+    create_cache: Callable[..., LineProfilingCache],
+    another_pid: int,
+    ppid_should_match: bool | None,
+) -> None:
+    """
+    Simulate calling :py:func:`line_profiler._child_process_profiling\
+.pth_hook.load_pth_hook()` in a child process.
+
+    Notes:
+
+        - The function is CALLED in the .pth file, but we don't actually
+          NEED a .pth file to call and test it.
+
+        - The counterpart :py:func:`line_profiler\
+._child_process_profiling.pth_hook.write_pth_hook()`
+          is implicitly tested in
+          :py:func:`test_cache_setup_main_process()`.
+    """
+    # This test is mostly here to hack coverage; since the function is
+    # only to be called in child processes, `coverage` seems to have
+    # trouble getting data on it...
+
+    # We basically only need this cache instance to set up the
+    # environment variables and the requisite files...
+    cache = create_cache(main_pid=another_pid)
+    if ppid_should_match is not None:
+        cache.inject_env_vars()
+        if ppid_should_match:
+            call_ppid = another_pid
+        else:  # On a PPID mismatch, the function bails after checking
+            call_ppid = another_pid + 10
+    else:
+        # Without the requisite envvars, the hook should bail very
+        # quickly (due to the `environ` lookup erroring out), regardless
+        # of the provided PPID
+        call_ppid = 0
+    cache.dump()
+
+    compare = _preserve_attributes.compare_with_current_values
+    with _preserve_attributes(_GLOBAL_PATCHES) as patched:
+        load_pth_hook(call_ppid)
+        # Check that the patches are applied where appropriate
+        assert (
+            getattr(load_pth_hook, 'called', False) == bool(ppid_should_match)
+        )
+        if ppid_should_match:
+            compare(patched, operator.is_not)
+        else:  # no-op
+            compare(patched)
+            return
+        # Check that calling `load_pth_hook()` again is a no-op
+        with _preserve_attributes(_GLOBAL_PATCHES) as re_patched:
+            load_pth_hook(call_ppid)
+            compare(re_patched)
+        # Check that the patches are reversed
+        LineProfilingCache.load().cleanup()  # 'Current' instance
+        compare(patched)
+
+
 @pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
-@pytest.mark.parametrize(('debug', 'label'),
+@pytest.mark.parametrize(('debug', 'label1'),
                          [(True, 'with-debug'), (False, 'no-debug')])
+@pytest.mark.parametrize(('fail', 'label2'),
+                         [(True, 'failure'), (False, 'success')])
+@pytest.mark.parametrize('n', [[100, 200, 1000]])
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
 def test_apply_mp_patches(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
+    ext_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     debug: bool,
-    label: str,
+    fail: bool,
+    n: list[int],
+    label1: str, label2: str,
 ) -> None:
     """
     Test that :py:func:`line_profiler._child_process_profiling\
@@ -1558,6 +1665,15 @@ def test_apply_mp_patches(
             return False
         return True
 
+    def get_lineno(path: os.PathLike[str] | str, query: str) -> int:
+        with Path(path).open() as fobj:
+            for i, line in enumerate(fobj):
+                if query in line:
+                    return 1 + i
+        raise RuntimeError(
+            f'Did not find line containing {query!r} in {path!r}',
+        )
+
     config: Path | None = None
     if debug:
         config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
@@ -1566,8 +1682,10 @@ def test_apply_mp_patches(
             'intercept_logs = true'
         )
 
+    func = ext_module_object.my_external_sum
+    func_name = f'{func.__module__}.{func.__qualname__}'
     cache = create_cache(
-        profiling_targets=[_SAFE_TARGET],
+        profiling_targets=[func_name],
         preimports_module=True,
         config=config,
         debug=True,
@@ -1584,14 +1702,24 @@ def test_apply_mp_patches(
     assert cache.preimports_module is not None
     run_path(str(cache.preimports_module), {'profile': cache.profiler})
 
-    func = _import_target(_SAFE_TARGET)
-    return_lines = _find_return_lines(_SAFE_TARGET)
+    ranges = [range(1, x + 1) for x in n]
+    expected_nloops = sum(n)
+    timing_key = (
+        inspect.getfile(func),
+        inspect.getsourcelines(func)[1],
+        func.__qualname__,
+    )
+    assert ext_module_object.__file__
+    loop_line = get_lineno(ext_module_object.__file__, 'EXT-LOOP')
     Pool: Callable[..., multiprocessing.pool.Pool]
+
+    if fail:
+        xc_context: AbstractContextManager[Any] = pytest.raises(RuntimeError)
+    else:
+        xc_context = nullcontext()
+
     if start_method == 'dummy':
         Pool = _import_target('multiprocessing.dummy.Pool')
-        # Twice the counted calls because we're also collecting the
-        # checking calls in this process
-        expected_ncalls = len(_SAFE_TARGET_ARGS) * 2
         get_stats: Callable[[], LineStats] = cache.profiler.get_stats
     elif start_method not in START_METHODS:
         pytest.skip(
@@ -1600,23 +1728,26 @@ def test_apply_mp_patches(
         )
     else:
         Pool = multiprocessing.get_context(start_method).Pool
-        expected_ncalls = len(_SAFE_TARGET_ARGS)
         get_stats = cache.gather_stats
 
-    with Pool(2) as pool:
-        par_result = pool.starmap(func, _SAFE_TARGET_ARGS)
-        pool.close()
-        pool.join()
-    assert par_result == [func(*args) for args in _SAFE_TARGET_ARGS]
+    with ExitStack() as stack:
+        pool = stack.enter_context(Pool(2))
+        # Check for the expected error (if `fail`)
+        stack.enter_context(xc_context)
+        try:
+            par_result = pool.starmap(func, [(r, fail) for r in ranges])
+        finally:
+            pool.close()
+            pool.join()
+
+    # Check correctness of the results
+    if not fail:
+        assert par_result == [x * (x + 1) // 2 for x in n]
 
     # Check that calls in children are traced
-    line_entries = get_stats().timings[
-        inspect.getfile(func), inspect.getsourcelines(func)[1], func.__name__,
-    ]
-    num_returns = sum(
-        nhits for lineno, nhits, _ in line_entries if lineno in return_lines
-    )
-    ResultMismatch.compare(expected_ncalls, num_returns)
+    entries = get_stats().timings[timing_key]
+    nloops = sum(nhits for ln, nhits, _ in entries if ln == loop_line)
+    ResultMismatch.compare(expected_nloops, nloops)
 
     # Check the debug logs to see if we have done everything right, esp.
     # the logging interception part not covered by other tests
