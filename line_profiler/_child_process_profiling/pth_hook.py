@@ -51,14 +51,20 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
     """
     import os
     from sysconfig import get_path
+    from ..toml_config import ConfigSource
 
     if not os.path.exists(cache.filename):
         cache.dump()
         assert os.path.exists(cache.filename)
 
+    pth_config = (
+        ConfigSource.from_config(cache.config)
+        .get_subconfig('child_processes', 'pth_files')
+        .conf_dict
+    )
     fpath = cache.make_tempfile(
-        prefix='_line_profiler_profiling_hook_',
-        suffix='.pth',
+        prefix=pth_config['prefix'],
+        suffix=pth_config['suffix'] + '.pth',
         dir=get_path('purelib'),
     )
     try:

@@ -211,29 +211,38 @@ perhit = 8
 percent = 8
 
 # XXX: --- Start of implementation details ---
-# `line_profiler._child_process_profiling.multiprocessing_patches`
-# settings
+# `line_profiler._child_process_profiling` settings
 
-[tool.line_profiler.multiprocessing]
+[tool.line_profiler.child_processes.pth_files]
 
-# - `intercept_logs` (bool):
+# - `pth_files.prefix`, `.suffix` (str):
+#   Affixes to use for the stem of the name of the .pth file created
+#   Note: may be useful to tweak this in case of issues with .pth file
+#   precedence.
+prefix = '_line_profiler-profiling-hook-'
+suffix = ''
+
+[tool.line_profiler.child_processes.multiprocessing]
+
+# - `multiprocessing.intercept_logs` (bool):
 #   Whether to patch the `multiprocessing.util` logging funcions so that
 #   the internal log messages are captured and writtent to the debug
 #   logs
 intercept_logs = false
 
-[tool.line_profiler.multiprocessing.polling]
+[tool.line_profiler.child_processes.multiprocessing.polling]
 
-# - `polling.cooldown` (float):
+# - `multiprocessing.polling.cooldown` (float):
 #   Cooldown time (seconds) before successive polls on lock files (set
 #   to <= 0 to disable cooldowns)
 cooldown = 0.03125  # 1/32-nd of a second
-# - `polling.timeout` (float):
+# - `multiprocessing.polling.timeout` (float):
 #   Time (seconds) before the main process disregards the existence of
 #   lock file and unblocks calls to `.terminate()` a (most probably
 #   errored-out) child process anyway (set to <= 0 to disable timeouts)
 timeout = 0.25
-# - `polling.on_timeout` (Literal['error', 'warn', 'ignore'])
+# - `multiprocessing.polling.on_timeout`
+#   (Literal['error', 'warn', 'ignore']):
 #   What to do when the above timeout is exhausted, before actually
 #   `.terminate()`-ing the child process:
 #   - 'error': raise an error

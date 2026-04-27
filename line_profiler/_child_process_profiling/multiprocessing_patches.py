@@ -243,7 +243,7 @@ def _get_config_cached(
 ) -> Mapping[str, Any]:
     cd = dict(
         ConfigSource.from_config(config)
-        .get_subconfig('multiprocessing', copy=True)
+        .get_subconfig('child_processes', 'multiprocessing', copy=True)
         .conf_dict
     )
     assert isinstance(cd.get('polling'), Mapping)
@@ -474,7 +474,7 @@ def _apply_patches_generic(
 def _apply_mp_patches(
     lp_cache: LineProfilingCache,
     reboot_forkserver: bool = True,
-    debug: bool | None = None,
+    intercept_mp_logs: bool | None = None,
 ) -> None:
     # In a child process, we don't care about polluting the
     # `multiprocessing` namespace, so don't bother with cleanup
@@ -494,14 +494,11 @@ def _apply_mp_patches(
         pass
     else:
         if hasattr(spawn, 'runpy'):
-            lp_cache.patch(
-                spawn, 'runpy', create_runpy_wrapper(lp_cache),
-                name='multiprocessing.spawn',
-            )
+            lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
     # Intercept `multiprocessing` debug messages
-    if debug is None:
-        debug = _get_config(lp_cache.config)['intercept_logs']
-    if debug:
+    if intercept_mp_logs is None:
+        intercept_mp_logs = _get_config(lp_cache.config)['intercept_logs']
+    if intercept_mp_logs:
         lfuncs = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
         lpatches = {func: partial(partial, tee_log, func) for func in lfuncs}
         apply_patches('util', {'': lpatches})
@@ -524,9 +521,7 @@ def _apply_mp_patches(
             stop()
             lp_cache.add_cleanup(stop)
     # Mark `multiprocessing` as having been patched
-    lp_cache.patch(
-        multiprocessing, _PATCHED_MARKER, True, name='multiprocessing',
-    )
+    lp_cache.patch(multiprocessing, _PATCHED_MARKER, True)
 
 
 def _no_op(*_, **__) -> None:

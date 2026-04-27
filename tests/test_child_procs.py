@@ -1562,7 +1562,7 @@ def test_apply_mp_patches(
     if debug:
         config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
         config.write_text(
-            '[tool.line_profiler.multiprocessing]\n'
+            '[tool.line_profiler.child_processes.multiprocessing]\n'
             'intercept_logs = true'
         )
 
