@@ -24,8 +24,10 @@ from runpy import run_path
 from tempfile import TemporaryDirectory
 from textwrap import dedent, indent
 from time import monotonic
-from types import ModuleType, TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, final, overload
+from types import MappingProxyType, ModuleType, TracebackType
+from typing import (
+    TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, final, overload,
+)
 from typing_extensions import Self, ParamSpec
 from uuid import uuid4
 
@@ -38,7 +40,7 @@ from line_profiler._child_process_profiling.runpy_patches import (
 )
 from line_profiler._child_process_profiling.pth_hook import load_pth_hook
 from line_profiler._child_process_profiling.multiprocessing_patches import (
-    _Poller,
+    _Poller, _PATCHED_MARKER,
 )
 from line_profiler.curated_profiling import (
     CuratedProfilerContext, ClassifiedPreimportTargets,
@@ -938,8 +940,21 @@ old['line_profiler.line_profiler']['main']
         cls,
         old: Mapping[str, Mapping[str, Any]],
         comparator: Callable[[Any, Any], bool] = operator.is_,
-        assert_true: bool = True,
+        assert_true: bool | Mapping[str, Mapping[str, bool]] = True,
     ) -> dict[str, dict[str, bool]]:
+        def get_from_mapping(target: str, attr: str) -> bool:
+            if TYPE_CHECKING:
+                assert isinstance(assert_true, Mapping)
+            return assert_true[target][attr]
+
+        def get_from_boolean(*_, **__) -> bool:
+            return True
+
+        if isinstance(assert_true, Mapping):
+            get_expected: Callable[[str, str], bool] = get_from_mapping
+        else:
+            get_expected = get_from_boolean
+
         result: dict[str, dict[str, bool]] = {}
         new = cls.fetch_current_values(old)
         for target, old_values in old.items():
@@ -948,15 +963,18 @@ old['line_profiler.line_profiler']['main']
             for attr, old_value in old_values.items():
                 print(f'Checking: {target}.{attr}')
                 new_value = new_values[attr]
-                if assert_true:
-                    assert cmp_results.setdefault(
-                        attr, comparator(new_value, old_value),
+                cmp_results[attr] = cmp_result = comparator(
+                    new_value, old_value,
+                )
+                expected_result = get_expected(target, attr)
+                if assert_true and (cmp_result != expected_result):
+                    assert False, (
+                        f'Comparing `{target}.{attr}` '
+                        f'(old: {old_value!r} @ {id(old_value):#x}; '
+                        f'new: {new_value!r} @ {id(new_value):#x}): '
+                        f'expected comparison with {comparator!r} to return '
+                        f'{expected_result}, got {cmp_result}'
                     )
-                else:
-                    # There's probably a more concise way to write this,
-                    # but we want more info to be available in the
-                    # traceback should the above assertion fail...
-                    cmp_results[attr] = comparator(new_value, old_value)
         return result
 
 
@@ -1292,12 +1310,31 @@ run_literal_code = partial(
 # tested APIs and behaviors MUST NOT be relied upon by end-users.
 
 _GLOBAL_PATCHES = {
+    f'{load_pth_hook.__module__}.{load_pth_hook.__qualname__}': frozenset({
+        'called',
+    }),
+    'multiprocessing': frozenset({_PATCHED_MARKER}),
     'multiprocessing.process.BaseProcess': frozenset({
         '_bootstrap', 'terminate',
     }),
     'multiprocessing.spawn': frozenset({'runpy'}),
+    'multiprocessing.util': frozenset({
+        'sub_debug', 'debug', 'info', 'sub_warning', 'warn',
+    }),
     'os': frozenset({'fork'}),
 }
+
+
+@pytest.fixture(scope='module')
+def patched_attributes() -> MappingProxyType[str, frozenset[str]]:
+    result: dict[str, frozenset[str]] = {}
+    for target, attrs in _GLOBAL_PATCHES.items():
+        try:
+            obj = _import_target(target)
+        except ImportError:
+            continue
+        result[target] = frozenset(a for a in attrs if hasattr(obj, a))
+    return MappingProxyType(result)
 
 
 @pytest.mark.parametrize(('run_profiled_code', 'label1'),
@@ -1409,6 +1446,7 @@ def test_cache_dump_load(
     original = create_cache(
         profiling_targets=['foo', 'bar', 'baz'], main_pid=123456,
     )
+    cache_instances: list[LineProfilingCache] = [original]
     envvars: set[str] = set(os.environ)
     try:
         original.inject_env_vars()  # Needed for `.load()`
@@ -1417,7 +1455,9 @@ def test_cache_dump_load(
             assert set(os.environ) == envvars.union(original.environ) > envvars
             original.dump()
             loaded = original.load()
+            cache_instances.append(loaded)
             reloaded = original.load()
+            cache_instances.append(reloaded)
             assert original is not loaded is reloaded
             # Compare init fields
             for field in dataclasses.fields(LineProfilingCache):
@@ -1428,7 +1468,8 @@ def test_cache_dump_load(
                     == getattr(loaded, field.name)
                 )
         finally:  # Explicitly cleanup
-            original.cleanup()
+            for cache in cache_instances:
+                cache.cleanup()
     finally:  # Env vars restored after cleanup
         assert set(os.environ) == envvars
 
@@ -1439,6 +1480,7 @@ def test_cache_dump_load(
                          [(True, 'with-debug'), (False, 'no-debug')])
 def test_cache_setup_main_process(
     create_cache: Callable[..., LineProfilingCache],
+    patched_attributes: MappingProxyType[str, frozenset[str]],
     wrap_os_fork: bool,
     debug: bool,
     label1: str, label2: str,
@@ -1448,11 +1490,17 @@ def test_cache_setup_main_process(
     as expected.
     """
     cache = create_cache(debug=debug)
+    # By default, we don't patch the `multiprocessing.util` logging
+    # facilities
     patches: dict[str, dict[str, bool]] = {
-        target: dict.fromkeys(attrs, True)
-        for target, attrs in _GLOBAL_PATCHES.items()
+        target: dict.fromkeys(attrs, target != 'multiprocessing.util')
+        for target, attrs in patched_attributes.items()
     }
-    patches['os']['fork'] = wrap_os_fork and (sys.platform != 'win32')
+    try:
+        patches['os']['fork'] = wrap_os_fork
+    except KeyError:
+        # `os.fork()` pruned because it doesn't exist on e.g. Windows
+        assert not hasattr(os, 'fork')
     with ExitStack() as stack:
         patched = stack.enter_context(_preserve_attributes(patches))
         compare_patched = partial(
@@ -1463,8 +1511,7 @@ def test_cache_setup_main_process(
         # There should be exactly one extra `.pth` file
         new_pth_hook, = _preserve_pth_files.get_pth_files() - original_pths
         # Check whether the patches are applied
-        patch_summary = compare_patched(operator.is_not, assert_true=False)
-        assert patch_summary == patches
+        compare_patched(operator.is_not, assert_true=patches)
         # Check whether the patches are reversed
         cache.cleanup()
         compare_patched()
@@ -1592,6 +1639,7 @@ def test_cache_setup_child(
 @pytest.mark.parametrize('ppid_should_match', [True, False, None])
 def test_load_pth_hook(
     create_cache: Callable[..., LineProfilingCache],
+    patched_attributes: MappingProxyType[str, frozenset[str]],
     another_pid: int,
     ppid_should_match: bool | None,
 ) -> None:
@@ -1630,23 +1678,36 @@ def test_load_pth_hook(
     cache.dump()
 
     compare = _preserve_attributes.compare_with_current_values
-    with _preserve_attributes(_GLOBAL_PATCHES) as patched:
-        load_pth_hook(call_ppid)
-        # Check that the patches are applied where appropriate
-        assert (
-            getattr(load_pth_hook, 'called', False) == bool(ppid_should_match)
-        )
-        if ppid_should_match:
-            compare(patched, operator.is_not)
-        else:  # no-op
-            compare(patched)
-            return
-        # Check that calling `load_pth_hook()` again is a no-op
-        with _preserve_attributes(_GLOBAL_PATCHES) as re_patched:
+    patches = patched_attributes.copy()
+    del patches['multiprocessing.util']  # Not patched by default
+    with _preserve_attributes(patches) as patched:
+        try:
+            # NOTE: this creates a cache instance that isn't
+            # automatically cleaned up by the `create_cache()`
+            # fixture!!! Hence the try-finally
             load_pth_hook(call_ppid)
-            compare(re_patched)
+            # Check that the patches are applied where appropriate
+            assert (
+                getattr(load_pth_hook, 'called', False)
+                == bool(ppid_should_match)
+            )
+            if ppid_should_match:
+                compare(patched, operator.is_not)
+            else:  # no-op
+                compare(patched)
+                return
+            # Check that calling `load_pth_hook()` again is a no-op
+            with _preserve_attributes(patches) as re_patched:
+                load_pth_hook(call_ppid)
+                compare(re_patched)
+        finally:
+            try:
+                current_cache = LineProfilingCache.load()
+            except Exception:
+                pass
+            else:
+                current_cache.cleanup()
         # Check that the patches are reversed
-        LineProfilingCache.load().cleanup()  # 'Current' instance
         compare(patched)
 
 

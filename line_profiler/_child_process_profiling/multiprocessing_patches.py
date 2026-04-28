@@ -28,6 +28,21 @@ from typing import (
 )
 from typing_extensions import Concatenate, ParamSpec, Self
 
+try:
+    from multiprocessing import spawn
+except ImportError:
+    _CAN_USE_SPAWN = False
+else:
+    _CAN_USE_SPAWN = True
+try:
+    from multiprocessing import forkserver
+except ImportError:
+    _CAN_USE_FORKSERVER = False
+else:
+    _CAN_USE_FORKSERVER = (
+        'forkserver' in multiprocessing.get_all_start_methods()
+    )
+
 from .. import _diagnostics as diagnostics
 from ..toml_config import ConfigSource
 from .cache import LineProfilingCache
@@ -488,13 +503,8 @@ def _apply_mp_patches(
                          '_bootstrap': wrap_bootstrap}},
     )
     # Patch `multiprocessing.spawn`
-    try:
-        from multiprocessing import spawn
-    except ImportError:
-        pass
-    else:
-        if hasattr(spawn, 'runpy'):
-            lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
+    if _CAN_USE_SPAWN and hasattr(spawn, 'runpy'):
+        lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
     # Intercept `multiprocessing` debug messages
     if intercept_mp_logs is None:
         intercept_mp_logs = _get_config(lp_cache.config)['intercept_logs']
@@ -506,22 +516,24 @@ def _apply_mp_patches(
     # - Now, so that the (rebooted) fork-server process has profiling
     #   set up; and
     # - Also as a part of cache cleanup
-    # (this uses `ForkServer._stop()` which is private API, but it's the
-    # same hack used in Python's own test suite -- see the comment to
-    # said method)
-    if reboot_forkserver:
-        try:
-            from multiprocessing import forkserver
-        except ImportError:  # Incompatible platform  # nocover
-            pass
-        else:
-            server_instance: forkserver.ForkServer = forkserver._forkserver
-            stop = getattr(server_instance, '_stop', None)
-            assert callable(stop)  # Appease the type checker
-            stop()
-            lp_cache.add_cleanup(stop)
+    if _CAN_USE_FORKSERVER and reboot_forkserver:
+        _stop_forkserver()
+        lp_cache.add_cleanup(_stop_forkserver)
     # Mark `multiprocessing` as having been patched
     lp_cache.patch(multiprocessing, _PATCHED_MARKER, True)
+
+
+def _stop_forkserver() -> None:
+    """
+    Note:
+        This uses `ForkServer._stop()` which is private API, but it's
+        the same hack used in Python's own test suite -- see the comment
+        to said method
+    """
+    # Appease the type-checker since `._stop()` is not public API
+    stop = getattr(forkserver._forkserver, '_stop', None)
+    assert callable(stop)
+    stop()
 
 
 def _no_op(*_, **__) -> None:
