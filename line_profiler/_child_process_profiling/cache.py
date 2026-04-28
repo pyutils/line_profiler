@@ -7,6 +7,7 @@ from __future__ import annotations
 import atexit
 import dataclasses
 import os
+import signal
 try:
     import _pickle as pickle
 except ImportError:
@@ -17,6 +18,7 @@ from importlib import import_module
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
+from threading import current_thread, main_thread
 from types import ModuleType
 from typing import Any, ClassVar, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -292,7 +294,7 @@ write_pth_hook`)
         self.dump()
         self.inject_env_vars()
         _import_sibling('pth_hook').write_pth_hook(self)
-        self._setup_common(wrap_os_fork, reboot_forkserver=True)
+        self._setup_common(wrap_os_fork, {'reboot_forkserver': True})
         self._replace_loaded_instance()
 
     def _setup_in_child_process(
@@ -359,7 +361,7 @@ write_pth_hook`)
         self.add_cleanup_with_priority(prof.dump_stats, 1, prof_outfile)
 
         # Various setups
-        self._setup_common(wrap_os_fork, reboot_forkserver=False)
+        self._setup_common(wrap_os_fork, {'reboot_forkserver': False})
 
         # Set `.cleanup()` as an atexit hook to handle everything when
         # the child process is about to terminate
@@ -369,13 +371,48 @@ write_pth_hook`)
         return True
 
     def _setup_common(
-        self, wrap_os_fork: bool, reboot_forkserver: bool,
+        self,
+        wrap_os_fork: bool,
+        mp_apply_kwargs: dict[str, Any] | None = None,
     ) -> None:
         if wrap_os_fork:
             self._wrap_os_fork()
         _import_sibling('multiprocessing_patches').apply(
-            self, reboot_forkserver,
+            self, **(mp_apply_kwargs or {}),
         )
+
+    def _handle_sigterm(self, signum: int, _) -> None:  # nocover
+        """
+        See also:
+            :py:meth:`coverage.control.Converage._on_sigterm`
+        """
+        try:
+            name = signal.Signals(signum).name
+            self._debug_output(
+                f'Got signal {signum} ({name}), '
+                'cleaning up before passing it on...',
+            )
+            # Also restores handler overwritten by `._wrap_sigterm()`
+            self.cleanup()
+        finally:
+            os.kill(os.getpid(), signum)
+
+    def _wrap_sigterm(self) -> None:  # nocover
+        """
+        Side effects:
+            If on the main thread:
+
+            - :py:func:`signal.signal` called to set
+              :py:meth:`~._handle_sigterm` as the ``SIGTERM`` handler
+
+            - :py:meth:`~.cleanup` callback registered undoing that
+        """
+        if current_thread() != main_thread():
+            return
+        set_handler = signal.signal
+        self._debug_output('Adding `SIGTERM` handler...')
+        handler = set_handler(signal.SIGTERM, self._handle_sigterm)
+        self.add_cleanup_with_priority(set_handler, 1, signal.SIGTERM, handler)
 
     def _wrap_os_fork(self) -> None:
         """
@@ -383,8 +420,10 @@ write_pth_hook`)
         profiling.
 
         Side effects:
+
             - :py:func:`os.fork` (if available) replaced with the
               wrapper
+
             - :py:meth:`~.cleanup` callback registered undoing that
         """
         try:

@@ -229,6 +229,10 @@ suffix = ''
 #   the internal log messages are captured and writtent to the debug
 #   logs
 intercept_logs = false
+# - `multiprocessing.catch_sigterm` (bool):
+#   Whether to set a hook for the child-process session caches to
+#   `.cleanup()` on SIGTERM
+catch_sigterm = true
 
 [tool.line_profiler.child_processes.multiprocessing.polling]
 

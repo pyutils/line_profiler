@@ -26,6 +26,7 @@ from types import MappingProxyType
 from typing import (
     Any, Generic, Literal, Protocol, TypeVar, Union, NoReturn, cast,
 )
+
 from typing_extensions import Concatenate, ParamSpec, Self
 
 try:
@@ -331,6 +332,9 @@ def wrap_terminate(
     try:
         with wait_for_return(cache.config):
             pass
+    except (_Poller.Timeout, _Poller.TimeoutWarning) as e:
+        cache._debug_output(f'{type(e).__qualname__}: {e}')
+        raise
     finally:  # Always call `Process.terminate()` to avoid orphans
         vanilla_impl(self)
 
@@ -355,6 +359,10 @@ def wrap_bootstrap(
         :py:mod:`line_profiler` to be loaded before it. Hence the
         ``# nocover``.
     """
+    # Set a signal handler for SIGTERM to help child processes with
+    # consistently cleaning up
+    if _get_config(cache.config)['catch_sigterm']:
+        cache._wrap_sigterm()
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
@@ -454,7 +462,7 @@ def apply(
     .. _GH-126631: https://github.com/python/cpython/issues/126631
     """
     if not getattr(multiprocessing, _PATCHED_MARKER, False):
-        _apply_mp_patches(lp_cache, reboot_forkserver)
+        _apply_mp_patches(lp_cache, reboot_forkserver=reboot_forkserver)
 
 
 def _apply_patches_generic(

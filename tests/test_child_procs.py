@@ -1333,7 +1333,10 @@ def patched_attributes() -> MappingProxyType[str, frozenset[str]]:
             obj = _import_target(target)
         except ImportError:
             continue
-        result[target] = frozenset(a for a in attrs if hasattr(obj, a))
+        present_attrs = frozenset(a for a in attrs if hasattr(obj, a))
+        # Drop if none of the attributes is present
+        if present_attrs:
+            result[target] = present_attrs
     return MappingProxyType(result)
 
 
