@@ -8,6 +8,7 @@ import atexit
 import dataclasses
 import os
 import signal
+import sys
 try:
     import _pickle as pickle
 except ImportError:
@@ -18,8 +19,8 @@ from importlib import import_module
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
-from threading import current_thread, main_thread
-from types import ModuleType
+from threading import current_thread, main_thread, RLock, Thread
+from types import FrameType, ModuleType
 from typing import Any, ClassVar, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
 
@@ -42,6 +43,7 @@ T = TypeVar('T')
 PS = ParamSpec('PS')
 # Note: `typing.AnyStr` deprecated since 3.13
 AnyStr = TypeVar('AnyStr', str, bytes)
+_SignalHandler = Callable[[int, FrameType | None], Any]
 
 _THIS_SUBPACKAGE, *_ = (lambda: None).__module__.rpartition('.')
 INHERITED_CACHE_ENV_VARNAME_PREFIX = (
@@ -53,6 +55,9 @@ _DEBUG_LOG_FILENAME_PATTERN = 'debug_log_{main_pid}_{current_pid}.log'
 
 def _import_sibling(submodule: str) -> ModuleType:
     return import_module(f'{_THIS_SUBPACKAGE}.{submodule}')
+
+
+_private_field = partial(dataclasses.field, init=False, repr=False)
 
 
 @final
@@ -76,12 +81,15 @@ class LineProfilingCache(Cleanup):
     insert_builtin: bool = True
     debug: bool = diagnostics.DEBUG
 
-    profiler: LineProfiler | None = dataclasses.field(
-        default=None, init=False, repr=False,
+    profiler: LineProfiler | None = _private_field(default=None)
+    _cleanup_stacks: dict[float, list[Callable[[], Any]]] = _private_field(
+        default_factory=dict,
     )
-    _cleanup_stacks: dict[float, list[Callable[[], Any]]] = dataclasses.field(
-        default_factory=dict, init=False, repr=False,
+    _sighandlers: dict[int, _SignalHandler | int | None] = (
+        _private_field(default_factory=dict)
     )
+    _rlock: RLock = _private_field(default_factory=RLock)
+
     _loaded_instance: ClassVar[LineProfilingCache | None] = None
 
     def __post_init__(self) -> None:
@@ -165,6 +173,30 @@ class LineProfilingCache(Cleanup):
         self._debug_output(msg)
         with open(self.filename, mode='wb') as fobj:
             pickle.dump(content, fobj, protocol=HIGHEST_PROTOCOL)
+
+    def cleanup(self, *args, **kwargs) -> None:
+        """
+        Perform cleanup.
+
+        Args:
+            *args, **kwargs
+                Passed to :py:meth:`Cleanup.cleanup`
+
+        Note:
+            In child processes we set a ``SIGTERM`` handler to always
+            call :py:meth:`~.cleanup`. However, this may happen when
+            we're in the middle of a cleanup call, which results in
+            undefined behavior. To prevent this, each
+            :py:meth:`~.cleanup` call is handled by a separate thread
+            which acquires an instance-specific lock.
+        """
+        thread = Thread(target=self._cleanup_worker, args=args, kwargs=kwargs)
+        thread.start()
+        thread.join()
+
+    def _cleanup_worker(self, *args, **kwargs) -> None:
+        with self._rlock:
+            super().cleanup(*args, **kwargs)
 
     def gather_stats(self, glob_pattern: str = '*.lprof') -> LineStats:
         """
@@ -381,38 +413,51 @@ write_pth_hook`)
             self, **(mp_apply_kwargs or {}),
         )
 
-    def _handle_sigterm(self, signum: int, _) -> None:  # nocover
+    def _handle_signal(self, signum: int, *_) -> None:  # nocover
         """
         See also:
             :py:meth:`coverage.control.Converage._on_sigterm`
         """
+        name = self._get_signal_name(signum)
+        msg = f'Cleaning up before passing `{name}` ({signum}) on...'
+        self._debug_output(msg)
         try:
-            name = signal.Signals(signum).name
-            self._debug_output(
-                f'Got signal {signum} ({name}), '
-                'cleaning up before passing it on...',
-            )
-            # Also restores handler overwritten by `._wrap_sigterm()`
             self.cleanup()
         finally:
-            os.kill(os.getpid(), signum)
+            handler = self._sighandlers.pop(signum, None)
+            if handler is not None:
+                signal.signal(signum, handler)
+            signal.raise_signal(signum)
 
-    def _wrap_sigterm(self) -> None:  # nocover
+    def _add_signal_handler(
+        self, signum: int = signal.SIGTERM,
+    ) -> None:  # nocover
         """
         Side effects:
-            If on the main thread:
+            If on the main thread and not on Windows:
 
             - :py:func:`signal.signal` called to set
-              :py:meth:`~._handle_sigterm` as the ``SIGTERM`` handler
+              :py:meth:`~._handle_signal` as the ``SIGTERM`` handler
 
             - :py:meth:`~.cleanup` callback registered undoing that
+
+        Note:
+            ``SIGTERM`` handling is known to be faulty on Windows; see
+            previous discussions at (examples `1`_, `2`_).
+
+        .. _1: https://github.com/coveragepy/coveragepy/blob/main/\
+coverage/control.py
+        .. _2: https://stackoverflow.com/questions/35772001/
         """
-        if current_thread() != main_thread():
+        if current_thread() != main_thread() or sys.platform == 'win32':
             return
-        set_handler = signal.signal
-        self._debug_output('Adding `SIGTERM` handler...')
-        handler = set_handler(signal.SIGTERM, self._handle_sigterm)
-        self.add_cleanup_with_priority(set_handler, 1, signal.SIGTERM, handler)
+        name = self._get_signal_name(signum)
+        self._debug_output(f'Adding `{name}` handler...')
+        self._sighandlers[signum] = signal.signal(signum, self._handle_signal)
+
+    @staticmethod
+    def _get_signal_name(signum: int) -> str:
+        return signal.Signals(signum).name
 
     def _wrap_os_fork(self) -> None:
         """

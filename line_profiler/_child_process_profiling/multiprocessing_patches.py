@@ -332,7 +332,7 @@ def wrap_terminate(
     try:
         with wait_for_return(cache.config):
             pass
-    except (_Poller.Timeout, _Poller.TimeoutWarning) as e:
+    except _Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
         cache._debug_output(f'{type(e).__qualname__}: {e}')
         raise
     finally:  # Always call `Process.terminate()` to avoid orphans
@@ -352,17 +352,23 @@ def wrap_bootstrap(
     ``LineProfilingCache.load().cleanup()`` so that profiling results
     can be gathered.
 
-    Note:
-        This is only invoked in child processes, and :py:mod:`coverage`
-        seem to be having trouble with them in the current setup,
-        probably due to issues with .pth file precendence causing
-        :py:mod:`line_profiler` to be loaded before it. Hence the
-        ``# nocover``.
+    Notes:
+
+        - This is only invoked in child processes, and
+          :py:mod:`coverage` seems to be having trouble with them in the
+          current setup, probably due to issues with .pth file
+          precendence causing :py:mod:`line_profiler` to be loaded
+          before it. Hence the ``# nocover``.
+
+        - ``SIGTERM`` handling is not consistent on Windows, so we made
+          :py:meth:`LineProfilingCache._add_signal_handler` a no-op
+          there. Hence :py:func:`wrap_terminate` remains necessary in
+          mitigating unclean exits.
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
     if _get_config(cache.config)['catch_sigterm']:
-        cache._wrap_sigterm()
+        cache._add_signal_handler()
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
