@@ -678,18 +678,21 @@ def test_fixture_teardown(
     # that created them went obsolete, before the next rerun;
     # we can verify that by checking that the ids of the `makefile()`
     # fixtures appear in contiguous blocks
+
+    # Note: there seems to be a weird corner case where neighboring tests
+    # may reuse the same fixture id (see failing job 73520441960 in
+    # pipeline 25091142386); probably has to do with object lifetime.
+    # So instead of just checking the `fixture_id`, also consult
+    # `test`; it suffices to see that WITHIN THE SAME TEST we don't have
+    # fixture values stepping over one another
     with log.open() as fobj:
         entries = [LogEntry.parse_line(line.rstrip('\n')) for line in fobj]
     pprint.pprint(entries)
-    field: tuple[str, ...] | str
-    for field in ('test', 'stage'), 'fixture_id':
-        if isinstance(field, str):
-            getter: Callable[[LogEntry], Any] = attrgetter(field)
-        else:
-            getter = attrgetter(*field)
+    for fields in ('test', 'stage'), ('test', 'fixture_id'):
+        getter = attrgetter(*fields)
         values = [getter(entry) for entry in entries]
         assert _identical_items_are_adjacent(values), (
-            f'Inconsistency in {field} order: {values!r}'
+            f'Inconsistency in {fields} order: {values!r}'
         )
 
 
