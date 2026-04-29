@@ -76,15 +76,12 @@ class LineProfilingCache(Cleanup):
     profile_imports: bool = False
     preimports_module: os.PathLike[str] | str | None = None
     main_pid: int = dataclasses.field(default_factory=os.getpid)
-    # Note: if we're using the line profiler, `kernprof` always set
+    # Note: if we're using the line profiler, `kernprof` always sets
     # `builtin` to true
     insert_builtin: bool = True
     debug: bool = diagnostics.DEBUG
 
     profiler: LineProfiler | None = _private_field(default=None)
-    _cleanup_stacks: dict[float, list[Callable[[], Any]]] = _private_field(
-        default_factory=dict,
-    )
     _sighandlers: dict[int, _SignalHandler | int | None] = (
         _private_field(default_factory=dict)
     )
@@ -95,22 +92,11 @@ class LineProfilingCache(Cleanup):
     def __post_init__(self) -> None:
         super().__init__()
 
-    def copy(
-        self, *,
-        inherit_cleanups: bool = False,
-        inherit_profiler: bool = False,
-        **replacements
-    ) -> Self:
+    def copy(self, /, **replacements) -> Self:
         """
         Make a copy with optionally replaced fields.
 
         Args:
-            inherit_cleanups (bool):
-                If true, the copy also makes a (shallow) copy of the
-                cleanup-callback stack.
-            inherit_profiler (bool):
-                If true, the copy also gets a reference to
-                :py:attr:`~.profiler`
             **replacements (Any):
                 Optional fields to replace
 
@@ -121,15 +107,7 @@ class LineProfilingCache(Cleanup):
         init_args: dict[str, Any] = {}
         for field, value in self._get_init_args().items():
             init_args[field] = replacements.get(field, value)
-        copy = type(self)(**init_args)
-        if inherit_cleanups:
-            copy._cleanup_stacks = {
-                priority: list(callbacks)
-                for priority, callbacks in self._cleanup_stacks.items()
-            }
-        if inherit_profiler:
-            copy.profiler = self.profiler
-        return copy
+        return type(self)(**init_args)
 
     @classmethod
     def load(cls) -> Self:
@@ -174,22 +152,35 @@ class LineProfilingCache(Cleanup):
         with open(self.filename, mode='wb') as fobj:
             pickle.dump(content, fobj, protocol=HIGHEST_PROTOCOL)
 
-    def cleanup(self, *args, **kwargs) -> None:
+    def cleanup(self, *args, new_thread: bool = False, **kwargs) -> None:
         """
         Perform cleanup.
 
         Args:
-            *args, **kwargs
+            new_thread (bool):
+                Whether to relegate the call to
+                :py:meth:`Cleanup,cleanup` to a new thread (see Notes)
+            *args, **kwargs:
                 Passed to :py:meth:`Cleanup.cleanup`
 
         Note:
-            In child processes we set a ``SIGTERM`` handler to always
-            call :py:meth:`~.cleanup`. However, this may happen when
-            we're in the middle of a cleanup call, which results in
-            undefined behavior. To prevent this, each
-            :py:meth:`~.cleanup` call is handled by a separate thread
-            which acquires an instance-specific lock.
+            - In child processes we set a ``SIGTERM`` handler to always
+              call :py:meth:`~.cleanup`. However, this may happen when
+              we're already in the middle of a cleanup call, which
+              results in undefined behavior. To prevent this, we can
+              supply ``new_thread=True`` so that the
+              :py:meth:`Cleanup.cleanup` call is handled by a separate
+              thread which acquires an instance-specific lock.
+
+            - However, this method is supposed to clean up the session
+              profiler by completely disabling it, and that part must
+              happen on the main thread or deallocation will be botched.
+              Hence ``new_thread=True`` is made an option and not the
+              default.
         """
+        if not new_thread:
+            self._cleanup_worker(*args, **kwargs)
+            return
         thread = Thread(target=self._cleanup_worker, args=args, kwargs=kwargs)
         thread.start()
         thread.join()
@@ -356,6 +347,11 @@ write_pth_hook`)
                 False the instance has already been set up prior to
                 calling this function, true otherwise
         """
+        def wrap_ctx_debug(
+            ctx: CuratedProfilerContext, msg: str,
+        ) -> None:
+            self._debug_output(f'  Context {id(ctx):#x}: {msg}')
+
         if not context:
             context = '...'
         self._debug_output(f'Setting up ({context})...')
@@ -369,6 +365,8 @@ write_pth_hook`)
             prof = LineProfiler()
         self.profiler = prof
         ctx = CuratedProfilerContext(prof, insert_builtin=self.insert_builtin)
+        if self.debug:
+            self.patch(ctx, '_debug_output', wrap_ctx_debug.__get__(ctx))
         ctx.install()
         self.add_cleanup(ctx.uninstall)
         self._debug_output(f'Set up `.profiler` at {id(prof):#x}')
@@ -422,7 +420,13 @@ write_pth_hook`)
         msg = f'Cleaning up before passing `{name}` ({signum}) on...'
         self._debug_output(msg)
         try:
-            self.cleanup()
+            # We don't care about profiler state and such if we're
+            # already being SIGTERM-ed, so just handle cleanup on a
+            # separate thread;
+            # this prevents a duplicate call to `.cleanup()` when we're
+            # already inside one (e.g. when `Process._bootstrap()` is
+            # exiting, or the `atexit` hook is triggered)
+            self.cleanup(new_thread=True)
         finally:
             handler = self._sighandlers.pop(signum, None)
             if handler is not None:

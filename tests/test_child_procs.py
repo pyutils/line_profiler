@@ -360,7 +360,7 @@ def create_cache(
       - ``False``: equivalent to ``None``.
 
     - Unless the argument ``_use_curated_profiler: bool = True`` is set
-      to :py:const`True`, automatically creates an instance of
+      to :py:const:`False`, automatically creates an instance of
       :py:class:`LineProfiler` that is curated by a
       :py:class:`CuratedProfilerContext` and provides it as the
       :py:attr:`LineProfilingCache.profiler`, and
@@ -1550,7 +1550,6 @@ def test_cache_setup_main_process(
 @_preserve_attributes(_GLOBAL_PATCHES)
 def test_cache_setup_child(
     create_cache: Callable[..., LineProfilingCache],
-    curated_profiler: LineProfiler,
     ext_module_object: ModuleType,
     another_pid: int,
     wrap_os_fork: bool,
@@ -1617,6 +1616,8 @@ def test_cache_setup_child(
                 assert (os.fork is not old_fork) == fork_patched
             else:  # E.g. Windows
                 assert old_fork == _NotSupplied.NOT_SUPPLIED
+    # Check that after cleaning up the profiler has been disabled
+    assert not getattr(cache.profiler, 'enable_count', 0)
 
     # Check that profiling results have been written to the cache
     # directory

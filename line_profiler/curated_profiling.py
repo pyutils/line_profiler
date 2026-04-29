@@ -193,6 +193,11 @@ class CuratedProfilerContext(Cleanup):
         # objects to it should be the exception, not the norm.
         self._kpo(cast(LineProfiler, prof))
 
+    @staticmethod
+    def _disable_profiler(prof: ByCountProfilerMixin) -> None:
+        for _ in range(getattr(prof, 'enable_count', 0)):
+            prof.disable_by_count()
+
     def install(self) -> None:
         if self._installed:
             return
@@ -208,14 +213,12 @@ class CuratedProfilerContext(Cleanup):
         # Set up hooks to deal with inserting `.prof` as a builtin name
         if self.insert_builtin:
             self.patch(builtins, self.builtin_loc, self.prof)
+        # Disable the profiler
+        self.add_cleanup(self._disable_profiler, self.prof)
+
         self.patch(self, '_installed', True)
 
     def uninstall(self) -> None:
-        if not self._installed:
-            return
-        # Fully disable the profiler
-        for _i in range(getattr(self.prof, 'enable_count', 0)):
-            self.prof.disable_by_count()
         self.cleanup()
 
     def __enter__(self) -> Self:
