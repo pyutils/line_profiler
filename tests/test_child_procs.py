@@ -19,6 +19,7 @@ from contextlib import AbstractContextManager, ExitStack, nullcontext
 from functools import partial, wraps
 from io import StringIO
 from importlib import import_module
+from numbers import Real
 from pathlib import Path
 from runpy import run_path
 from tempfile import TemporaryDirectory
@@ -692,12 +693,57 @@ class _Params:
             )
         return type(self)(new_params, new_values, new_defaults_tuple)
 
+    def sorted(
+        self,
+        *,
+        sort_by: Sequence[str] | None = None,
+        sortable_types: type[Any] | tuple[type[Any], ...] = (Real, str, bytes),
+    ) -> Self:
+        """
+        Sort by parametrization values.
+
+        Args:
+            sort_by (Sequence[str] | None):
+                Column names to sort by; default is to sort by all
+                sortable params.
+            sortable_types (type[Any] | tuple[type[Any], ...]):
+                Type(s) where if a param has all its values being
+                instances thereof (excl. :py:const:`None`s), said param
+                is considered sortable.
+
+        Returns:
+            New instance
+        """
+        def sort_key(obj: Any) -> tuple[bool, str, Any]:
+            type_name = '{0.__module__}.{0.__qualname__}'.format(type(obj))
+            return (obj is None), type_name, obj
+
+        if sort_by is None:
+            sort_by = self.params
+        sortable_columns: set[str] = {
+            param for param, *values in zip(self.params, *self.values)
+            if all(isinstance(v, sortable_types) or v is None for v in values)
+        }
+        sorted_column_indices: tuple[int, ...] = tuple(
+            i for i, param in enumerate(sort_by) if param in sortable_columns
+        )
+
+        if sorted_column_indices:
+            new_values = sorted(
+                self.values, key=lambda vtuple: tuple(
+                    sort_key(vtuple[i]) for i in sorted_column_indices
+                ),
+            )
+        else:  # Fallback
+            new_values = self.values.copy()
+        return type(self)(self.params, new_values, self.defaults)
+
     def __call__(self, func: C) -> C:
         """
         Mark a callable as with :py:func:`pytest.mark.parametrize`.
         """
         # Note: `pytest` automatically assumes single-param values to
-        # be unpackes, so comply here
+        # be unpacked, so comply here
         if len(self.params) == 1:
             marker = pytest.mark.parametrize(
                 self.params[0], [v[0] for v in self.values],
@@ -1716,12 +1762,17 @@ def test_load_pth_hook(
 
 
 @pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
-@pytest.mark.parametrize('start_method',
-                         ['fork', 'forkserver', 'spawn', 'dummy'])
-@pytest.mark.parametrize(('debug', 'label1'),
-                         [(True, 'with-debug'), (False, 'no-debug')])
-@pytest.mark.parametrize(('fail', 'label2'),
-                         [(True, 'failure'), (False, 'success')])
+@(_Params.new('start_method',
+              ['fork', 'forkserver', 'spawn', 'dummy'],
+              defaults='dummy')
+  * _Params.new(('fail', 'label2'),
+                [(True, 'failure'), (False, 'success')],
+                defaults=(False, 'success'))
+  # We only need to check if `intercept_logs` work, the other
+  # parametrizations don't matter
+  + _Params.new(('intercept_logs', 'label1'),
+                [(True, 'with-intercept-logs'), (False, 'no-intercept-logs')],
+                defaults=(False, 'no-intercept-logs'))).sorted()
 @pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
@@ -1731,7 +1782,7 @@ def test_apply_mp_patches(
     ext_module_object: ModuleType,
     test_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
-    debug: bool,
+    intercept_logs: bool,
     fail: bool,
     n: int,
     nprocs: int,
@@ -1760,17 +1811,21 @@ def test_apply_mp_patches(
 
     config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
     cfg_chunks: list[str] = []
-    if debug:
+    if intercept_logs:
         cfg_chunks.append(
             '[tool.line_profiler.child_processes.multiprocessing]\n'
             'intercept_logs = true'
         )
+    # This is easier to debug than `ResultMismatch`
     cfg_chunks.append(
         '[tool.line_profiler.child_processes.multiprocessing.polling]\n'
         'on_timeout = "error"'
     )
     config.write_text('\n\n'.join(cfg_chunks))
 
+    # Note: no need to test the case for `my_local_sum()` separately,
+    # with `preimports_module=True`, both are just imported and added
+    # to the profiler, so the code paths are the same
     profiled_func = ext_module_object.my_external_sum
     called_func = partial(
         test_module_object.sum_in_child_procs,
@@ -1840,7 +1895,7 @@ def test_apply_mp_patches(
         for path in Path(cache.cache_dir).glob('*.lprof')
         if is_valid_stats_file(path)
     }
-    patterns[re.escape('`multiprocessing` logging (debug)')] = debug
+    patterns[re.escape('`multiprocessing` logging (debug)')] = intercept_logs
     _search_cache_logs(cache, True, patterns)
 
 
@@ -1864,24 +1919,19 @@ def _get_mp_start_method_fuzzer(label_name: str) -> _Params:
     return fuzz_fail * fuzz_start
 
 
-_fuzz_sanity = (
-    _Params.new(('run_func', 'label1'),
-                [(run_module, 'module'), (run_script, 'script')])
-    * _Params.new(('use_local_func', 'label2'),
-                  [(True, 'local'), (False, 'ext')])
-    # Python can't pickle things unless they resided in a retrievable
-    # location (so not the script supplied by `python -c`)
-    + _Params.new(('run_func', 'label1', 'use_local_func', 'label2'),
-                  [(run_literal_code, 'literal-code', False, 'ext')])
-    # Also fuzz the parallelization-related stuff, esp. check what
-    # happens if an exception is raised inside the parallelly-run func
-    + _get_mp_start_method_fuzzer('label3')
-    + _Params.new(('nnums', 'nprocs'), [(200, None), (None, 3)],
-                  defaults=(None, None))
-)
-
-
-@_fuzz_sanity
+@(_Params.new(('run_func', 'label1'),
+              [(run_module, 'module'), (run_script, 'script')])
+  * _Params.new(('use_local_func', 'label2'),
+                [(True, 'local'), (False, 'ext')])
+  # Python can't pickle things unless they resided in a retrievable
+  # location (so not the script supplied by `python -c`)
+  + _Params.new(('run_func', 'label1', 'use_local_func', 'label2'),
+                [(run_literal_code, 'literal-code', False, 'ext')])
+  # Also fuzz the parallelization-related stuff, esp. check what
+  # happens if an exception is raised inside the parallelly-run func
+  + _get_mp_start_method_fuzzer('label3')
+  + _Params.new(('nnums', 'nprocs'), [(200, None), (None, 3)],
+                defaults=(None, None))).sorted()
 def test_multiproc_script_sanity_check(
     run_func: Callable[..., subprocess.CompletedProcess],
     test_module: _ModuleFixture,
@@ -1951,28 +2001,31 @@ def test_running_multiproc_script(
     run_func(test_module, tmp_path_factory, runner, outfile, profile)
 
 
-_fuzz_prof_mp_1 = (
-    _Params.new(('run_func', 'label1'),
-                [(run_module, 'module'),
-                 (run_script, 'script'),
-                 (run_literal_code, 'literal-code')],
-                defaults=(run_script, 'script'))
-    + _Params.new(('prof_child_procs', 'label2'),
-                  [(True, 'with-child-prof'), (False, 'no-child-prof')])
-    + _get_mp_start_method_fuzzer('label3')
-)
-_fuzz_prof_mp_2 = (
-    _Params.new(('preimports', 'label4'),
-                [(True, 'with-preimports'), (False, 'no-preimports')],
-                defaults=(False, 'no-preimports'))
-    + _Params.new(('use_local_func', 'label5'),
-                  [(True, 'local'), (False, 'external')],
-                  defaults=(False, 'external'))
-)
+_fuzz_prof_mp_run_func = _Params.new(('run_func', 'label1'),
+                                     [(run_module, 'module'),
+                                      (run_script, 'script'),
+                                      (run_literal_code, 'literal-code')],
+                                     defaults=(run_script, 'script'))
 
 
-@_fuzz_prof_mp_1
-@_fuzz_prof_mp_2
+@(
+    (_fuzz_prof_mp_run_func
+     + _Params.new(('prof_child_procs', 'label2'),
+                   [(True, 'with-child-prof'), (False, 'no-child-prof')])
+     + _get_mp_start_method_fuzzer('label3'))
+    # Test all `multiproc` start methods with both locally- and
+    # externally-defined profiling targets
+    * (_Params.new(('preimports', 'label4'), [(False, 'no-preimports')])
+       + _Params.new(('use_local_func', 'label5'),
+                     [(True, 'local'), (False, 'external')],
+                     defaults=(False, 'external')))
+    # The 'with-preimports' case is already tested rather thoroughly in
+    # `test_apply_mp_patches()`, so exclude these from the above "main"
+    # param matrix and just test the different `kernprof` modes via the
+    # `run_func()`s
+    + (_fuzz_prof_mp_run_func
+       + _Params.new(('preimports', 'label4'), [(True, 'with-preimports')]))
+).sorted()
 @pytest.mark.retry(_NUM_RETRIES,
                    exceptions=(ResultMismatch, subprocess.TimeoutExpired))
 @pytest.mark.parametrize(

@@ -201,8 +201,10 @@ class _Poller:
             raise type(self).Timeout(msg)
 
         def warn(msg: str) -> None:
-            warnings.warn(msg, type(self).TimeoutWarning, stacklevel=3)
+            # Write log before issuing the warning because that may be
+            # promoted to an exception
             diagnostics.log.warning(msg)
+            warnings.warn(msg, type(self).TimeoutWarning, stacklevel=3)
 
         def ignore(_):
             pass
