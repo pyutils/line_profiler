@@ -314,7 +314,9 @@ if __name__ == '__main__':
     setupkw['long_description_content_type'] = 'text/x-rst'
     setupkw['license'] = 'BSD'
     setupkw['packages'] = list(setuptools.find_packages())
-    setupkw['py_modules'] = ['kernprof', 'line_profiler']
+    setupkw['py_modules'] = [
+        'kernprof', 'line_profiler', '_line_profiler_hooks',
+    ]
     setupkw['python_requires'] = '>=3.10'
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
     setupkw['package_data'] = {'line_profiler': ['py.typed', '*.pyi', '*.toml']}

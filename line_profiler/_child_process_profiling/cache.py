@@ -9,11 +9,14 @@ import dataclasses
 import os
 import signal
 import sys
+import sysconfig
 try:
     import _pickle as pickle
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
-from collections.abc import Collection, Callable, MutableMapping, Iterable
+from collections.abc import (
+    Collection, Callable, Mapping, MutableMapping, Iterable,
+)
 from functools import partial, cached_property, wraps
 from importlib import import_module
 from operator import attrgetter
@@ -25,16 +28,13 @@ from types import FrameType, ModuleType
 from typing import Any, ClassVar, Literal, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
 
+from _line_profiler_hooks import INHERITED_PID_ENV_VARNAME, load_pth_hook
 from .. import _diagnostics as diagnostics
 from ..cleanup import Cleanup
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
+from ..toml_config import ConfigSource
 from ._cache_logging import CacheLoggingEntry
-# Note: this should have been defined here in this file, but we moved it
-# over to `~._child_process_hook` because that module contains the .pth
-# hook, which must run with minimal overhead when a Python process isn't
-# associated with a profiled process
-from .pth_hook import INHERITED_PID_ENV_VARNAME
 
 
 __all__ = ('LineProfilingCache',)
@@ -335,6 +335,67 @@ class LineProfilingCache(Cleanup):
             _format_debug_msg='Injecting env var ${{{1}}}: {2}'.format,
         )
 
+    def write_pth_hook(
+        self, *,
+        prefix: str | None = None,
+        suffix: str | None = None,
+        dir: os.PathLike[str] | str | None = None,
+        # Get rid of the .pth file ASAP so as to be the least disruptive
+        priority: float = 1,
+        **kwargs
+    ) -> Path:
+        """
+        Write a .pth file which allows for setting up profiling in child
+        Python processes.
+
+        Args:
+            prefix, suffix (str | None):
+                Optional filename-stem affixes of the .pth file; default
+                is to use default values loaded from :py:attr:`.config`
+            dir (os.PathLike[str] | str | None):
+                Optional directory to create the .pth file in; default
+                is to use ``sysconfig.get_path('purelib')``
+            priority, **kwargs:
+                Passed to :py:meth:`.make_tempfile`.
+
+        Returns:
+            fpath (Path):
+                Path to the written .pth file
+        """
+        def get_pth_config() -> Mapping[str, Any]:
+            # Note: the only keys in it should be `prefix` and `suffix`
+            return (
+                self._config_source  # Cached
+                .get_subconfig('child_processes', 'pth_files')
+                .conf_dict
+            )
+
+        if not os.path.exists(self.filename):
+            self.dump()
+            assert os.path.exists(self.filename)
+
+        # The string casts are failsafes in case inappropriate values
+        # (e.g. numbers and booleans) are supplied
+        if prefix is None:
+            prefix = str(get_pth_config()['prefix'])
+        if suffix is None:
+            suffix = str(get_pth_config()['suffix'])
+        if dir is None:
+            dir = sysconfig.get_path('purelib')
+
+        template = 'import {0.__module__}; {0.__module__}.{0.__name__}({1})'
+        fpath = self.make_tempfile(
+            prefix=prefix, suffix=suffix + '.pth', dir=dir, priority=priority,
+            **kwargs,
+        )
+        try:
+            fpath.write_text(template.format(load_pth_hook, self.main_pid))
+        except Exception:
+            fpath.unlink(missing_ok=True)
+            raise
+
+        return fpath
+
     def _debug_output(self, msg: str) -> None:
         """
         Beside writing to the logger, also write to the
@@ -364,8 +425,7 @@ class LineProfilingCache(Cleanup):
 
             - A ``.pth`` file written so that child processes
               automaticaly runs setup code (see
-              :py:func:`line_profiler._child_process_hook.pth_hook.\
-write_pth_hook`)
+              :py:meth:`.write_pth_hook`)
 
             - :py:func:`os.fork` wrapped so that profiling set up in
               forked processes is properly handled (if
@@ -379,7 +439,7 @@ write_pth_hook`)
         """
         self.dump()
         self.inject_env_vars()
-        _import_sibling('pth_hook').write_pth_hook(self)
+        self.write_pth_hook()
         self._setup_common(wrap_os_fork, {'reboot_forkserver': True})
         self._replace_loaded_instance()
 
@@ -747,3 +807,11 @@ coverage/control.py
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
         return type(self).load()._get_init_args() == self._get_init_args()
+
+    @cached_property
+    def _config_source(self) -> ConfigSource:
+        if self.config is None:
+            config: str | None = None
+        else:
+            config = str(self.config)
+        return ConfigSource.from_config(config)
