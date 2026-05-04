@@ -15,7 +15,7 @@ from textwrap import indent
 from pathlib import Path
 from types import MethodType
 from typing import Any, TypeVar, TypedDict, cast
-from typing_extensions import ParamSpec, Self, Unpack
+from typing_extensions import Concatenate, ParamSpec, Self, Unpack
 
 from .line_profiler_utils import block_indent, make_tempfile
 from . import _diagnostics as diagnostics
@@ -517,13 +517,20 @@ class Cleanup:
             >>> assert obj.foo == 1
             >>> assert not hasattr(obj, 'bar')
         """
-        add_cleanup = self.add_cleanup if cleanup else (lambda *_, **__: None)
+        if cleanup:
+            add_cleanup: Callable[
+                Concatenate[Callable[..., Any], float, ...], Any
+            ] = self.add_cleanup_with_priority
+        else:
+            # ... yeah gotta disagree with flake8, a lambda makes
+            # perfect sense here
+            add_cleanup = lambda *_, **__: None  # noqa: E731
         try:
             old = getattr(obj, attr)
         except AttributeError:
-            add_cleanup(delattr, obj, attr)
+            add_cleanup(delattr, priority, obj, attr)
         else:
-            add_cleanup(setattr, obj, attr, old)
+            add_cleanup(setattr, priority, obj, attr, old)
         setattr(obj, attr, value)
         if name is None:
             name = self._get_name(obj)

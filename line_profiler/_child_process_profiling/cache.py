@@ -202,7 +202,9 @@ class LineProfilingCache(Cleanup):
         )
         if not fnames:
             return LineStats.get_empty_instance()
-        return LineStats.from_files(*fnames, on_defective='ignore')
+        return LineStats.from_files(
+            *fnames, on_empty='warn', on_defective='warn',
+        )
 
     def _dump_debug_logs(self) -> None:
         """
