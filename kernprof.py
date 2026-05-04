@@ -1207,19 +1207,19 @@ class _manage_profiler:
         )
         if self.set_up_child_profiling:
             self.cache = cache = _prepare_child_profiling_cache(
-                self.options, self.prof, preimports_file, script_file,
+                self.options, self._ctx, self.prof,
+                preimports_file, script_file,
             )
-            self._ctx.add_cleanup(cache.cleanup)
             # Add deferred callbacks for gathering debug logfiles
             # (should run right before `.cache.cache_dir` is wiped):
             # - Write the debug logs to the `._diagnostics` logger
             if cache.debug:
-                cache.add_cleanup_with_priority(
+                self._ctx.add_cleanup_with_priority(
                     cache._dump_debug_logs, CLEANUP_PRIORITIES['gather_logs'],
                 )
             # - Write the debug logs to a specific file
             if self.options.debug_log:
-                cache.add_cleanup_with_priority(
+                self._ctx.add_cleanup_with_priority(
                     self._gather_debug_log,
                     CLEANUP_PRIORITIES['gather_logs'],
                     self.options.debug_log,
@@ -1230,11 +1230,13 @@ class _manage_profiler:
         try:
             extra_stats = None
             if self.set_up_child_profiling:
+                # Cleaning up here ensures the `multiprocessing`
+                # fork-server process is rebooted, thus any profiling
+                # data on it will be properly collected
+                self.cache.cleanup()
                 extra_stats = self.cache.gather_stats()
             _post_profile(self.options, self.prof, extra_stats)
         finally:
-            # This also calls its `.cleanup()`, and in turn that of
-            # `.cache`'s
             self._ctx.uninstall()
 
     def _gather_debug_log(self, logfile):
@@ -1344,7 +1346,9 @@ def _prepare_exec_script(
     return script_file, preimports_file
 
 
-def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
+def _prepare_child_profiling_cache(
+    options, ctx, prof, preimports_file, script_file
+):
     """
     Handle the (line-)profiling of spawned/forked child Python
     processes.
@@ -1364,8 +1368,10 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     )
     clean_up = functools.partial(cache.add_cleanup, _remove, missing_ok=True)
     if not diagnostics.KEEP_TEMPDIRS:
-        # Defer the scrubbing of the cache dir
-        cache.add_cleanup_with_priority(
+        # Defer the scrubbing of the cache dir and let the context
+        # handle it, ideally speaking the cache dir should survive the
+        # cache object
+        ctx.add_cleanup_with_priority(
             _remove, CLEANUP_PRIORITIES['rm_cache_dir'], cache.cache_dir,
             recursive=True,
         )
@@ -1382,6 +1388,9 @@ def _prepare_child_profiling_cache(options, prof, preimports_file, script_file):
     # Handle various setup tasks (see docs thereof)
     cache._setup_in_main_process()
     cache.profiler = prof
+
+    # Have the context clean up the cache as a failsafe
+    ctx.add_cleanup(cache.cleanup)
 
     return cache
 

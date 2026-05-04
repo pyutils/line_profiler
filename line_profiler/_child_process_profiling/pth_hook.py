@@ -66,6 +66,8 @@ def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
         prefix=pth_config['prefix'],
         suffix=pth_config['suffix'] + '.pth',
         dir=get_path('purelib'),
+        # Get rid of the .pth file ASAP so as to be the least disruptive
+        priority=1,
     )
     try:
         pth_content = 'import {0}; {0}.load_pth_hook({1})'.format(

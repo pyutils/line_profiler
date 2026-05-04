@@ -16,12 +16,13 @@ except ImportError:
 from collections.abc import Collection, Callable, MutableMapping, Iterable
 from functools import partial, cached_property, wraps
 from importlib import import_module
+from operator import attrgetter
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
 from threading import current_thread, main_thread, RLock, Thread
 from types import FrameType, ModuleType
-from typing import Any, ClassVar, TypeVar, cast, final, overload
+from typing import Any, ClassVar, Literal, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
 
 from .. import _diagnostics as diagnostics
@@ -51,6 +52,21 @@ INHERITED_CACHE_ENV_VARNAME_PREFIX = (
 )
 CACHE_FILENAME = 'line_profiler_cache.pkl'
 _DEBUG_LOG_FILENAME_PATTERN = 'debug_log_{main_pid}_{current_pid}.log'
+_PROFILING_OUTPUT_PREFIX_PATTERN = (
+    'child-prof-output-{main_pid}-{current_pid}-{prof}-'
+)
+_DEFAULT_GATHER_STATS_EXCLUDES: set[tuple[str, str]] = {
+    # Note: the `ResourceTracker` server process is spawned when the
+    # first `multiprocessing` child process is created via the `spawn`
+    # or `forkserver` start method. While this server process does not
+    # meaningfully contribute to the profiling result either way, since
+    # it can be created with profiling set up, its longevity means that
+    # `LineProfilingCache.gather_stats()` often catches an empty .lprof
+    # file which it has occupied but not written to. To reduce noise
+    # while keeping the warning for other zero-length files, just
+    # explictly exclude said process
+    ('multiprocessing.resource_tracker', '_resource_tracker._pid'),
+}
 
 
 def _import_sibling(submodule: str) -> ModuleType:
@@ -189,13 +205,48 @@ class LineProfilingCache(Cleanup):
         with self._rlock:
             super().cleanup(*args, **kwargs)
 
-    def gather_stats(self, glob_pattern: str = '*.lprof') -> LineStats:
+    def gather_stats(
+        self,
+        exclude_pids: Collection[int] | None = None,
+        *,
+        on_empty: Literal['error', 'warn', 'ignore'] = 'warn',
+        on_defective: Literal['error', 'warn', 'ignore'] = 'warn',
+    ) -> LineStats:
         """
         Gather the profiling output files matching ``glob_pattern`` from
         :py:attr:`~.cache_dir`, consolidating them into a single
         :py:class:`LineStats` object.
+
+        Args:
+            exclude_pids (Collection[int] | None):
+                Exclude output from child processes with these PIDs;
+                the default value :py:const:`None` fetches relevant
+                PIDs dynamically.
+            on_empty, on_defective (Literal['error', 'warn', 'ignore']):
+                Passed to :py:meth:`LineStats.from_files`.
+
+        Returns:
+            :py:class:`LineStats` instance
         """
-        fnames = list(Path(self.cache_dir).glob(glob_pattern))
+        if exclude_pids is None:
+            exclude_pids = set()
+            for import_target, attr in _DEFAULT_GATHER_STATS_EXCLUDES:
+                try:
+                    module = import_module(import_target)
+                except ImportError:
+                    continue
+                try:
+                    maybe_pid = attrgetter(attr)(module)
+                except AttributeError:
+                    maybe_pid = None
+                if maybe_pid is None:
+                    continue
+                exclude_pids.add(cast(int, maybe_pid))
+
+        fnames_ = set(self._get_profiling_outfiles())
+        for pid in exclude_pids:
+            fnames_.difference_update(self._get_profiling_outfiles(pid))
+        fnames = sorted(fnames_)
         self._debug_output(
             'Loading results from {} child profiling file(s): {!r}'
             .format(len(fnames), fnames)
@@ -203,7 +254,7 @@ class LineProfilingCache(Cleanup):
         if not fnames:
             return LineStats.get_empty_instance()
         return LineStats.from_files(
-            *fnames, on_empty='warn', on_defective='warn',
+            *fnames, on_empty=on_empty, on_defective=on_defective,
         )
 
     def _dump_debug_logs(self) -> None:
@@ -252,9 +303,19 @@ class LineProfilingCache(Cleanup):
 
     def _get_debug_logfiles(self) -> Iterable[Path]:
         pattern = _DEBUG_LOG_FILENAME_PATTERN.format(
-            main_pid=self.main_pid, current_pid='*',
+            main_pid=self.main_pid, current_pid='?*',
         )
         return Path(self.cache_dir).glob(pattern)
+
+    def _get_profiling_outfiles(self, pid: Any = '?*') -> Iterable[Path]:
+        prefix = _PROFILING_OUTPUT_PREFIX_PATTERN.format(
+            main_pid=self.main_pid,
+            current_pid=pid,
+            # We always format the profiler ID with `hex()`, see
+            # `._setup_in_child_process()`
+            prof='0x?*',
+        )
+        return Path(self.cache_dir).glob(prefix + '?*.lprof')
 
     def inject_env_vars(
         self, env: MutableMapping[str, str] | None = None,
@@ -385,8 +446,11 @@ write_pth_hook`)
         # up to write thereto when the process terminates (with high
         # priority)
         prof_outfile = self.make_tempfile(
-            prefix='child-prof-output-{}-{}-{:#x}-'
-            .format(self.main_pid, os.getpid(), id(prof)),
+            prefix=_PROFILING_OUTPUT_PREFIX_PATTERN.format(
+                main_pid=self.main_pid,
+                current_pid=os.getpid(),
+                prof=hex(id(prof)),
+            ),
             suffix='.lprof',
             delete=False,
         )
