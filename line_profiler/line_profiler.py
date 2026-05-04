@@ -20,20 +20,10 @@ import types
 import tokenize
 import warnings
 from argparse import ArgumentParser
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime
 from os import PathLike
-from typing import (
-    TYPE_CHECKING,
-    IO,
-    Callable,
-    Literal,
-    Mapping,
-    Protocol,
-    Sequence,
-    TypeVar,
-    cast,
-    Tuple,
-)
+from typing import TYPE_CHECKING, IO, Any, Literal, Protocol, TypeVar, cast
 
 try:
     from ._line_profiler import (
@@ -63,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover
         def register_magics(self, magics: type) -> None: ...
 
     PS = ParamSpec('PS')
-    _TimingsMap = Mapping[Tuple[str, int, str], list[Tuple[int, int, int]]]
+    _TimingsMap = Mapping[tuple[str, int, str], list[tuple[int, int, int]]]
     T = TypeVar('T')
     T_co = TypeVar('T_co', covariant=True)
 
@@ -227,6 +217,15 @@ class _CythonBlockFinder(inspect.BlockFinder):
         return super().tokeneater(type, token, srowcol, erowcol, line)
 
 
+class _EmptyFileError(OSError):
+    """
+    Error raised when trying to read profiling data from an empty file.
+    """
+    def __init__(self, file: PathLike[str] | str) -> None:
+        super().__init__(str(file))
+        self.file = file
+
+
 class _WrapperInfo:
     """
     Helper object for holding the state of a wrapper function.
@@ -265,8 +264,8 @@ class LineStats(CLineStats):
         Example:
             >>> from copy import deepcopy
             >>> stats1 = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 2, 1000), (12, 1, 500)]},
             ...     1E-6)
             >>> stats2 = deepcopy(stats1)
@@ -275,7 +274,7 @@ class LineStats(CLineStats):
             >>> assert stats2 != stats1
             >>> stats3 = deepcopy(stats1)
             >>> assert stats1 == stats3 is not stats1
-            >>> stats3.timings['foo', 1, 'spam.py'][:] = [(2, 11, 330)]
+            >>> stats3.timings['spam.py', 1, 'foo'][:] = [(2, 11, 330)]
             >>> assert stats3 != stats1
         """
         for attr in 'timings', 'unit':
@@ -291,20 +290,20 @@ class LineStats(CLineStats):
         """
         Example:
             >>> stats1 = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 2, 1000), (12, 1, 500)]},
             ...     1E-6)
             >>> stats2 = LineStats(
-            ...     {('bar', 10, 'spam.py'):
+            ...     {('spam.py', 10, 'bar'):
             ...      [(11, 10, 20000), (12, 5, 1000)],
-            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...      ('eggs.py', 5, 'baz'): [(5, 2, 5000)]},
             ...     1E-7)
             >>> stats_sum = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 12, 3000), (12, 6, 600)],
-            ...      ('baz', 5, 'eggs.py'): [(5, 2, 500)]},
+            ...      ('eggs.py', 5, 'baz'): [(5, 2, 500)]},
             ...     1E-6)
             >>> assert stats1 + stats2 == stats2 + stats1 == stats_sum
         """
@@ -315,20 +314,20 @@ class LineStats(CLineStats):
         """
         Example:
             >>> stats1 = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 2, 1000), (12, 1, 500)]},
             ...     1E-6)
             >>> stats2 = LineStats(
-            ...     {('bar', 10, 'spam.py'):
+            ...     {('spam.py', 10, 'bar'):
             ...      [(11, 10, 20000), (12, 5, 1000)],
-            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...      ('eggs.py', 5, 'baz'): [(5, 2, 5000)]},
             ...     1E-7)
             >>> stats_sum = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 12, 3000), (12, 6, 600)],
-            ...      ('baz', 5, 'eggs.py'): [(5, 2, 500)]},
+            ...      ('eggs.py', 5, 'baz'): [(5, 2, 500)]},
             ...     1E-6)
             >>> address = id(stats2)
             >>> stats2 += stats1
@@ -386,6 +385,7 @@ class LineStats(CLineStats):
         file: PathLike[str] | str,
         /,
         *files: PathLike[str] | str,
+        on_empty: Literal['ignore', 'warn', 'error'] = 'warn',
         on_defective: Literal['ignore', 'warn', 'error'] = 'error',
     ) -> Self:
         """
@@ -396,10 +396,11 @@ class LineStats(CLineStats):
                 File to load profiling data from
             *files (PathLike[str] | str):
                 Ditto above
-            on_defective (Literal['ignore', 'warn', 'error']):
-                What to do if some files fail to load: ``'ignore'``
-                those files, skip them but with a ``'warn'``-ing, or
-                raise the ``'error'`` as soon as one is encountered
+            on_empty, on_defective (Literal['ignore', 'warn', 'error']):
+                What to do if some files are empty (resp. otherwise fail
+                to load): ``'ignore'`` those files, skip them but with a
+                ``'warn'``-ing, or raise the ``'error'`` as soon as one
+                is encountered
 
         Returns:
             instance (LineStats):
@@ -407,25 +408,42 @@ class LineStats(CLineStats):
         """
         stats_objs = []
         failures: dict[str, str] = {}
+        empty_files: set[str] = set()
         all_files = [file, *files]
+
         for file in all_files:
             with open(file, 'rb') as f:
                 try:
+                    if not os.stat(file).st_size:
+                        raise _EmptyFileError(file)
                     stats_objs.append(pickle.load(f))
+                except _EmptyFileError as e:
+                    if on_empty == 'error':
+                        raise
+                    empty_files.add(str(e.file))
                 except Exception as e:
                     if on_defective == 'error':
                         raise
                     failures[str(file)] = f'{type(e).__name__}: {e}'
-        if failures:
-            msg = (
-                '{} file(s) out of {} failed to load and are skipped: {!r}'
-                .format(len(failures), len(all_files), failures)
+
+        problems: Collection[Any]
+        for problems, description, behavior in [
+            (list(empty_files), 'is/are empty and thus skipped:', on_empty),
+            (failures, 'failed to load and is/are skipped', on_defective),
+        ]:
+            if not problems:
+                continue
+            msg = '{} file(s) out of {} {}: {!r}'.format(
+                len(problems), len(all_files), description, problems,
             )
-            if on_defective == 'warn':
-                warnings.warn(msg)
+            if behavior == 'warn':
+                # Log before warning because warnings may be promoted to
+                # errors
                 diagnostics.log.warning(msg)
+                warnings.warn(msg)
             else:  # 'ignore'
                 diagnostics.log.debug(msg)
+
         if not stats_objs:
             return cls.get_empty_instance()
         return cls.from_stats_objects(*stats_objs)
@@ -437,23 +455,23 @@ class LineStats(CLineStats):
         """
         Example:
             >>> stats1 = LineStats(
-            ...     {('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...      ('bar', 10, 'spam.py'):
+            ...     {('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...      ('spam.py', 10, 'bar'):
             ...      [(11, 2, 1000), (12, 1, 500)]},
             ...     1E-6)
             >>> stats2 = LineStats(
-            ...     {('bar', 10, 'spam.py'):
+            ...     {('spam.py', 10, 'bar'):
             ...      [(11, 10, 20000), (12, 5, 1000)],
-            ...      ('baz', 5, 'eggs.py'): [(5, 2, 5000)]},
+            ...      ('eggs.py', 5, 'baz'): [(5, 2, 5000)]},
             ...     1E-7)
             >>> stats_combined = LineStats.from_stats_objects(
             ...     stats1, stats2)
             >>> assert stats_combined.unit == 1E-6
             >>> assert stats_combined.timings == {
-            ...     ('foo', 1, 'spam.py'): [(2, 10, 300)],
-            ...     ('bar', 10, 'spam.py'):
+            ...     ('spam.py', 1, 'foo'): [(2, 10, 300)],
+            ...     ('spam.py', 10, 'bar'):
             ...     [(11, 12, 3000), (12, 6, 600)],
-            ...     ('baz', 5, 'eggs.py'): [(5, 2, 500)]}
+            ...     ('eggs.py', 5, 'baz'): [(5, 2, 500)]}
         """
         timings, unit = cls._get_aggregated_timings([stats, *more_stats])
         return cls(timings, unit)
@@ -890,7 +908,7 @@ def show_func(
 
         func_name (str): name of profiled function
 
-        timings (List[Tuple[int, int, float]]):
+        timings (list[tuple[int, int, float]]):
             Measurements for each line (lineno, nhits, time).
 
         unit (float):
