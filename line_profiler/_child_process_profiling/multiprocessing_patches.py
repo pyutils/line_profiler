@@ -2,14 +2,14 @@
 Patch :py:mod:`multiprocessing` so that profiling extends into processes
 it creates.
 
-Notes
------
-- Based on the implementations in :py:mod:`coverage.multiproc` and
-  :py:mod:`pytest_autoprofile._multiprocessing`.
-- Results may vary if the process pool is not properly
-  :py:meth:`multiprocessing.pool.Pool.close`-d and
-  :py:meth:`multiprocessing.pool.Pool.join`-ed;
-  see `this caveat <https://coverage.readthedocs.io/\
+Notes:
+    - Based on the implementations in :py:mod:`coverage.multiproc` and
+      :py:mod:`pytest_autoprofile._multiprocessing`.
+
+    - Results may vary if the process pool is not properly
+      :py:meth:`multiprocessing.pool.Pool.close`-d and
+      :py:meth:`multiprocessing.pool.Pool.join`-ed;
+      see `this caveat <https://coverage.readthedocs.io/\
 en/latest/subprocess.html#using-multiprocessing>`__.
 """
 from __future__ import annotations
@@ -17,14 +17,14 @@ from __future__ import annotations
 import multiprocessing
 import warnings
 from collections.abc import Callable, Mapping
-from functools import lru_cache, partial
+from functools import partial
 from importlib import import_module
 from multiprocessing.process import BaseProcess
-from os import PathLike
 from time import sleep, monotonic
 from types import MappingProxyType
 from typing import (
-    Any, Generic, Literal, Protocol, TypeVar, Union, NoReturn, cast,
+    Any, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
+    cast, final,
 )
 
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -206,14 +206,11 @@ class _Poller:
             diagnostics.log.warning(msg)
             warnings.warn(msg, type(self).TimeoutWarning, stacklevel=3)
 
-        def ignore(_):
-            pass
-
         timeout = self._timeout
         callback = self._func
 
         handle_timeout: Callable[[str], Any] = {
-            'error': error, 'warn': warn, 'ignore': ignore,
+            'error': error, 'warn': warn, 'ignore': _no_op,
         }[self._on_timeout]
         fmt = '.3g'
         timeout_msg_header = f'{type(self).__name__} at {id(self):#x}'
@@ -247,25 +244,62 @@ class _Poller:
         pass
 
 
-def _get_config(
-    config: PathLike[str] | str | bool | None = None,
-) -> Mapping[str, Any]:
-    if config not in (True, False, None):
-        config = str(config)
-    return _get_config_cached(cast(Union[str, bool, None], config))
+@final
+class _PollerArgs(NamedTuple):
+    cooldown: float
+    timeout: float
+    on_timeout: str | None
+
+    @classmethod
+    def from_config(cls, config: ConfigSource) -> Self:
+        values = _get_config(config)['polling']
+        try:
+            cooldown = max(float(values['cooldown']), 0)
+        except (TypeError, ValueError):
+            cooldown = 0
+        try:
+            timeout = max(float(values['timeout']), 0)
+        except (TypeError, ValueError):
+            timeout = 0
+        try:
+            on_timeout: str | None = values['on_timeout'].lower()
+        except Exception:  # Fallback (use `_Poller`'s default)
+            on_timeout = None
+        return cls(cooldown, timeout, on_timeout)
+
+    @classmethod
+    def get_defaults(cls) -> Self:
+        namespace = globals()
+        try:
+            return namespace['_DEFAULT_POLLER_ARGS']
+        except KeyError:
+            defaults = cls.from_config(ConfigSource.from_default(copy=False))
+            return namespace.setdefault('_DEFAULT_POLLER_ARGS', defaults)
 
 
-@lru_cache()
-def _get_config_cached(
-    config: PathLike[str] | str | bool | None = None,
-) -> Mapping[str, Any]:
+def _get_config(config: ConfigSource) -> Mapping[str, Any]:
     cd = dict(
-        ConfigSource.from_config(config)
-        .get_subconfig('child_processes', 'multiprocessing', copy=True)
+        config.get_subconfig('child_processes', 'multiprocessing', copy=True)
         .conf_dict
     )
     assert isinstance(cd.get('polling'), Mapping)
     return MappingProxyType({**cd, 'polling': MappingProxyType(cd['polling'])})
+
+
+def _process_has_returned(
+    proc: BaseProcess, cache: LineProfilingCache, timeout: float,
+) -> bool:
+    popen = getattr(proc, '_popen', None)
+    if popen is None:
+        msg, result = 'No associated process', True
+    else:
+        result = popen.wait(timeout) is not None
+        if result:
+            msg = f'Process {popen.pid} has returned'
+        else:
+            msg = f'Waiting for process {popen.pid} to return...'
+    cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
+    return result
 
 
 @LineProfilingCache._method_wrapper
@@ -285,54 +319,15 @@ def wrap_terminate(
         on the bad path (e.g. the parallel workload errored out), and
         after the performance-critical part of the code (said workload).
     """
-    # XXX: why can `coverage` get away with not doing all these
-    # lock-file hijinks and just patching `BaseProcess._bootstrap()`?
-    def get_poller_args(
-        config: PathLike[str] | str | bool | None = None,
-    ) -> tuple[float, float, str | None]:
-        values = _get_config(config)['polling']
-        try:
-            cooldown = max(float(values['cooldown']), 0)
-        except (TypeError, ValueError):
-            cooldown = 0
-        try:
-            timeout = max(float(values['timeout']), 0)
-        except (TypeError, ValueError):
-            timeout = 0
-        try:
-            on_timeout: str | None = values['on_timeout'].lower()
-        except Exception:  # Fallback (use `_Poller`'s default)
-            on_timeout = None
-        return cooldown, timeout, on_timeout
-
-    def process_has_returned(proc: BaseProcess, timeout: float) -> bool:
-        popen = getattr(proc, '_popen', None)
-        if popen is None:
-            msg, result = 'No associated process', True
-        else:
-            result = popen.wait(timeout) is not None
-            if result:
-                msg = f'Process {popen.pid} has returned'
-            else:
-                msg = f'Waiting for process {popen.pid} to return...'
-        cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
-        return result
-
-    def wait_for_return(
-        config: PathLike[str] | str | None = None,
-    ) -> _Poller:
-        cooldown, timeout, on_timeout = get_poller_args(config)
-        # `False` -> no resolution, force loading the vanilla file
-        *_, default_on_timeout = get_poller_args(False)
-        if on_timeout not in ('ignore', 'warn', 'error'):
-            on_timeout = default_on_timeout
-        return (
-            _Poller.poll_until(process_has_returned, self, cooldown)
-            .with_timeout(timeout, cast(_OnTimeout, on_timeout))
-        )
-
     try:
-        with wait_for_return(cache.config):
+        cd, timeout, on_timeout = _PollerArgs.from_config(cache._config_source)
+        if on_timeout not in ('ignore', 'warn', 'error'):
+            on_timeout = _PollerArgs.get_defaults().on_timeout
+        # `_process_has_returned()` takes a `timeout` which it passes to
+        # `popen.wait()`; said timeout is essentially a limit as to how
+        # often the function is called, hence our cooldown
+        poller = _Poller.poll_until(_process_has_returned, self, cache, cd)
+        with poller.with_timeout(timeout, cast(_OnTimeout, on_timeout)):
             pass
     except _Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
         cache._debug_output(f'{type(e).__qualname__}: {e}')
@@ -369,7 +364,7 @@ def wrap_bootstrap(
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
-    if _get_config(cache.config)['catch_sigterm']:
+    if _get_config(cache._config_source)['catch_sigterm']:
         cache._add_signal_handler()
     try:
         return vanilla_impl(self, *args, **kwargs)
@@ -523,7 +518,8 @@ def _apply_mp_patches(
         lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
     # Intercept `multiprocessing` debug messages
     if intercept_mp_logs is None:
-        intercept_mp_logs = _get_config(lp_cache.config)['intercept_logs']
+        config = lp_cache._config_source
+        intercept_mp_logs = _get_config(config)['intercept_logs']
     if intercept_mp_logs:
         lfuncs = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
         lpatches = {func: partial(partial, tee_log, func) for func in lfuncs}
