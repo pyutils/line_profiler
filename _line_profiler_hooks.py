@@ -1,96 +1,44 @@
 """
-Hooks to set up shop in a child Python process and extend profiling
-to therein.
+Additional hooks installed by :py:mod:`line_profiler`.
 
-Note:
-    - The current implementation writes temporary .pth files to the
+Notes:
+    - This file and its content should be considered an implmentation
+      detail of :py:mod:`line_profiler`; currently we just use this to
+      set up shop in a child Python process, and extend profiling to
+      therein.
+
+    - This current implementation writes temporary .pth files to the
       site-packages directory, which are executed for all Python
       processes referring to the same :path:`lib/`. However, only
       processes originating from a parent which set the requisite
       environment variables will execute to the profiling code.
+
     - Said .pth file always import this module; hence, this file is kept
-      intentionally lean to reduce overhead:
-      - Imports in this file are deferred to being as late as possible.
-      - Type annotations are replaced with type comments.
-      - Non-essential functionalities are split into small separate
-        submodules (e.g. :py:mod:`~.cache`).
+      intentionally lean and separate from the main
+      :py:mod:`line_profiler` package to reduce overhead; e.g.
+      imports in this file are deferred to being as late as possible.
+
     - Inspired by similar code in :py:mod:`coverage.control` and
       :py:mod:`pytest_autoprofile.startup_hook`.
 """
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path  # noqa: F401
-    from .cache import LineProfilingCache  # noqa: F401
+import os
 
 
-__all__ = ('write_pth_hook', 'load_pth_hook')
+__all__ = ('load_pth_hook',)
 
 INHERITED_PID_ENV_VARNAME = (
     'LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_PID'
 )
 
 
-def write_pth_hook(cache):  # type: (LineProfilingCache) -> Path
-    """
-    Write a .pth file which allows for setting up profiling in child
-    Python processes.
-
-    Args:
-        cache (:py:class:`~.LineProfilingCache`):
-            Cache object
-
-    Returns:
-        fpath (Path):
-            Path to the written .pth file
-
-    Note:
-        - To be called in the main process.
-        - The ``cache`` is responsible for deleting the written .pth
-          file via the registered cleanup callback.
-    """
-    import os
-    from sysconfig import get_path
-    from ..toml_config import ConfigSource
-
-    if not os.path.exists(cache.filename):
-        cache.dump()
-        assert os.path.exists(cache.filename)
-
-    pth_config = (
-        ConfigSource.from_config(cache.config)
-        .get_subconfig('child_processes', 'pth_files')
-        .conf_dict
-    )
-    fpath = cache.make_tempfile(
-        prefix=pth_config['prefix'],
-        suffix=pth_config['suffix'] + '.pth',
-        dir=get_path('purelib'),
-        # Get rid of the .pth file ASAP so as to be the least disruptive
-        priority=1,
-    )
-    try:
-        pth_content = 'import {0}; {0}.load_pth_hook({1})'.format(
-            (lambda: None).__module__, cache.main_pid,
-        )
-        fpath.write_text(pth_content)
-    except Exception:
-        fpath.unlink(missing_ok=True)
-        raise
-
-    return fpath
-
-
-def load_pth_hook(ppid):  # type: (int) -> None
+def load_pth_hook(ppid: int) -> None:
     """
     Function imported and called by the written .pth file; to reduce
     overhead, we immediately return if ``ppid`` doesn't match
     :env:`LINE_PROFILER_PROFILE_CHILD_PROCESSES_CACHE_PID`.
     """
-    from os import environ
-
     try:
-        env_ppid = int(environ[INHERITED_PID_ENV_VARNAME])
+        env_ppid = int(os.environ[INHERITED_PID_ENV_VARNAME])
     except (KeyError, ValueError):
         return
     if env_ppid != ppid:
@@ -100,8 +48,8 @@ def load_pth_hook(ppid):  # type: (int) -> None
     # profiled Python process, so we can be more liberal with the
     # imports without worrying about overhead
     import warnings
-    from .._diagnostics import DEBUG, log
-    from .cache import LineProfilingCache  # noqa: F811
+    from line_profiler._diagnostics import DEBUG, log
+    from line_profiler._child_process_profiling.cache import LineProfilingCache
 
     # Note: .pth files may be double-loaded in a virtual environment
     # (see https://stackoverflow.com/questions/58807569), so work around
@@ -115,8 +63,10 @@ def load_pth_hook(ppid):  # type: (int) -> None
     except Exception as e:  # nocover
         if DEBUG:
             msg = f'{type(e)}: {e}'
-            warnings.warn(msg)
+            # Write log befor issuing warning, in case the warning is
+            # promoted to an exception
             log.warning(msg)
+            warnings.warn(msg)
         load_pth_hook.called = True  # type: ignore
     else:
         cache.patch(load_pth_hook, 'called', True)

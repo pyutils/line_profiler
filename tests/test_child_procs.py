@@ -35,11 +35,11 @@ from uuid import uuid4
 import pytest
 import ubelt as ub
 
+from _line_profiler_hooks import load_pth_hook
 from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
-from line_profiler._child_process_profiling.pth_hook import load_pth_hook
 from line_profiler._child_process_profiling.multiprocessing_patches import (
     _Poller, _PATCHED_MARKER,
 )
@@ -1298,8 +1298,8 @@ def _run_test_module(
                 expected = nnums * (nnums + 1) // 2
                 output_lines = proc.stdout.splitlines()
                 ResultMismatch.compare(str(expected), output_lines[0])
-            # - Temporary `.pth` file(s) created by `~~.pth_hook` has
-            #   been cleaned up
+            # - Temporary `.pth` file(s) created by
+            # `LineProfilingCache.write_pth_hook()` has been cleaned up
             assert _preserve_pth_files.get_pth_files() == old_pth_files
             # - Profiling results are written to the specified file
             prof_result: LineStats | None = None
@@ -1681,12 +1681,8 @@ def test_cache_setup_child(
     _search_cache_logs(cache, debug, patterns)
 
 
-@_preserve_attributes({
-    **_GLOBAL_PATCHES,
-    'line_profiler._child_process_profiling.pth_hook.load_pth_hook':
-    frozenset({'called'}),
-})
 @pytest.mark.parametrize('ppid_should_match', [True, False, None])
+@_preserve_attributes(_GLOBAL_PATCHES)
 def test_load_pth_hook(
     create_cache: Callable[..., LineProfilingCache],
     patched_attributes: MappingProxyType[str, frozenset[str]],
@@ -1694,16 +1690,16 @@ def test_load_pth_hook(
     ppid_should_match: bool | None,
 ) -> None:
     """
-    Simulate calling :py:func:`line_profiler._child_process_profiling\
-.pth_hook.load_pth_hook()` in a child process.
+    Simulate calling :py:func:`_line_profiler_hooks.load_pth_hook()` in
+    a child process.
 
     Notes:
 
         - The function is CALLED in the .pth file, but we don't actually
           NEED a .pth file to call and test it.
 
-        - The counterpart :py:func:`line_profiler\
-._child_process_profiling.pth_hook.write_pth_hook()`
+        - The counterpart :py:meth:`line_profiler\
+._child_process_profiling.cache.LineProfilingCache.write_pth_hook()`
           is implicitly tested in
           :py:func:`test_cache_setup_main_process()`.
     """
