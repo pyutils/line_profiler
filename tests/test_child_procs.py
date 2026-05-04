@@ -1878,6 +1878,7 @@ def test_apply_mp_patches(
             assert result == n * (n + 1) // 2
 
     # Check that calls in children are traced
+    cache.cleanup()
     stats = cache.profiler.get_stats()
     stats += cache.gather_stats()
     entries = stats.timings[timing_key]

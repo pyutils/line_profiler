@@ -15,7 +15,7 @@ try:
 except ImportError:
     import pickle  # type: ignore[assignment,no-redef]
 from collections.abc import (
-    Collection, Callable, Mapping, MutableMapping, Iterable,
+    Collection, Callable, Iterable, Mapping, MutableMapping,
 )
 from functools import partial, cached_property, wraps
 from importlib import import_module
@@ -228,6 +228,10 @@ class LineProfilingCache(Cleanup):
         Returns:
             :py:class:`LineStats` instance
         """
+        def is_empty(path: Path) -> bool:
+            return not path.stat().st_size
+
+        filter_excludes: Callable[[Iterable[Path]], Iterable[Path]]
         if exclude_pids is None:
             exclude_pids = set()
             for import_target, attr in _DEFAULT_GATHER_STATS_EXCLUDES:
@@ -242,10 +246,18 @@ class LineProfilingCache(Cleanup):
                 if maybe_pid is None:
                     continue
                 exclude_pids.add(cast(int, maybe_pid))
+            # NOTE: there is no guarantee that the PID hasn't previously
+            # been used for another child process that we DID properly
+            # profile and SHOULD include, so we only filter out empty
+            # files
+            filter_excludes = partial(filter, is_empty)
+        else:  # User-provided values, who are we to object?
+            filter_excludes = iter
 
         fnames_ = set(self._get_profiling_outfiles())
         for pid in exclude_pids:
-            fnames_.difference_update(self._get_profiling_outfiles(pid))
+            excludes = filter_excludes(self._get_profiling_outfiles(pid))
+            fnames_.difference_update(excludes)
         fnames = sorted(fnames_)
         self._debug_output(
             'Loading results from {} child profiling file(s): {!r}'
