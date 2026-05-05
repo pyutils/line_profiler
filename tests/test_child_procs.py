@@ -11,9 +11,10 @@ import shlex
 import subprocess
 import sys
 import sysconfig
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
-    Callable, Collection, Generator, Iterable, Mapping, Sequence,
+    Callable, Collection, Generator, Iterable, Iterator, Mapping, Sequence,
 )
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from functools import partial, wraps
@@ -27,7 +28,8 @@ from textwrap import dedent, indent
 from time import monotonic
 from types import MappingProxyType, ModuleType, TracebackType
 from typing import (
-    TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, final, overload,
+    TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar,
+    cast, final, overload,
 )
 from typing_extensions import Self, ParamSpec
 from uuid import uuid4
@@ -36,6 +38,7 @@ import pytest
 import ubelt as ub
 
 from _line_profiler_hooks import load_pth_hook
+from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
@@ -525,9 +528,10 @@ class ResultMismatch(ValueError):
         actual: Any | _NotSupplied = _NotSupplied.NOT_SUPPLIED,
         _trunc_tb: int = 0,
     ) -> None:
-        msg = f'expected: {expected}'
-        if actual != _NotSupplied.NOT_SUPPLIED:
-            msg = f'{msg}, got {actual}'
+        if actual == _NotSupplied.NOT_SUPPLIED:
+            msg = f'expected: {expected}'
+        else:
+            msg = f'expected {expected}, got {actual}'
         super().__init__(msg)
         self.expected = expected
         self.actual = actual
@@ -737,6 +741,119 @@ class _Params:
         else:  # Fallback
             new_values = self.values.copy()
         return type(self)(self.params, new_values, self.defaults)
+
+    def drop_params(self, params: Collection[str] | str) -> Self:
+        """
+        Return a new instance with the named ``params`` dropped; params
+        that don't match :py:attr:`.params` are ignored.
+
+        Example:
+            >>> p = _Params.new(('a', 'b'), [(1, 2), (3, 4)])
+            >>> p.drop_params('a')
+            _Params(params=('b',), values=[(2,), (4,)], defaults=(2,))
+            >>> assert p.drop_params(['c', 'd']) == p
+        """
+        def drop(t: tuple[T, ...]) -> tuple[T, ...]:
+            return tuple(item for i, item in enumerate(t) if i not in dropped)
+
+        if isinstance(params, str):
+            params = params,
+        dropped = {i for i, p in enumerate(self.params) if p in params}
+        return type(self)(
+            drop(self.params),
+            [drop(pvalues) for pvalues in self.values],
+            drop(self.defaults),
+        )
+
+    @overload
+    def split_on_params(
+        self, params: tuple[str, ...], *, drop_split_params: bool = True,
+    ) -> dict[tuple[Any, ...], Self]:
+        ...
+
+    @overload
+    def split_on_params(
+        self, params: str, *, drop_split_params: bool = True,
+    ) -> dict[Any, Self]:
+        ...
+
+    def split_on_params(
+        self, params: tuple[str, ...] | str, *, drop_split_params: bool = True,
+    ) -> dict[tuple[Any, ...], Self] | dict[Any, Self]:
+        """
+        Return new instances splitting on the values of the named
+        ``params``; params that don't match :py:attr:`.params` results
+        in an error.
+
+        Example:
+            >>> p = _Params.new(('a', 'b', 'c'),
+            ...                 [(1, 2, True),
+            ...                  (1, 2, False),
+            ...                  (3, 4, True)])
+
+            >>> p.split_on_params('a')  # doctest: +NORMALIZE_WHITESPACE
+            {1: _Params(params=('b', 'c'),
+                        values=[(2, True), (2, False)],
+                        defaults=(2, True)),
+             3: _Params(params=('b', 'c'),
+                        values=[(4, True)],
+                        defaults=(2, True))}
+
+            >>> p.split_on_params(  # doctest: +NORMALIZE_WHITESPACE
+            ...     ('a', 'b'),
+            ... )
+            {(1, 2): _Params(params=('c',),
+                             values=[(True,), (False,)],
+                             defaults=(True,)),
+             (3, 4): _Params(params=('c',),
+                             values=[(True,)],
+                             defaults=(True,))}
+
+            >>> p.split_on_params(  # doctest: +NORMALIZE_WHITESPACE
+            ...     'a', drop_split_params=False,
+            ... )
+            {1: _Params(params=('a', 'b', 'c'),
+                        values=[(1, 2, True), (1, 2, False)],
+                        defaults=(1, 2, True)),
+             3: _Params(params=('a', 'b', 'c'),
+                        values=[(3, 4, True)],
+                        defaults=(1, 2, True))}
+
+            >>> p.split_on_params(  # doctest: +NORMALIZE_WHITESPACE
+            ...     ('c', 'd'),
+            ... )
+            Traceback (most recent call last):
+              ...
+            ValueError: params = ('c', 'd'):
+            these params not found: ['d']
+        """
+        if isinstance(params, str):
+            params = params,
+            unpack = True
+        else:
+            unpack = False
+        nonexistent = sorted(set(params) - set(self.params))
+        if nonexistent:
+            raise ValueError(
+                f'params = {params!r}: these params not found: {nonexistent!r}'
+            )
+        split_params: dict[tuple[Any, ...], list[tuple[Any, ...]]] = {}
+        indices = tuple(self.params.index(p) for i, p in enumerate(params))
+        for pvalues in self.values:
+            key = tuple(pvalues[i] for i in indices)
+            split_params.setdefault(key, []).append(pvalues)
+        new = partial(type(self), params=self.params, defaults=self.defaults)
+        instances: dict[tuple[Any, ...], Self] = {
+            key: new(values=values) for key, values in split_params.items()
+        }
+        if drop_split_params:
+            instances = {
+                key: instance.drop_params(params)
+                for key, instance in instances.items()
+            }
+        if not unpack:
+            return instances
+        return {key[0]: instance for key, instance in instances.items()}
 
     def __call__(self, func: C) -> C:
         """
@@ -1050,6 +1167,278 @@ class _preserve_pth_files(_CallableContextManager[frozenset[str]]):
         return Path(sysconfig.get_path('purelib'))
 
 
+class _WarningInfo(Protocol):
+    @property
+    def message(self) -> str | Warning:
+        ...
+
+    @property
+    def category(self) -> type[Warning]:
+        ...
+
+    @property
+    def filename(self) -> str:
+        ...
+
+    @property
+    def lineno(self) -> int:
+        ...
+
+    @property
+    def line(self) -> str | None:
+        ...
+
+
+@dataclasses.dataclass
+class _WarningMatcher:
+    message: str | None = None
+    category: type[Warning] | None = None
+    module: str | None = None
+    lineno: int | None = None
+    _filters: dict[str, Callable[[Any], Any]] = dataclasses.field(
+        repr=False, init=False, default_factory=dict,
+    )
+
+    def __post_init__(self) -> None:
+        if self.message is not None:
+            self._filters['message'] = partial(
+                self._check_message, re.compile(self.message),
+            )
+        if self.category is not None:
+            self._filters['category'] = partial(
+                self._check_category, self.category,
+            )
+        if self.module is not None:
+            self._filters['filename'] = partial(
+                self._check_module, re.compile(self.module),
+            )
+        if self.lineno is not None:
+            self._filters['lineno'] = partial(operator.eq, self.lineno)
+
+    def __repr__(self) -> str:
+        fields: dict[str, Any] = {
+            field.name: getattr(self, field.name, None)
+            for field in dataclasses.fields(self)
+            if field.repr
+        }
+        return '{}({})'.format(
+            type(self).__name__,
+            ', '.join(
+                f'{k}={v!r}' for k, v in fields.items() if v is not None
+            ),
+        )
+
+    def match(self, info: _WarningInfo) -> bool:
+        for field, check in self._filters.items():
+            if not check(getattr(info, field)):
+                return False
+        return True
+
+    @staticmethod
+    def _check_message(
+        msg_regex: re.Pattern, msg: str | Warning,
+    ) -> re.Match | None:
+        if not isinstance(msg, str):
+            msg = str(msg)
+        return msg_regex.match(msg)
+
+    @staticmethod
+    def _check_category(parent: type[Any], maybe_child: type[Any]) -> bool:
+        try:
+            return issubclass(maybe_child, parent)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _check_module(
+        module_regex: re.Pattern, filename: str,
+    ) -> re.Match | None:
+        module = modpath_to_modname(filename, hide_main=False, hide_init=False)
+        return module_regex.match(module)
+
+
+@dataclasses.dataclass
+class _WarningContext:
+    catch_warnings: warnings.catch_warnings = dataclasses.field(
+        default_factory=partial(warnings.catch_warnings, record=True)
+    )
+    checks: list[tuple[_WarningMatcher, bool]] = dataclasses.field(
+        default_factory=list,
+    )
+
+    def forbid_warnings(
+        self,
+        message: str | None = None,
+        category: type[Warning] | None = Warning,
+        module: str | None = None,
+        lineno: int | None = None,
+    ) -> None:
+        matcher = _WarningMatcher(
+            message=message, category=category, module=module, lineno=lineno,
+        )
+        self.checks.append((matcher, False))
+
+    def expect_warnings(
+        self,
+        message: str | None = None,
+        category: type[Warning] | None = Warning,
+        module: str | None = None,
+        lineno: int | None = None,
+    ) -> None:
+        matcher = _WarningMatcher(
+            message=message, category=category, module=module, lineno=lineno,
+        )
+        self.checks.append((matcher, True))
+
+    def check(self, warnings: Sequence[_WarningInfo]) -> None:
+        for matcher, allowed_or_required in self.checks:
+            matches = [info for info in warnings if matcher.match(info)]
+            if matches and not allowed_or_required:
+                raise ResultMismatch(
+                    expected=f'no warnings matching {matcher!r}',
+                    actual=f'{len(matches)} ({matches!r})',
+                )
+            if not matches and allowed_or_required:
+                raise ResultMismatch(
+                    expected=f'warnings matching {matcher!r}',
+                    actual=f'none out of {len(warnings)} ({warnings!r})',
+                )
+
+    @classmethod
+    def new(cls, **kwargs) -> Self:
+        kwargs['record'] = True
+        return cls(warnings.catch_warnings(**kwargs))
+
+
+class _check_warnings(Sequence[_WarningInfo]):
+    """
+    Helper context for deferring the checking of warnings to until
+    context exit.
+
+    Example:
+        >>> import warnings
+
+        >>> cw = _check_warnings()
+
+        >>> with cw:  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        ...     cw.forbid_warnings('foo', UserWarning)
+        ...     warnings.warn('foobar')
+        ...     print('This is printed before the error')
+        ...
+        This is printed before the error
+        Traceback (most recent call last):
+          ...
+        test_child_procs.ResultMismatch: expected no warnings matching
+        _WarningMatcher(message='foo',
+                        category=<class 'UserWarning'>),
+        got 1 ([...])
+
+        >>> with cw:  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        ...     cw.expect_warnings(category=UserWarning)
+        ...     warnings.warn('foobar', Warning)
+        ...     print('This is printed before the error')
+        ...
+        This is printed before the error
+        Traceback (most recent call last):
+          ...
+        test_child_procs.ResultMismatch: expected warnings matching
+        _WarningMatcher(category=<class 'UserWarning'>),
+        got none out of 1 ([...])
+        >>> assert len(cw) == 1
+        >>> assert str(cw[0].message) == 'foobar'
+    """
+    def __init__(self, **kwargs) -> None:
+        self._new_context: Callable[[], _WarningContext] = partial(
+            _WarningContext.new, **kwargs,
+        )
+        self._contexts: list[
+            tuple[_WarningContext, Sequence[_WarningInfo]]
+        ] = []
+        self._last_captured: Sequence[_WarningInfo] = []
+
+    def forbid_warnings(self, *args, **kwargs) -> None:
+        """
+        Equivalent to calling
+        ``filterwarnings('error', *args, **kwargs)``;
+        at context exit, if ANY matching warning has been issued, an
+        error will be raised.
+        """
+        ctx, _ = self._current_context
+        ctx.forbid_warnings(*args, **kwargs)
+
+    def expect_warnings(self, *args, **kwargs) -> None:
+        """
+        Equivalent to calling
+        ``filterwarnings('always', *args, **kwargs)``;
+        at context exit, if NO matching warnings have been issued, an
+        error will be raised.
+        """
+        ctx, _ = self._current_context
+        ctx.expect_warnings(*args, **kwargs)
+
+    def __enter__(self) -> Self:
+        ctx = self._new_context()
+        infos: Sequence[_WarningInfo] | None
+        infos = ctx.catch_warnings.__enter__()
+        assert infos is not None
+        self._contexts.append((ctx, infos))
+        return self
+
+    def __exit__(self, *args, **kwargs) -> None:
+        ctx, infos = self._contexts.pop()
+        try:
+            ctx.check(infos)
+        finally:
+            self._last_captured = infos
+            ctx.catch_warnings.__exit__(*args, **kwargs)
+
+    @overload
+    def __getitem__(self, i: int, /) -> _WarningInfo:
+        ...
+
+    @overload
+    def __getitem__(self, i: slice, /) -> list[_WarningInfo]:
+        ...
+
+    def __getitem__(
+        self, i: int | slice, /,
+    ) -> _WarningInfo | Sequence[_WarningInfo]:
+        return self._current_warnings[i]
+
+    def __len__(self) -> int:
+        return len(self._current_warnings)
+
+    def __iter__(self) -> Iterator[_WarningInfo]:
+        return iter(self._current_warnings)
+
+    def __reversed__(self) -> Iterator[_WarningInfo]:
+        return iter(reversed(self._current_warnings))
+
+    def __contains__(self, item: Any, /) -> bool:
+        return item in self._current_warnings
+
+    def index(self, *args, **kwargs) -> int:
+        return self._current_warnings.index(*args, **kwargs)
+
+    def count(self, *args, **kwargs) -> int:
+        return self._current_warnings.count(*args, **kwargs)
+
+    @property
+    def _current_context(
+        self,
+    ) -> tuple[_WarningContext, Sequence[_WarningInfo]]:
+        return self._contexts[-1]
+
+    @property
+    def _current_warnings(self) -> Sequence[_WarningInfo]:
+        try:
+            return self._current_context[1]
+        except IndexError:
+            # Outside of contexts, just provide the last captured values
+            # for convenience
+            return self._last_captured
+
+
 def _import_target(target: str) -> Any:
     try:
         return import_module(target)
@@ -1215,6 +1604,7 @@ def _run_subproc(
         )
 
 
+@_preserve_pth_files()
 def _run_test_module(
     run_helper: Callable[..., subprocess.CompletedProcess],
     test_module: _ModuleFixture,
@@ -1361,7 +1751,7 @@ _GLOBAL_PATCHES = {
     }),
     'multiprocessing': frozenset({_PATCHED_MARKER}),
     'multiprocessing.process.BaseProcess': frozenset({
-        '_bootstrap', 'terminate',
+        '_bootstrap',  # 'terminate',
     }),
     'multiprocessing.spawn': frozenset({'runpy'}),
     'multiprocessing.util': frozenset({
@@ -1649,15 +2039,23 @@ def test_cache_setup_child(
         # Check that on cache cleanup:
         # - Profiling data is collected
         # - `os.fork()` is restored
+        # - The warning for empty profiling files is only issued when
+        #   expected
         assert func(range(1, n + 1)) == n * (n + 1) // 2
         stats = cache.profiler.get_stats()
-        for callback, has_prof_data, fork_patched in [
-            (lambda: None, False, wrap_os_fork),
-            (cache.cleanup, preimports, False),
+        for callback, has_nonempty_file, has_stats, fork_patched in [
+            (lambda: None, False, False, wrap_os_fork),
+            (cache.cleanup, True, preimports, False),
         ]:
             callback()
-            gathered = cache.gather_stats()
-            assert any(gathered.timings.values()) == has_prof_data, gathered
+            with _check_warnings() as cw:
+                if has_nonempty_file:
+                    check_warning = cw.forbid_warnings
+                else:
+                    check_warning = cw.expect_warnings
+                check_warning(r'.* file\(s\) .* empty', module='line_profiler')
+                gathered = cache.gather_stats()
+            assert any(gathered.timings.values()) == has_stats, gathered
             if hasattr(os, 'fork'):
                 assert (os.fork is not old_fork) == fork_patched
             else:  # E.g. Windows
@@ -1757,22 +2155,9 @@ def test_load_pth_hook(
         compare(patched)
 
 
-@pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
-@(_Params.new('start_method',
-              ['fork', 'forkserver', 'spawn', 'dummy'],
-              defaults='dummy')
-  * _Params.new(('fail', 'label2'),
-                [(True, 'failure'), (False, 'success')],
-                defaults=(False, 'success'))
-  # We only need to check if `intercept_logs` work, the other
-  # parametrizations don't matter
-  + _Params.new(('intercept_logs', 'label1'),
-                [(True, 'with-intercept-logs'), (False, 'no-intercept-logs')],
-                defaults=(False, 'no-intercept-logs'))).sorted()
-@pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
-def test_apply_mp_patches(
+def _test_apply_mp_patches(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
@@ -1782,13 +2167,7 @@ def test_apply_mp_patches(
     fail: bool,
     n: int,
     nprocs: int,
-    label1: str, label2: str,
 ) -> None:
-    """
-    Test that :py:func:`line_profiler._child_process_profiling\
-.multiprocessing_patches.apply`
-    works as expected.
-    """
     def is_valid_stats_file(path: os.PathLike[str] | str) -> bool:
         try:
             LineStats.from_files(path, on_defective='error')
@@ -1896,21 +2275,108 @@ def test_apply_mp_patches(
     _search_cache_logs(cache, True, patterns)
 
 
+@(_Params.new('start_method',
+              ['fork', 'forkserver', 'spawn', 'dummy'],
+              defaults='dummy')
+  # We only need to check if `intercept_logs` work, the other
+  # parametrizations don't matter
+  + _Params.new(('intercept_logs', 'label'),
+                [(True, 'with-intercept-logs'), (False, 'no-intercept-logs')],
+                defaults=(False, 'no-intercept-logs'))).sorted()
+@pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
+def test_apply_mp_patches_success(
+    tmp_path_factory: pytest.TempPathFactory,
+    create_cache: Callable[..., LineProfilingCache],
+    ext_module_object: ModuleType,
+    test_module_object: ModuleType,
+    start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
+    intercept_logs: bool,
+    n: int,
+    nprocs: int,
+    label: str,
+) -> None:
+    """
+    Test that :py:func:`line_profiler._child_process_profiling\
+.multiprocessing_patches.apply`
+    works as expected when the parallel workload does not error out.
+
+    See also:
+        :py:func:`test_apply_mp_patches_failure`
+    """
+    with _check_warnings() as cw:
+        cw.forbid_warnings(category=UserWarning, module='line_profiler')
+        cw.forbid_warnings(module='multiprocessing')
+        _test_apply_mp_patches(
+            tmp_path_factory=tmp_path_factory,
+            create_cache=create_cache,
+            ext_module_object=ext_module_object,
+            test_module_object=test_module_object,
+            start_method=start_method,
+            intercept_logs=intercept_logs,
+            fail=False,
+            n=n,
+            nprocs=nprocs,
+        )
+
+
+@pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
+@pytest.mark.parametrize('start_method',
+                         ['fork', 'forkserver', 'spawn', 'dummy'])
+@pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
+def test_apply_mp_patches_failure(
+    tmp_path_factory: pytest.TempPathFactory,
+    create_cache: Callable[..., LineProfilingCache],
+    ext_module_object: ModuleType,
+    test_module_object: ModuleType,
+    start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
+    n: int,
+    nprocs: int,
+) -> None:
+    """
+    Test that :py:func:`line_profiler._child_process_profiling\
+.multiprocessing_patches.apply`
+    works as expected when the parallel workload errors out.
+
+    See also:
+        :py:func:`test_apply_mp_patches_success`
+    """
+    with _check_warnings() as cw:
+        cw.forbid_warnings(category=UserWarning, module='line_profiler')
+        cw.forbid_warnings(module='multiprocessing')
+        _test_apply_mp_patches(
+            tmp_path_factory=tmp_path_factory,
+            create_cache=create_cache,
+            ext_module_object=ext_module_object,
+            test_module_object=test_module_object,
+            start_method=start_method,
+            intercept_logs=False,
+            fail=True,
+            n=n,
+            nprocs=nprocs,
+        )
+
+
 # XXX: End of tests for implementation details
 
 # ========================= Integration tests ==========================
 
 
-def _get_mp_start_method_fuzzer(label_name: str) -> _Params:
+def _get_mp_start_method_fuzzer(label_name: str | None) -> _Params:
     """
     Returns:
         :py:class:`_Params` object which does a full Cartesian-product
         fuzz between ``fail`` (true or false) and ``start_method``
         ('fork', 'forkserver', and 'spawn'; default :py:const:`None`)
     """
+    if label_name is None:
+        label_name, drop_label = '_', True
+    else:
+        drop_label = False
     fuzz_fail = _Params.new(('fail', label_name),
                             [(True, 'failure'), (False, 'success')],
                             defaults=(False, 'success'))
+    if drop_label:
+        fuzz_fail = fuzz_fail.drop_params(label_name)
     fuzz_start = _Params.new('start_method', ['fork', 'forkserver', 'spawn'],
                              defaults=None)
     return fuzz_fail * fuzz_start
@@ -2003,17 +2469,15 @@ _fuzz_prof_mp_run_func = _Params.new(('run_func', 'label1'),
                                       (run_script, 'script'),
                                       (run_literal_code, 'literal-code')],
                                      defaults=(run_script, 'script'))
-
-
-@(
+_fuzz_prof_mp_markers = (
     (_fuzz_prof_mp_run_func
      + _Params.new(('prof_child_procs', 'label2'),
                    [(True, 'with-child-prof'), (False, 'no-child-prof')])
-     + _get_mp_start_method_fuzzer('label3'))
+     + _get_mp_start_method_fuzzer(None))
     # Test all `multiproc` start methods with both locally- and
     # externally-defined profiling targets
-    * (_Params.new(('preimports', 'label4'), [(False, 'no-preimports')])
-       + _Params.new(('use_local_func', 'label5'),
+    * (_Params.new(('preimports', 'label3'), [(False, 'no-preimports')])
+       + _Params.new(('use_local_func', 'label4'),
                      [(True, 'local'), (False, 'external')],
                      defaults=(False, 'external')))
     # The 'with-preimports' case is already tested rather thoroughly in
@@ -2021,16 +2485,11 @@ _fuzz_prof_mp_run_func = _Params.new(('run_func', 'label1'),
     # param matrix and just test the different `kernprof` modes via the
     # `run_func()`s
     + (_fuzz_prof_mp_run_func
-       + _Params.new(('preimports', 'label4'), [(True, 'with-preimports')]))
-).sorted()
-@pytest.mark.retry(_NUM_RETRIES,
-                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
-@pytest.mark.parametrize(
-    # XXX: should we explicitly test the single-proc case? We already
-    # have quite a lot of subtests tho...
-    ('nnums', 'nprocs'), [(2000, 3)],
-)
-def test_profiling_multiproc_script(
+       + _Params.new(('preimports', 'label3'), [(True, 'with-preimports')]))
+).sorted().split_on_params('fail')
+
+
+def _test_profiling_multiproc_script(
     run_func: Callable[..., subprocess.CompletedProcess],
     test_module: _ModuleFixture,
     ext_module: _ModuleFixture,
@@ -2042,50 +2501,7 @@ def test_profiling_multiproc_script(
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int,
     nprocs: int,
-    # Dummy arguments to make `pytest` output more legible
-    label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
-    """
-    Check that `kernprof` can PROFILE the test module in various
-    contexts, optionally extending profiling into child processes.
-
-    Note:
-        This test function is heavily parametrized. Here is why that is
-        necessary:
-
-        - ``run_func`` tests the different :cmd:`kernprof` modes (see
-          :py:func:`~.test_running_multiproc_script`).
-
-        - ``preimports`` tests that both mechanisms for setting up
-          profiling targets work:
-
-          - :py:const:`True`: child processes import the module
-            generated by
-            :py:mod:`line_profiler.autoprofile.eager_preimports`, like
-            the main :py:mod:`kernprof` process does.
-
-          - :py:const:`False`: child processes rewrite the executed code
-            before passing it to :py:mod:`runpy`, similar to what
-            :py:mod:`line_profiler.autoprofile.autoprofile` does.
-
-          These code paths go through different
-          :py:mod:`multiprocessing` components that we have patched and
-          thus needs separate testing.
-
-        - ``use_local_func`` tests that we can consistently set up
-          profiling in both functions locally-defined in the profiled
-          code and imported by it.
-
-        - ``fail`` tests that our patches and hook doesn't choke when
-          exceptions occur in child processes, and profiling data can
-          still be collected.
-
-        - ``start_method`` tests whether all available
-          :py:mod:`multiprocessing` start methods are covered.
-
-        - ``prof_child_procs`` of course toggles whether to do the
-          patches to set up profiling in child processes.
-    """
     # How many calls do we expect?
     nhits = dict.fromkeys(
         ['EXT-INVOCATION', 'EXT-LOOP', 'LOCAL-INVOCATION', 'LOCAL-LOOP'], 0,
@@ -2133,30 +2549,144 @@ def test_profiling_multiproc_script(
     )
 
 
+@(_fuzz_prof_mp_markers[False])
+@pytest.mark.parametrize(
+    # XXX: should we explicitly test the single-proc case? We already
+    # have quite a lot of subtests tho...
+    ('nnums', 'nprocs'), [(2000, 3)],
+)
+def test_profiling_multiproc_script_success(
+    run_func: Callable[..., subprocess.CompletedProcess],
+    test_module: _ModuleFixture,
+    ext_module: _ModuleFixture,
+    tmp_path_factory: pytest.TempPathFactory,
+    prof_child_procs: bool,
+    preimports: bool,
+    use_local_func: bool,
+    start_method: Literal['fork', 'forkserver', 'spawn'] | None,
+    nnums: int,
+    nprocs: int,
+    # Dummy arguments to make `pytest` output more legible
+    label1: str, label2: str, label3: str, label4: str,
+) -> None:
+    """
+    Check that `kernprof` can PROFILE the test module in various
+    contexts when the parallel workload runs without errors, optionally
+    extending profiling into child processes.
+
+    Note:
+        This test function is heavily parametrized. Here is why that is
+        necessary:
+
+        - ``run_func`` tests the different :cmd:`kernprof` modes (see
+          :py:func:`~.test_running_multiproc_script`).
+
+        - ``preimports`` tests that both mechanisms for setting up
+          profiling targets work:
+
+          - :py:const:`True`: child processes import the module
+            generated by
+            :py:mod:`line_profiler.autoprofile.eager_preimports`, like
+            the main :py:mod:`kernprof` process does.
+
+          - :py:const:`False`: child processes rewrite the executed code
+            before passing it to :py:mod:`runpy`, similar to what
+            :py:mod:`line_profiler.autoprofile.autoprofile` does.
+
+          These code paths go through different
+          :py:mod:`multiprocessing` components that we have patched and
+          thus needs separate testing.
+
+        - ``use_local_func`` tests that we can consistently set up
+          profiling in both functions locally-defined in the profiled
+          code and imported by it.
+
+        - ``fail`` tests that our patches and hook doesn't choke when
+          exceptions occur in child processes, and profiling data can
+          still be collected.
+
+        - ``start_method`` tests whether all available
+          :py:mod:`multiprocessing` start methods are covered.
+
+        - ``prof_child_procs`` of course toggles whether to do the
+          patches to set up profiling in child processes.
+
+    See also:
+        :py:func:`test_profiling_multiproc_script_failure`
+    """
+    _test_profiling_multiproc_script(
+        run_func=run_func,
+        test_module=test_module,
+        ext_module=ext_module,
+        tmp_path_factory=tmp_path_factory,
+        prof_child_procs=prof_child_procs,
+        preimports=preimports,
+        use_local_func=use_local_func,
+        fail=False,
+        start_method=start_method,
+        nnums=nnums,
+        nprocs=nprocs,
+    )
+
+
 @pytest.mark.retry(_NUM_RETRIES,
                    exceptions=(ResultMismatch, subprocess.TimeoutExpired))
-@pytest.mark.parametrize(('use_subprocess', 'label1'),
-                         [(True, 'subprocess.run'), (False, 'os.system')])
-@pytest.mark.parametrize(('prof_child_procs', 'label2'),
-                         [(True, 'with-child-prof'), (False, 'no-child-prof')])
-@pytest.mark.parametrize(('fail', 'label3'),
-                         [(True, 'failure'), (False, 'success')])
-@pytest.mark.parametrize('n', [200])
-def test_profiling_bare_python(
+@(_fuzz_prof_mp_markers[True])
+@pytest.mark.parametrize(('nnums', 'nprocs'), [(2000, 3)])
+def test_profiling_multiproc_script_failure(
+    run_func: Callable[..., subprocess.CompletedProcess],
+    test_module: _ModuleFixture,
+    ext_module: _ModuleFixture,
+    tmp_path_factory: pytest.TempPathFactory,
+    prof_child_procs: bool,
+    preimports: bool,
+    use_local_func: bool,
+    start_method: Literal['fork', 'forkserver', 'spawn'] | None,
+    nnums: int,
+    nprocs: int,
+    # Dummy arguments to make `pytest` output more legible
+    label1: str, label2: str, label3: str, label4: str,
+) -> None:
+    """
+    Check that `kernprof` can PROFILE the test module in various
+    contexts when the parallel workload errors out, optionally
+    extending profiling into child processes.
+
+    See also:
+        :py:func:`test_profiling_multiproc_script_success`
+    """
+    _test_profiling_multiproc_script(
+        run_func=run_func,
+        test_module=test_module,
+        ext_module=ext_module,
+        tmp_path_factory=tmp_path_factory,
+        prof_child_procs=prof_child_procs,
+        preimports=preimports,
+        use_local_func=use_local_func,
+        fail=True,
+        start_method=start_method,
+        nnums=nnums,
+        nprocs=nprocs,
+    )
+
+
+_fuzz_bare = (
+    _Params.new(('use_subprocess', 'label1'),
+                [(True, 'subprocess.run'), (False, 'os.system')])
+    * _Params.new(('prof_child_procs', 'label2'),
+                  [(True, 'with-child-prof'), (False, 'no-child-prof')])
+    * _Params.new('n', [200])
+)
+
+
+def _test_profiling_bare_python(
     tmp_path_factory: pytest.TempPathFactory,
     ext_module: _ModuleFixture,
     use_subprocess: bool,
     prof_child_procs: bool,
     fail: bool,
     n: int,
-    # Dummy arguments to make `pytest` output more legible
-    label1: str, label2: str, label3: str,
 ) -> None:
-    """
-    Check that `kernprof` can profile the target functions if the code
-    invokes another bare Python process (via either :py:func:`os.system`
-    or :py:func:`subprocess.run`) that calls them.
-    """
     ext_module.install(children=True)
     temp_dir = tmp_path_factory.mktemp('mytemp')
 
@@ -2226,3 +2756,62 @@ def test_profiling_bare_python(
                 end='', file=sys.stderr,
             )
             print('-- End of debug logs --', file=sys.stderr)
+
+
+@_fuzz_bare
+def test_profiling_bare_python_success(
+    tmp_path_factory: pytest.TempPathFactory,
+    ext_module: _ModuleFixture,
+    use_subprocess: bool,
+    prof_child_procs: bool,
+    n: int,
+    # Dummy arguments to make `pytest` output more legible
+    label1: str, label2: str,
+) -> None:
+    """
+    Check that `kernprof` can profile the target functions if the code
+    invokes another bare Python process (via either :py:func:`os.system`
+    or :py:func:`subprocess.run`) that calls them and exits without
+    errors.
+
+    See also:
+        :py:func:`test_profiling_bare_python_failure`
+    """
+    _test_profiling_bare_python(
+        tmp_path_factory=tmp_path_factory,
+        ext_module=ext_module,
+        use_subprocess=use_subprocess,
+        prof_child_procs=prof_child_procs,
+        fail=False,
+        n=n,
+    )
+
+
+@pytest.mark.retry(_NUM_RETRIES,
+                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
+@_fuzz_bare
+def test_profiling_bare_python_failure(
+    tmp_path_factory: pytest.TempPathFactory,
+    ext_module: _ModuleFixture,
+    use_subprocess: bool,
+    prof_child_procs: bool,
+    n: int,
+    label1: str,
+    label2: str,
+) -> None:
+    """
+    Check that `kernprof` can profile the target functions if the code
+    invokes another bare Python process (via either :py:func:`os.system`
+    or :py:func:`subprocess.run`) that calls them and exits with errors.
+
+    See also:
+        :py:func:`test_profiling_bare_python_success`
+    """
+    _test_profiling_bare_python(
+        tmp_path_factory=tmp_path_factory,
+        ext_module=ext_module,
+        use_subprocess=use_subprocess,
+        prof_child_procs=prof_child_procs,
+        fail=True,
+        n=n,
+    )
