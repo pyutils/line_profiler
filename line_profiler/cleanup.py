@@ -3,21 +3,16 @@ Utilities for cleaning up after ourselves.
 """
 from __future__ import annotations
 
-import sys
-import os
 from collections.abc import (
-    Callable, Generator, Iterable, Mapping, MutableMapping, Collection,
+    Callable, Generator, Iterable, Mapping, MutableMapping,
 )
 from functools import partial
 from operator import setitem
-from reprlib import Repr
-from textwrap import indent
 from pathlib import Path
-from types import MethodType
-from typing import Any, TypeVar, TypedDict, cast
-from typing_extensions import Concatenate, ParamSpec, Self, Unpack
+from typing import Any, TypeVar, cast
+from typing_extensions import Concatenate, ParamSpec, Self
 
-from .line_profiler_utils import block_indent, make_tempfile
+from .line_profiler_utils import CallbackRepr, make_tempfile
 from . import _diagnostics as diagnostics
 
 
@@ -26,194 +21,12 @@ __all__ = ('Cleanup',)
 PS = ParamSpec('PS')
 K = TypeVar('K')
 V = TypeVar('V')
-# Note: `typing.AnyStr` deprecated since 3.13
-AnyStr = TypeVar('AnyStr', str, bytes)
 _Stacks = dict[float, list[Callable[[], Any]]]
 _StackContexts = list[_Stacks]
 
 
-class _ReprAttributes(TypedDict, total=False):
-    """
-    Note:
-        We use this typed dict instead of directly supplying them in the
-        :py:meth:`_CallbackRepr.__init__()` signature, because we don't
-        want to bother with the default values there.
-    """
-    maxlevel: int
-    maxtuple: int
-    maxlist: int
-    maxarray: int
-    maxdict: int
-    maxset: int
-    maxfrozenset: int
-    maxdeque: int
-    maxstring: int
-    maxlog: int
-    maxother: int
-    fillvalue: str
-    indent: str | int | None
-
-
-class _CallbackRepr(Repr):
-    """
-    :py:class:`reprlib.Repr` subclass to help with representing cleanup
-    callbacks, special-casing certain relevant object types (see
-    examples below).
-
-    Example:
-        >>> from functools import partial
-        >>> from sys import version_info
-
-        >>> class MyEnviron(dict):
-        ...     def some_method(self) -> None:
-        ...         ...
-        ...
-        >>>
-        >>> class MyRepr(_CallbackRepr):
-        ...     # Since we can't instantiate a new `os._Environ`, test
-        ...     # the relevant method with a mock
-        ...     repr_MyEnviron = _CallbackRepr.repr__Environ
-        ...
-        >>>
-        >>> r = MyRepr(maxenv=3, maxargs=4, maxstring=15)
-
-        Environ-dict formatting:
-
-        >>> my_env = MyEnviron(
-        ...     foo='1',
-        ...     bar='2',
-        ...     this_varname_is_long_but_isnt_truncated=(
-        ...         "THIS VALUE IS TRUNCATED BECAUSE IT'S TOO LONG"
-        ...     ),
-        ...     baz='4',
-        ... )
-        >>> print(r.repr(my_env))
-        environ({'foo': '1', 'bar': '2', \
-'this_varname_is_long_but_isnt_truncated': 'THIS ... LONG', ...})
-
-        Partial-object formatting:
-
-        >>> r.maxenv = 0
-        >>> print(r.repr(my_env.some_method))
-        <bound method MyEnviron.some_method of environ({...})>
-
-        Bound-method formatting:
-
-        >>> r.maxargs = 0
-        >>> callback_1 = partial(int, base=8)
-        >>> print(r.repr(callback_1))
-        functools.partial(<class 'int'>, ...)
-
-        Indentation (Python 3.12+):
-
-        >>> if version_info < (3, 12):
-        ...     from pytest import skip
-        ...
-        ...     skip(
-        ...         '`Repr.indent` not available on {}.{},{}'
-        ...         .format(*sys.version_info)
-        ...     )
-
-        >>> r = MyRepr(maxenv=2, maxargs=4)
-        >>> r.indent = 2
-        >>> callback_1 = partial(int, base=8)
-        >>> print(r.repr(callback_1))
-        functools.partial(
-          <class 'int'>,
-          base=8,
-        )
-
-        >>> callback_2 = partial(min, 5, 4, 3, 2, 1)
-        >>> r.indent = '----'
-        >>> print(r.repr(callback_2))
-        functools.partial(
-        ----<built-in function min>,
-        ----5,
-        ----4,
-        ----3,
-        ----2,
-        ----...,
-        )
-
-        >>> r.indent = '    '
-        >>> r.maxenv = 2
-        >>> print(r.repr(my_env.some_method))
-        <bound method MyEnviron.some_method of environ({
-                                                   'foo': '1',
-                                                   'bar': '2',
-                                                   ...,
-                                               })>
-    """
-    def __init__(
-        self,
-        *,
-        maxargs: int = 5,
-        maxenv: int = 3,
-        **kwargs: Unpack[_ReprAttributes]
-    ) -> None:
-        super().__init__()  # kwargs are 3.12+
-        valid_kwargs = (
-            _ReprAttributes.__optional_keys__
-            | _ReprAttributes.__required_keys__
-        )
-        for k, v in kwargs.items():
-            if k in valid_kwargs:
-                setattr(self, k, v)
-        self.maxargs = maxargs
-        self.maxenv = maxenv
-
-    def repr__Environ(self, env: os._Environ[AnyStr], level: int) -> str:
-        get: Callable[[AnyStr], str] = partial(self.repr1, level=level-1)
-        # Truncate envvar values, but not their names
-        envvars = ['{!r}: {}'.format(k, get(v)) for k, v in env.items()]
-        return self._format_items(envvars, ('environ({', '})'), self.maxenv)
-
-    def repr_method(self, method: MethodType, level: int) -> str:
-        instance = self.repr1(method.__self__, level-1)
-        func = getattr(method.__func__, '__qualname__', '?')
-        prefix, suffix = f'<bound method {func} of ', '>'
-        # Take care of possible multi-line reprs
-        return block_indent(instance, prefix) + suffix
-
-    def repr_partial(self, ptl: partial, level: int) -> str:
-        get: Callable[[Any], str] = partial(self.repr1, level=level-1)
-        args = [get(arg) for arg in ptl.args]
-        args.extend('{}={}'.format(k, get(v)) for k, v in ptl.keywords.items())
-        args.insert(0, get(ptl.func))
-        name = '{0.__module__}.{0.__qualname__}'.format(type(ptl))
-        # The +1 is to account for `ptl.func`
-        return self._format_items(args, (name + '(', ')'), self.maxargs + 1)
-
-    def _format_items(
-        self,
-        items: Collection[str],
-        delims: tuple[str, str],
-        maxlen: int | None = None,
-    ) -> str:
-        start, end = delims
-        if maxlen is not None and len(items) > maxlen:
-            items = list(items)[:maxlen] + ['...']
-        indent_prefix: str | None = self._get_indent()
-        if indent_prefix is None or not items:
-            return '{}{}{}'.format(start, ', '.join(items), end)
-        return '\n'.join([
-            start, *(indent(item + ',', indent_prefix) for item in items), end,
-        ])
-
-    if sys.version_info >= (3, 12):
-        # Note: `.indent` only available since 3.12
-        def _get_indent(self) -> str | None:
-            indent = self.indent
-            if indent is None or isinstance(indent, str):
-                return indent
-            return ' ' * indent
-    else:
-        @staticmethod
-        def _get_indent() -> None:
-            return None
-
-
-_CALLBACK_REPR = _CallbackRepr(maxother=cast(int, float('inf'))).repr
+_CALLBACK_REPR_HELPER = CallbackRepr(maxother=cast(int, float('inf')))
+_CALLBACK_REPR = _CALLBACK_REPR_HELPER.repr
 
 
 class Cleanup:
