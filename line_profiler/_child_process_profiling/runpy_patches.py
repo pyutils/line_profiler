@@ -16,6 +16,7 @@ from typing_extensions import Concatenate, ParamSpec
 from ..autoprofile.ast_tree_profiler import AstTreeProfiler
 from ..autoprofile.run_module import AstTreeModuleProfiler
 from ..autoprofile.util_static import modname_to_modpath
+from ..cleanup import Cleanup
 from .cache import LineProfilingCache
 
 
@@ -67,13 +68,8 @@ def _exec(
     is always executed.
     """
     assert cache.rewrite_module
-    cache._debug_output('Calling via {}: `exec({})`'.format(
-        THIS_MODULE,
-        ', '.join(
-            [repr(a) for a in (_code, *args)]
-            + [f'{k}={v!r}' for k, v in kwargs.items()]
-        ),
-    ))
+    call = cache._format_call('exec', _code, *args, **kwargs)
+    cache._debug_output(f'Calling via {THIS_MODULE}: `{call}`')
     fname = str(cache.rewrite_module)
     code_writer = CodeWriter(
         fname,
@@ -95,14 +91,8 @@ def _run(
     /,
     *args: PS.args, **kwargs: PS.kwargs
 ) -> T:
-    cache._debug_output('Calling via {}: `runpy.{}({})`'.format(
-        THIS_MODULE,
-        name,
-        ', '.join(
-            [repr(a) for a in (target, *args)]
-            + [f'{k}={v!r}' for k, v in kwargs.items()]
-        ),
-    ))
+    call = cache._format_call('runpy.' + name, target, *args, **kwargs)
+    cache._debug_output(f'Calling via {THIS_MODULE}: `{call}`')
     if cache.rewrite_module:
         try:
             filename = resolve_target_to_path(target)
@@ -119,14 +109,10 @@ def _run(
     # If we are about to run the code to be autoprofiled, monkey-patch
     # `exec()` into the `runpy` namespace which just rewrites
     # `cache.rewrite_module` and executes it
-    if profile:
-        # Dodge attr-defined errors and their ilk
-        vars(runpy)['exec'] = partial(_exec, cache, CodeWriter)
-    try:
+    with Cleanup() as cleanup:
+        if profile:
+            cleanup.patch(runpy, 'exec', partial(_exec, cache, CodeWriter))
         return func(target, *args, **kwargs)
-    finally:
-        if hasattr(runpy, 'exec'):
-            del runpy.exec
 
 
 def create_runpy_wrapper(cache: LineProfilingCache) -> ModuleType:

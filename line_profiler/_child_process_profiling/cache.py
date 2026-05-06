@@ -30,7 +30,7 @@ from typing_extensions import Concatenate, ParamSpec, Self
 
 from _line_profiler_hooks import INHERITED_PID_ENV_VARNAME, load_pth_hook
 from .. import _diagnostics as diagnostics
-from ..cleanup import Cleanup
+from ..cleanup import Cleanup, _CALLBACK_REPR_HELPER
 from ..curated_profiling import CuratedProfilerContext
 from ..line_profiler import LineProfiler, LineStats
 from ..toml_config import ConfigSource
@@ -102,6 +102,7 @@ class LineProfilingCache(Cleanup):
         _private_field(default_factory=dict)
     )
     _rlock: RLock = _private_field(default_factory=RLock)
+    _dump_stats: Callable[..., None] | None = _private_field(default=None)
 
     _loaded_instance: ClassVar[LineProfilingCache | None] = None
 
@@ -526,7 +527,8 @@ class LineProfilingCache(Cleanup):
             suffix='.lprof',
             delete=False,
         )
-        self.add_cleanup_with_priority(prof.dump_stats, 1, prof_outfile)
+        dump_stats = self._dump_stats = partial(prof.dump_stats, prof_outfile)
+        self.add_cleanup_with_priority(dump_stats, 1)
 
         # Various setups
         self._setup_common(wrap_os_fork, {'reboot_forkserver': False})
@@ -755,39 +757,31 @@ coverage/control.py
                 cache = cls.load()
                 write = cache._debug_output
                 debug_: bool | None = debug
+                call = partial(wrapper, cache, vanilla_impl, *args, **kwargs)
+
                 if debug_ is None:
                     debug_ = cache.debug
-
                 if debug_:
-                    arg_reprs: list[str] = [repr(arg) for arg in args]
-                    arg_reprs.extend(f'{k}={v!r}' for k, v in kwargs.items())
-                    formatted_call = f'{name}({", ".join(arg_reprs)})'
-                    write(f'Wrapped call made: {formatted_call}...')
-                try:
-                    result = wrapper(cache, vanilla_impl, *args, **kwargs)
-                except Exception as e:
-                    if debug_:
-                        write(
-                            'Wrapped call failed: '
-                            f'{formatted_call} -> {type(e).__name__}: {e}',
-                        )
-                    raise
+                    call_fmt = cache._format_call(name, *args, **kwargs)
+                    write(f'Wrapped call made: {call_fmt}...')
+                    state = 'succeeded'
+                    try:
+                        result = call()
+                    except Exception as e:
+                        state = 'failed'
+                        outcome = f'{type(e).__name__}'
+                        if str(e):
+                            outcome = f'{outcome}: {e}'
+                        raise e
+                    else:
+                        outcome = _CALLBACK_REPR_HELPER.repr(result)
+                        return result
+                    finally:
+                        write(f'Wrapped call {state}: {call_fmt} -> {outcome}')
                 else:
-                    if debug_:
-                        write(
-                            'Wrapped call succeeded: '
-                            f'{formatted_call} -> {result!r}',
-                        )
-                    return result
+                    return call()
 
-            if (
-                hasattr(vanilla_impl, '__module__')
-                and hasattr(vanilla_impl, '__qualname__')
-            ):
-                name = '{0.__module__}.{0.__qualname__}'.format(vanilla_impl)
-            else:
-                name = f'<anonymous function at {id(vanilla_impl):#x}>'
-
+            name = cls._get_name(vanilla_impl)
             return wrapped_impl
 
         for field in 'name', 'qualname', 'doc':
@@ -796,6 +790,19 @@ coverage/control.py
             if value is not None:
                 setattr(inner_wrapper, dunder, value)
         return inner_wrapper
+
+    @classmethod
+    def _format_call(
+        cls, func: Callable[..., Any] | str, /, *args, **kwargs,
+    ) -> str:
+        if isinstance(func, partial):
+            return cls._format_call(
+                func.func, [*func.args, *args], {**func.keywords, **kwargs},
+            )
+        call = _CALLBACK_REPR_HELPER.format_call(*args, **kwargs)
+        if not isinstance(func, str):
+            func = cls._get_name(func)
+        return func + call
 
     @property
     def environ(self) -> dict[str, str]:
