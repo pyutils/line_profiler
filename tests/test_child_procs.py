@@ -2170,7 +2170,7 @@ def _test_apply_mp_patches(
 ) -> None:
     def is_valid_stats_file(path: os.PathLike[str] | str) -> bool:
         try:
-            LineStats.from_files(path, on_defective='error')
+            LineStats.from_files(path, on_empty='error', on_defective='error')
         except Exception:
             return False
         return True
