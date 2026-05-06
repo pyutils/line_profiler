@@ -555,8 +555,9 @@ class LineProfilingCache(Cleanup):
             :py:meth:`coverage.control.Converage._on_sigterm`
         """
         name = self._get_signal_name(signum)
-        msg = f'Cleaning up before passing `{name}` ({signum}) on...'
+        msg = f'Caught `{name}` ({signum}), cleaning up...'
         self._debug_output(msg)
+        state = 'succeeded'
         try:
             # We don't care about profiler state and such if we're
             # already being SIGTERM-ed, so just handle cleanup on a
@@ -565,8 +566,17 @@ class LineProfilingCache(Cleanup):
             # already inside one (e.g. when `Process._bootstrap()` is
             # exiting, or the `atexit` hook is triggered)
             self.cleanup(new_thread=True)
+        except BaseException as e:
+            xc = f'{type(e).__name__}'
+            msg = str(e)
+            if msg:
+                xc = f'{xc}: {msg}'
+            state = f'failed ({xc})'
+            raise e
         finally:
             handler = self._sighandlers.pop(signum, None)
+            msg = f'Cleanup {state}, passing `{name}` onto {handler!r}...'
+            self._debug_output(msg)
             if handler is not None:
                 signal.signal(signum, handler)
             signal.raise_signal(signum)

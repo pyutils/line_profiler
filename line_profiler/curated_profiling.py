@@ -71,8 +71,9 @@ class ClassifiedPreimportTargets:
                     invalid_targets,
                 )
             )
-            warnings.warn(msg)
+            # Log before warn in case the warning is raised
             diagnostics.log.warning(msg)
+            warnings.warn(msg, stacklevel=2)
 
         if not self:
             return None

@@ -371,7 +371,11 @@ def wrap_bootstrap(
     finally:
         msg = 'Calling cleanup hook via `BaseProcess._bootstrap`'
         cache._debug_output(msg)
-        cache.cleanup()
+        # Execute cleanup in a separate thread so as to avoid deadlocks,
+        # in case when `LineProfilingCache._handle_signal()` caught a
+        # signal as we're in the middle of this and initiated another
+        # `.cleanup()` call
+        cache.cleanup(new_thread=True)
 
 
 def _cache_hook(

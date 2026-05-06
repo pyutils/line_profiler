@@ -440,7 +440,7 @@ class LineStats(CLineStats):
                 # Log before warning because warnings may be promoted to
                 # errors
                 diagnostics.log.warning(msg)
-                warnings.warn(msg)
+                warnings.warn(msg, stacklevel=2)
             else:  # 'ignore'
                 diagnostics.log.debug(msg)
 
