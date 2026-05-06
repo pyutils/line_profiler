@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import pprint
 import textwrap
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Collection, Generator, Iterable
 from dataclasses import dataclass
 from functools import partial
 from operator import attrgetter
@@ -280,6 +280,67 @@ def test_three_xc_types(items: Iterable[Any]) -> None:
     '''
     assert int(next(items)) < 0
 """
+TEST_CONDITIONS = """
+from __future__ import annotations
+
+from sys import version_info
+
+import pytest
+
+
+@pytest.mark.retry(2, condition=(11 % 2))
+def test_concrete_positive_condition() -> None:
+    '''
+    This should fail after 2 retries because its condition is true.
+    '''
+    raise RuntimeError
+
+
+@pytest.mark.retry(condition=('a' in 'foo'))
+def test_concrete_negative_condition() -> None:
+    '''
+    This should fail without retries because its condition is false.
+    '''
+    raise RuntimeError
+
+
+@pytest.mark.retry(condition='version_info.major >= 3')
+def test_dynamic_positive_condition_test_module_globals() -> None:
+    '''
+    This should fail after 1 retry because the condition evaluates to
+    true on the test module's ``globals()``.
+    '''
+    raise RuntimeError
+
+
+@pytest.mark.retry(condition='version_info.major < 3')
+def test_dynamic_negative_condition_test_module_globals() -> None:
+    '''
+    This should fail without retries because the condition evaluates to
+    false on the test module's ``globals()``.
+    '''
+    raise RuntimeError
+
+
+@pytest.mark.retry(condition='foo == 1')
+def test_bad_dynamic_condition() -> None:
+    '''
+    This should fail without retries because the condition cannot be
+    evaluated (``NameError: name 'foo' is not defined``).
+    '''
+    raise RuntimeError('bar')
+
+
+@pytest.mark.retry(condition='n % 2')
+@pytest.mark.parametrize('n', [0, 1, 2])
+def test_dynamic_condition_test_params(n: int) -> None:
+    '''
+    Subtests `[0]` and `[2]` (resp. subtest `[1]`) should fail without
+    retries (resp. with 1 retry) because the condition evaluates to
+    false (resp. true) on the test's parametrization.
+    '''
+    raise RuntimeError
+"""
 
 
 @dataclass
@@ -325,6 +386,8 @@ class _TestModule:
         check_summary: Literal['verbose', 'concise'] | None = None,
         check_warnings: int | None = None,
         runner: _RunPytest_Method = 'runpytest',
+        additional_stdout_lines: Collection[str] = (),
+        additional_stderr_lines: Collection[str] = (),
     ) -> pytest.RunResult:
         """
         Args:
@@ -344,6 +407,11 @@ class _TestModule:
 'runpytest_subprocess']):
                 The :py:class:`pytest.Pytester` method used to run the
                 test module
+            additional_stdout_lines, additional_stderr_lines \
+(Collection[str]):
+                Additional regex patterns (other than the
+                automatically-generated ones) to match against the
+                output streams
 
         Returns:
             :py:class:`pytest.RunResult` object returned by the
@@ -374,9 +442,14 @@ class _TestModule:
                 self.check_results(result, check_warnings)
             if check_summary is not None:
                 if check_summary == 'verbose':
-                    self.check_verbose_summary(result)
+                    checker = self.check_verbose_summary
                 else:
-                    self.check_concise_summary(result)
+                    checker = self.check_concise_summary
+                checker(
+                    result,
+                    stdout=additional_stdout_lines,
+                    stderr=additional_stderr_lines,
+                )
             return result
         finally:
             for path in tempfiles:
@@ -403,7 +476,12 @@ class _TestModule:
                 counts[outcome.status] = counts.get(outcome.status, 0) + 1
         result.assert_outcomes(warnings=warnings, **counts)
 
-    def check_verbose_summary(self, result: pytest.RunResult) -> None:
+    def check_verbose_summary(
+        self,
+        result: pytest.RunResult,
+        stdout: Collection[str] = (),
+        stderr: Collection[str] = (),
+    ) -> None:
         lines: list[str] = []
         counts: dict[_Status, int] = {}
         for outcomes in self.expected_outcomes.values():
@@ -422,11 +500,14 @@ class _TestModule:
         lines.extend(
             self._format_header(status, n) for status, n in counts.items()
         )
+        self._check_lines(result, [*lines, *stdout], stderr)
 
-        print(f'Expecting these lines in the output: {lines!r}...')
-        result.stdout.re_match_lines_random(lines)
-
-    def check_concise_summary(self, result: pytest.RunResult) -> None:
+    def check_concise_summary(
+        self,
+        result: pytest.RunResult,
+        stdout: Collection[str] = (),
+        stderr: Collection[str] = (),
+    ) -> None:
         lines: list[str] = []
         counts: dict[_Status, int] = {}
         test_names: dict[_Status, dict[str, set[str]]] = {}
@@ -459,8 +540,7 @@ class _TestModule:
                         parent_test, n, '' if n == 1 else 's',
                     ))
 
-        print(f'Expecting these lines in the output: {lines!r}...')
-        result.stdout.re_match_lines_random(lines)
+        self._check_lines(result, [*lines, *stdout], stderr)
 
         for status, n in counts.items():
             header = self._format_header(status, n)
@@ -470,6 +550,20 @@ class _TestModule:
             line = self._find_line(header + ':', str(result.stdout))
             for test_name in names:
                 assert test_name in line
+
+    @staticmethod
+    def _check_lines(
+        result: pytest.RunResult,
+        stdout: Collection[str],
+        stderr: Collection[str],
+    ) -> None:
+        for stream, lines in {
+            'stdout': list(stdout), 'stderr': list(stderr),
+        }.items():
+            if not lines:
+                continue
+            print(f'Expecting these lines in the {stream}: {lines!r}...')
+            getattr(result, stream).re_match_lines_random(lines)
 
     @staticmethod
     def _find_line(pattern: str, text: str) -> str:
@@ -616,6 +710,37 @@ def exceptions_module(
     )
 
 
+@pytest.fixture
+def conditions_module(
+    pytester: pytest.Pytester,
+) -> Generator[_TestModule, None, None]:
+    test = partial(_TestOutcome, status='failed')
+    param_test_name = 'test_dynamic_condition_test_params'
+    param_test = partial(test(param_test_name).subtest, status='failed')
+    yield _TestModule(
+        'test_conditions',
+        TEST_CONDITIONS,
+        {
+            'test_concrete_positive_condition':
+            [test('test_concrete_positive_condition', retries=2)],
+            'test_concrete_negative_condition':
+            [test('test_concrete_negative_condition')],
+            'test_dynamic_positive_condition_test_module_globals':
+            [test(
+                'test_dynamic_positive_condition_test_module_globals',
+                retries=1,
+            )],
+            'test_dynamic_negative_condition_test_module_globals':
+            [test('test_dynamic_negative_condition_test_module_globals')],
+            'test_bad_dynamic_condition':
+            [test('test_bad_dynamic_condition')],
+            param_test_name:
+            [param_test('0'), param_test('1', retries=1), param_test('2')],
+        },
+        pytester,
+    )
+
+
 @pytest.mark.parametrize('verbose', [True, False])
 def test_fixture_scoping(counters_module: _TestModule, verbose: bool) -> None:
     """
@@ -704,4 +829,25 @@ def test_exception_restrictions(exceptions_module: _TestModule) -> None:
     exceptions_module.run(
         '--verbose',
         check_results=True, check_summary='verbose', check_warnings=0,
+    )
+
+
+def test_retry_conditions(conditions_module: _TestModule) -> None:
+    """
+    Test that the decorator correctly handles retry conditions.
+    """
+    conditions_module.run(
+        '--verbose',
+        check_results=True,
+        check_summary='verbose',
+        check_warnings=0,
+        # `test_bad_dynamic_condition()` should have failed with a
+        # `_RetryFailure`, listing the error encountered in the last
+        # trial and the error encountered when `eval()`-ing the
+        # condition
+        additional_stdout_lines=[
+            'FAILED +.*::test_bad_dynamic_condition - '
+            r".*_RetryFailure: +\(RuntimeError: bar\) +"
+            r"-> +\(condition: +'foo == 1' +-> +NameError: .*'foo'.*\)"
+        ],
     )

@@ -41,6 +41,38 @@ class _PyfuncCallImpl(Protocol):
         ...
 
 
+class _RetryFailure(RuntimeError):
+    def __init__(
+        self,
+        previous_error: Exception,
+        condition_error: Exception,
+        condition: str | None = None
+    ) -> None:
+        self.previous_error = previous_error
+        self.condition_error = condition_error
+        self.condition = condition
+        super().__init__(self._format_message())
+
+        condition_error.__cause__ = previous_error
+        self.__cause__ = condition_error
+
+    def _format_message(self) -> str:
+        prev = self._format_exception(self.previous_error)
+        if len(prev.split()) > 1:
+            prev = f'({prev})'
+        condition = self._format_exception(self.condition_error)
+        if self.condition:
+            condition = f'(condition: {self.condition!r} -> {condition})'
+        return '{} -> {}'.format(prev, condition)
+
+    @staticmethod
+    def _format_exception(xc: Exception) -> str:
+        msg = type(xc).__name__
+        if str(xc):
+            return f'{msg}: {xc}'
+        return msg
+
+
 @final
 @dataclasses.dataclass
 class _RetryEntry:
@@ -118,6 +150,7 @@ class _RetryHelper:
     retries: int = 1
     exceptions: type[Exception] | tuple[type[Exception], ...] = ()
     reset_fixtures: bool | Collection[str] = True
+    condition: str | None = None
     name: ClassVar[str] = 'retry'
 
     def __post_init__(self) -> None:
@@ -171,6 +204,21 @@ class _RetryHelper:
         for i in range(1 + self.retries):
             if i:
                 reset_fixtures(func)
+                if self.condition:
+                    cond, error = self._check_condition(self.condition, func)
+                    if error:  # Bail
+                        # XXX: would be nice if we can directly force an
+                        # internal error, but that doesn't seem to be
+                        # possible from within `pytest_pyfunc_call()`;
+                        # directly calling `pytest_internalerror()`
+                        # results in botched teardown and weird
+                        # tracebacks, and leaves the test session in a
+                        # bad state...
+                        assert xc is not None
+                        raise _RetryFailure(xc, cond, self.condition)
+                    if not cond:
+                        i -= 1
+                        break
             try:
                 result = impl(pyfuncitem=func)
             except self.exceptions as e:
@@ -194,6 +242,21 @@ class _RetryHelper:
             return result
         else:
             raise xc
+
+    @staticmethod
+    def _check_condition(
+        condition: str, func: pytest.Function,
+    ) -> tuple[Any, Literal[False]] | tuple[Exception, Literal[True]]:
+        global_ns: dict[str, Any] | None = None
+        try:
+            global_ns = func.obj.__globals__
+        except AttributeError:  # Not a `types.FunctionType`
+            pass
+        local_ns = func.funcargs
+        try:
+            return (eval(condition, global_ns, local_ns), False)
+        except Exception as e:
+            return (e, True)
 
     @staticmethod
     def _reset_between_retries(
@@ -297,11 +360,13 @@ class _RetryHelper:
         retries: int = 0
         xc: set[type[Exception]] = set()
         reset_fixtures: bool | set[str] = True
+        condition: bool | str | None = None
         for mark in pyfuncitem.iter_markers():
             if mark.name != cls.name:
                 continue
             instance = cls(*mark.args, **mark.kwargs)
             retries += instance.retries
+            condition = instance.condition
             if isinstance(instance.exceptions, tuple):
                 xc.update(instance.exceptions)
             else:
@@ -322,9 +387,14 @@ class _RetryHelper:
                 reset_fixtures = bool(instance.reset_fixtures)
         if not retries:
             return None
+        if not (condition is None or isinstance(condition, str)):
+            if condition:
+                condition = None
+            else:
+                return None
         if not xc:
             xc = {Exception}
-        return cls(retries, tuple(xc), reset_fixtures)
+        return cls(retries, tuple(xc), reset_fixtures, condition)
 
 
 def _pluralize(noun: str, count: int, plural: str | None = None) -> str:
@@ -347,7 +417,8 @@ def pytest_configure(config: pytest.Config) -> None:
     Register the :py:deco:`pytest.mark.retry` marker.
     """
     help_text = ' '.join("""
-    retry(retries=1, exceptions=Exception, reset_fixtures=True):
+    retry(retries=1, exceptions=Exception, \
+reset_fixtures=True, condition=None):
 
     mark the test for retrying upon failure.
 
@@ -359,7 +430,13 @@ def pytest_configure(config: pytest.Config) -> None:
         reset_fixtures (bool | Collection[str]):
             Names of function-scoped fixtures to reset between retries,
             `True` reset all such fixtures,
-            `False` none thereof
+            `False` none thereof;
+        condition (bool | str | None):
+            Optional condition for retry:
+            if a boolean, only retry if true;
+            if a string, only retry if it `eval()`s true
+            (w/globals of the test module and locals from the fixtures
+            and parametrizations)
     """.split())
     config.addinivalue_line('markers', help_text)
 
