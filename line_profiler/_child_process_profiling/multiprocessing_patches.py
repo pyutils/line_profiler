@@ -14,16 +14,21 @@ en/latest/subprocess.html#using-multiprocessing>`__.
 """
 from __future__ import annotations
 
+import dataclasses
 import multiprocessing
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import partial
 from importlib import import_module
+from inspect import getattr_static, signature
 from multiprocessing.process import BaseProcess
+from multiprocessing.pool import Pool
+from operator import attrgetter
 from time import sleep, monotonic
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import (
-    Any, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
+    TYPE_CHECKING,
+    Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
     cast, final,
 )
 
@@ -54,10 +59,18 @@ __all__ = ('apply',)
 
 
 T = TypeVar('T')
+T1 = TypeVar('T1')
+T2 = TypeVar('T2')
 PS = ParamSpec('PS')
+PS1 = ParamSpec('PS1')
+PS2 = ParamSpec('PS2')
 _OnTimeout = Literal['ignore', 'warn', 'error']
+_PatchName = Literal['pool', 'process', 'logging']
 
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
+_LOGGERS = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
+
+# ------------------------------ Helpers -------------------------------
 
 
 class _Wrapper(Protocol, Generic[PS, T]):
@@ -277,13 +290,185 @@ class _PollerArgs(NamedTuple):
             return namespace.setdefault('_DEFAULT_POLLER_ARGS', defaults)
 
 
+class TaskWrapper(Generic[PS, T]):
+    """
+    Pickle-able wrapper around the supplied task callable, which writes
+    to the session's profiling-stats file on exit.
+    """
+    def __init__(self, func: Callable[PS, T]) -> None:
+        self.func = func
+        try:
+            self.__signature__ = signature(func)
+        except Exception:  # nocover
+            # Can happen with e.g. certain builin/c-based callables
+            pass
+
+    def __call__(self, *args, **kwargs) -> T:
+        dump_stats = LineProfilingCache.load()._dump_stats
+        try:
+            return self.func(*args, **kwargs)
+        finally:
+            if dump_stats is not None:
+                dump_stats()
+
+
+@dataclasses.dataclass
+class Patch:
+    """
+    Patch to apply to a component in :py:mod:`multiprocessing`.
+
+    Attributes:
+        submodule (str):
+            Name of the :py:mod:`multiprocessing` submodule.
+        targets (dict[str,\
+dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
+            Dictionary mapping (dot-chained) names in said submodule to
+            a dictionary of patches; said patches dictionary should have
+            the format of
+            ``dict[simple_attribute, wrapper | [wrapper1, ...]]``. See
+            Example for details.
+
+    Example:
+        Consider
+        ``Patch('foo', {'bar.baz': {'foobar': foofoo},\
+'': {'spam': [ham, eggs]}})``.
+        This instance would perform the following patches on the module
+        ``multiprocessing.foo``:
+
+        - Replace ``multiprocessing.foo.bar.baz.foobar`` with
+          ``foofoo(multiprocessing.foo.bar.baz.foobar)``
+
+        - Replace ``multiprocessing.foo.spam`` with
+          ``eggs(ham(multiprocessing.foo.spam))``;
+          note that the two wrappers are applied in order to the
+          original attribute.
+    """
+    submodule: str
+    targets: dict[
+        str, dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]
+    ] = dataclasses.field(default_factory=dict)
+    package: ClassVar[str] = 'multiprocessing'
+
+    def add_target(
+        self,
+        target: str,
+        patches: Mapping[
+            str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]
+        ],
+    ) -> Self:
+        """
+        Convenience method for gradually constructing the patch with a
+        fluent interface.
+
+        Returns:
+            This instance
+        """
+        self.targets.setdefault(target, {}).update(patches)
+        return self
+
+    def apply(
+        self,
+        cache: LineProfilingCache,
+        *,
+        cleanup: bool = True,
+        static: bool = False,
+    ) -> list[str]:
+        """
+        Apply the patch.
+
+        Args:
+            cache (LineProfilingCache):
+                Session cache
+            cleanup (bool):
+                Whether ``cache.cleanup()`` should reverse the patches
+            static (bool):
+                Whether to use :py:func:`inspect.getattr_static` to
+                retrieve to the attributes to be patched on the patch
+                targets
+
+        Returns:
+            replacements (list[str]):
+                Names of entities replaced
+        """
+        submod_name = f'{self.package}.{self.submodule}'
+        get_attribute = getattr_static if static else getattr
+        result: list[str] = []
+        try:
+            mod = self.load_module()
+        except ImportError:  # nocover
+            return []
+
+        for target in sorted(self.targets, key=len, reverse=True):
+            if TYPE_CHECKING:
+                # See `ty` issue #2572
+                assert isinstance(target, str)
+            if target:
+                try:
+                    obj: Any = attrgetter(target)(mod)
+                except AttributeError:  # nocover
+                    continue
+                name = f'{submod_name}.{target}'
+            else:
+                obj, name = mod, submod_name
+            replace = partial(cache.patch, obj, cleanup=cleanup, name=name)
+            for method, method_wrappers in self.targets[target].items():
+                if callable(method_wrappers):
+                    method_wrappers = cast(
+                        Sequence[Callable[[Any], Any]], (method_wrappers,),
+                    )
+                try:
+                    impl = get_attribute(obj, method)
+                except AttributeError:
+                    continue
+                for wrapper in method_wrappers:
+                    impl = wrapper(impl)
+                replace(method, impl)
+                result.append(f'{name}.{method}')
+        return result
+
+    def load_module(self) -> ModuleType:
+        """
+        Returns:
+            Module object :py:attr:`.module` points to
+        """
+        return import_module(self.module)
+
+    @staticmethod
+    def _join(s: str, *strs: str, sep: str = '.') -> str:
+        return sep.join(string for string in (s, *strs) if string)
+
+    @property
+    def module(self) -> str:
+        """
+        Module where the patches are applied
+        """
+        return self._join(self.package, self.submodule)
+
+    @property
+    def summary(self) -> MappingProxyType[str, frozenset[str]]:
+        """
+        Summary of the dotted paths to the patched objects and their
+        patched attributes
+        """
+        add_prefix = partial(self._join, self.module)
+        return MappingProxyType({
+            add_prefix(target): frozenset(patches)
+            for target, patches in self.targets.items()
+        })
+
+
 def _get_config(config: ConfigSource) -> Mapping[str, Any]:
     cd = dict(
         config.get_subconfig('child_processes', 'multiprocessing', copy=True)
         .conf_dict
     )
+    assert isinstance(cd.get('patches'), Mapping)
     assert isinstance(cd.get('polling'), Mapping)
-    return MappingProxyType({**cd, 'polling': MappingProxyType(cd['polling'])})
+    return MappingProxyType({
+        **cd,
+        'patches': MappingProxyType(cd['patches']),
+        'polling': MappingProxyType(cd['polling']),
+    })
 
 
 def _process_has_returned(
@@ -300,6 +485,53 @@ def _process_has_returned(
             msg = f'Waiting for process {popen.pid} to return...'
     cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
     return result
+
+
+def _no_op(*_, **__) -> None:
+    pass
+
+
+# ---------------- `multiprocessing.pool.Pool` patches -----------------
+
+
+@LineProfilingCache._method_wrapper
+def wrap_get_tasks(
+    _,  # No need to use the cache, but `_method_wrapper` expects it
+    vanilla_impl: Callable[Concatenate[Callable[PS1, T1], PS2], T2],
+    func: Callable[PS1, T1],
+    *args: PS2.args,
+    **kwargs: PS2.kwargs
+) -> T2:
+    """
+    Wrap around :py:meth:`.Pool._get_tasks` so that the writing of
+    profiling stats is handled within the callables sent to the child
+    processes before the parent process assumes control.
+
+    Note:
+        :py:meth:`Pool._get_tasks` is a static method.
+    """
+    return vanilla_impl(TaskWrapper(func), *args, **kwargs)
+
+
+@LineProfilingCache._method_wrapper
+def wrap_guarded_task_generation(
+    _,  # No need to use the cache, but `_method_wrapper` expects it
+    vanilla_impl: Callable[Concatenate[Pool, int, Callable[PS1, T1], PS2], T2],
+    self: Pool,
+    result_job: int,
+    func: Callable[PS1, T1],
+    *args: PS2.args,
+    **kwargs: PS2.kwargs
+) -> T2:
+    """
+    Wrap around :py:meth:`.Pool._guarded_task_generation` so that the
+    writing of profiling stats is handled within the callables sent to
+    the child processes before the parent process assumes control.
+    """
+    return vanilla_impl(self, result_job, TaskWrapper(func), *args, **kwargs)
+
+
+# ----------- `multiprocessing.process.BaseProcess` patches ------------
 
 
 @LineProfilingCache._method_wrapper
@@ -378,6 +610,9 @@ def wrap_bootstrap(
         cache.cleanup(new_thread=True)
 
 
+# --------------- `multiprocessing.util` logging patches ---------------
+
+
 def _cache_hook(
     vanilla_impl: Callable[PS, T],
     get_logging_message: Callable[PS, str],
@@ -412,8 +647,47 @@ def tee_log(
     )
 
 
+# -------------------------- Applying patches --------------------------
+
+
+_PATCHES: dict[_PatchName, Patch] = {
+    'process': Patch('process').add_target(
+        'BaseProcess',
+        {'terminate': wrap_terminate, '_bootstrap': wrap_bootstrap},
+    ),
+    'pool': Patch('pool').add_target(
+        'Pool', {
+            # `._get_task()` is a static method, so the wrapper function
+            # needs additional wrapping
+            '_get_tasks': [wrap_get_tasks, staticmethod],
+            '_guarded_task_generation': wrap_guarded_task_generation,
+        },
+    ),
+    'logging': Patch('util').add_target(
+        # The logging functions exists directly in the module namespace
+        # so no further attribute access is needed
+        '', {func: partial(partial, tee_log, func) for func in _LOGGERS},
+    ),
+}
+
+
+def _stop_forkserver() -> None:
+    """
+    Note:
+        This uses `ForkServer._stop()` which is private API, but it's
+        the same hack used in Python's own test suite -- see the comment
+        to said method
+    """
+    # Appease the type-checker since `._stop()` is not public API
+    stop = getattr(forkserver._forkserver, '_stop', None)
+    assert callable(stop)
+    stop()
+
+
 def apply(
-    lp_cache: LineProfilingCache, reboot_forkserver: bool = True,
+    lp_cache: LineProfilingCache,
+    reboot_forkserver: bool = True,
+    patches: Collection[_PatchName] | None = None,
 ) -> None:
     """
     Set up profiling in :py:mod:`multiprocessing` child processes by
@@ -421,21 +695,35 @@ def apply(
 
     Args:
         lp_cache (LineProfilingCache):
-            Cache instance governing the profiling run
+            Cache instance governing the profiling run.
         reboot_forkserver (bool):
             Whether to reboot the global
             :py:class`multiprocessing.forkserver.ForkServer` instance
             so as to ensure that profiling happens on processes forked
-            therefrom (see Note)
+            therefrom (see Note).
+        patches \
+(Collection[Literal['pool', 'process', 'logging'] | None]):
+            Patches to apply to :py:mod:`multiprocessing`; see the
+            following section for a description of each;
+            the default is taken from the TOML config file.
+
+    Patches:
+        ``'pool'``:
+            Patch :py:class:`multiprocessing.pool.Pool`'s
+            ``._get_tasks()`` and ``._guarded_task_generation()``
+            methods so that parallel tasks write profiling output.
+        ``'process'``:
+            Patch :py:class:`multiprocessing.process.BaseProcess`'s
+            ``.terminate()`` and ``._bootstrap()`` methods so that child
+            processes write profiling output on exit and are given
+            enough time for that.
+        ``'logging'``:
+            Patch :py:mod:`multiprocessing.util`'s logging methods (e.g.
+            ``debug()`` and ``info()``) so that their messages are teed
+            to the cache's debug log.
 
     Side effects:
-        - :py:mod:`multiprocessing` marked as having been set up
-
-        - The following methods and functions patched:
-
-          - :py:meth:`multiprocessing.process.BaseProcess.terminate`
-
-          - :py:meth:`multiprocessing.process.BaseProcess._bootstrap`
+        - The aforementioned patches applied
 
         - If ``reboot_forkserver=True``, fork-server process rebooted:
 
@@ -468,66 +756,23 @@ def apply(
 
     .. _GH-126631: https://github.com/python/cpython/issues/126631
     """
-    if not getattr(multiprocessing, _PATCHED_MARKER, False):
-        _apply_mp_patches(lp_cache, reboot_forkserver=reboot_forkserver)
-
-
-def _apply_patches_generic(
-    lp_cache: LineProfilingCache,
-    submodule: str,
-    targets: Mapping[str, Mapping[str, Callable[[Any], Any]]],
-    cleanup: bool = True,
-) -> None:
-    submod_name = 'multiprocessing.' + submodule
-    try:
-        mod = import_module(submod_name)
-    except ImportError:  # nocover
+    if getattr(multiprocessing, _PATCHED_MARKER, False):
         return
-    for target, patches in targets.items():
-        if target:
-            try:
-                obj: Any = getattr(mod, target)
-            except AttributeError:  # nocover
-                continue
-            name = f'{submod_name}.{target}'
-        else:
-            obj, name = mod, submod_name
-        replace = partial(lp_cache.patch, obj, cleanup=cleanup, name=name)
-        for method, method_wrapper in patches.items():
-            try:
-                vanilla = getattr(obj, method)
-            except AttributeError:
-                continue
-            replace(method, method_wrapper(vanilla))
-
-
-def _apply_mp_patches(
-    lp_cache: LineProfilingCache,
-    reboot_forkserver: bool = True,
-    intercept_mp_logs: bool | None = None,
-) -> None:
-    # In a child process, we don't care about polluting the
-    # `multiprocessing` namespace, so don't bother with cleanup
-    apply_patches = partial(_apply_patches_generic, lp_cache)
-    # Patch `multiprocessing.process.BaseProcess` methods
-    # Note: the type checkers seem to need some help figuring the
-    # `patches` out... so do explicit `cast()`s
-    apply_patches(
-        'process',
-        {'BaseProcess': {'terminate': wrap_terminate,
-                         '_bootstrap': wrap_bootstrap}},
-    )
+    if patches is None:
+        config = _get_config(lp_cache._config_source)['patches']
+        patches_ = {patch for patch, applied in config.items() if applied}
+    else:
+        patches_ = {p.lower() for p in patches}
     # Patch `multiprocessing.spawn`
     if _CAN_USE_SPAWN and hasattr(spawn, 'runpy'):
         lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
-    # Intercept `multiprocessing` debug messages
-    if intercept_mp_logs is None:
-        config = lp_cache._config_source
-        intercept_mp_logs = _get_config(config)['intercept_logs']
-    if intercept_mp_logs:
-        lfuncs = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
-        lpatches = {func: partial(partial, tee_log, func) for func in lfuncs}
-        apply_patches('util', {'': lpatches})
+    # Patch methods/functions in these entities:
+    # - `multiprocessing.pool.Pool`
+    # - `multiprocessing.process.BaseProcess`
+    # - `multiprocessing.util`
+    for name, patch in _PATCHES.items():
+        if name in patches_:
+            patch.apply(lp_cache)
     # Stop the current `ForkServer` server process:
     # - Now, so that the (rebooted) fork-server process has profiling
     #   set up; and
@@ -537,20 +782,3 @@ def _apply_mp_patches(
         lp_cache.add_cleanup(_stop_forkserver)
     # Mark `multiprocessing` as having been patched
     lp_cache.patch(multiprocessing, _PATCHED_MARKER, True)
-
-
-def _stop_forkserver() -> None:
-    """
-    Note:
-        This uses `ForkServer._stop()` which is private API, but it's
-        the same hack used in Python's own test suite -- see the comment
-        to said method
-    """
-    # Appease the type-checker since `._stop()` is not public API
-    stop = getattr(forkserver._forkserver, '_stop', None)
-    assert callable(stop)
-    stop()
-
-
-def _no_op(*_, **__) -> None:
-    pass

@@ -224,26 +224,42 @@ suffix = ''
 
 [tool.line_profiler.child_processes.multiprocessing]
 
-# - `multiprocessing.intercept_logs` (bool):
-#   Whether to patch the `multiprocessing.util` logging funcions so that
-#   the internal log messages are captured and writtent to the debug
-#   logs
-intercept_logs = false
 # - `multiprocessing.catch_sigterm` (bool):
 #   Whether to set a hook for the child-process session caches to
 #   `.cleanup()` on SIGTERM
 catch_sigterm = true
 
+# List of individual patches to apply to `multiprocessing`
+
+[tool.line_profiler.child_processes.multiprocessing.patches]
+
+# - `multiprocessing.patches.pool` (bool):
+#   Whether to patch `multiprocessing.pool.Pool`, so that each tasks
+#   write profiling output before pushing result back to the parent
+#   process
+pool = true
+# - `multiprocessing.patches.process` (bool):
+#   Whether to patch `multiprocessing.process.BaseProcess`, so that each
+#   child process write profiling output before exiting
+process = true
+# - `multiprocessing.patches.logging` (bool):
+#   Whether to patch logging functions in `multiprocessing.util`, so
+#   that the internal logs of `multiprocessing` are teed to the session
+#   cache's debug logs
+logging = false
+
+# Polling controls, used for the `pool` patch
+
 [tool.line_profiler.child_processes.multiprocessing.polling]
 
 # - `multiprocessing.polling.cooldown` (float):
-#   Cooldown time (seconds) before successive polls on lock files (set
-#   to <= 0 to disable cooldowns)
+#   Cooldown time (seconds) before successive polls on child processes
+#   (set to <= 0 to disable cooldowns)
 cooldown = 0.03125  # 1/32-nd of a second
 # - `multiprocessing.polling.timeout` (float):
-#   Time (seconds) before the main process disregards the existence of
-#   lock file and unblocks calls to `.terminate()` a (most probably
-#   errored-out) child process anyway (set to <= 0 to disable timeouts)
+#   Time (seconds) before the main process disregards the alive-ness of
+#   child processes, and unblocks calls to `.terminate()` a (most
+#   probably errored-out) child anyway (set to <= 0 to disable timeouts)
 timeout = 0.25
 # - `multiprocessing.polling.on_timeout`
 #   (Literal['error', 'warn', 'ignore']):
