@@ -371,7 +371,7 @@ dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
         cache: LineProfilingCache,
         *,
         cleanup: bool = True,
-        static: bool = False,
+        static: bool = True,
     ) -> list[str]:
         """
         Apply the patch.
@@ -659,7 +659,9 @@ _PATCHES: dict[_PatchName, Patch] = {
         'Pool', {
             # `._get_task()` is a static method, so the wrapper function
             # needs additional wrapping
-            '_get_tasks': [wrap_get_tasks, staticmethod],
+            '_get_tasks': [
+                attrgetter('__func__'), wrap_get_tasks, staticmethod,
+            ],
             '_guarded_task_generation': wrap_guarded_task_generation,
         },
     ),

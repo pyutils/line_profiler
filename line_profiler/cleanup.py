@@ -7,6 +7,7 @@ from collections.abc import (
     Callable, Generator, Iterable, Mapping, MutableMapping,
 )
 from functools import partial
+from inspect import getattr_static
 from operator import setitem
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -292,6 +293,7 @@ class Cleanup:
     def patch(
         self, obj: Any, attr: str, value: Any, *,
         name: str | None = None,
+        static: bool = True,
         cleanup: bool = True,
         priority: float = 0,
     ) -> None:
@@ -307,6 +309,9 @@ class Cleanup:
                 Value to be assigned to said attribute of ``obj``
             name (str | None):
                 Optional name for ``obj`` to be used in debug messages
+            static (bool):
+                Whether to use :py:func:`inspect.getattr_static` to
+                get the current value of the attribute
             cleanup (bool):
                 Whether to reverse the patch (by resetting or deleting
                 the attribute) on cleanup
@@ -338,8 +343,10 @@ class Cleanup:
             # ... yeah gotta disagree with flake8, a lambda makes
             # perfect sense here
             add_cleanup = lambda *_, **__: None  # noqa: E731
+        get_attribute = getattr_static if static else getattr
+
         try:
-            old = getattr(obj, attr)
+            old = get_attribute(obj, attr)
         except AttributeError:
             add_cleanup(delattr, priority, obj, attr)
         else:
