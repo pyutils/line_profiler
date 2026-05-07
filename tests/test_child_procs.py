@@ -14,10 +14,11 @@ import sysconfig
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
-    Callable, Collection, Generator, Iterable, Iterator, Mapping, Sequence,
+    Callable,
+    Collection, Generator, Iterable, Iterator, Mapping, Sequence, Set,
 )
 from contextlib import AbstractContextManager, ExitStack, nullcontext
-from functools import partial, wraps
+from functools import lru_cache, partial, wraps
 from io import StringIO
 from importlib import import_module
 from numbers import Real
@@ -38,18 +39,19 @@ import pytest
 import ubelt as ub
 
 from _line_profiler_hooks import load_pth_hook
-from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
 from line_profiler._child_process_profiling.multiprocessing_patches import (
-    _Poller, _PATCHED_MARKER,
+    _Poller, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
 )
+from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler.curated_profiling import (
     CuratedProfilerContext, ClassifiedPreimportTargets,
 )
 from line_profiler.line_profiler import LineProfiler, LineStats
+from line_profiler.toml_config import ConfigSource
 
 
 T = TypeVar('T')
@@ -520,6 +522,23 @@ class _NotSupplied(enum.Enum):
     NOT_SUPPLIED = enum.auto()
 
 
+class _GetAttr(Protocol):
+    """
+    Function signature for functions that behave like
+    :py:func:`getattr``.
+    """
+    @overload
+    def __call__(self, obj: Any, attr: str, /) -> Any:
+        ...
+
+    @overload
+    def __call__(self, obj: Any, attr: str, default: Any, /) -> Any:
+        ...
+
+    def __call__(self, *args):
+        ...
+
+
 @final
 class ResultMismatch(ValueError):
     def __init__(
@@ -969,17 +988,19 @@ class _CallableContextManager(ABC, Generic[TCtx_]):
 
 class _preserve_obj_attributes(_CallableContextManager[dict[str, Any]]):
     def __init__(
-        self, obj: Any, attrs: Collection[str], debug: bool = _DEBUG,
+        self, obj: Any, attrs: Collection[str], *,
+        static: bool = True, debug: bool = _DEBUG,
     ) -> None:
         self.obj = obj
         self.attrs = set(attrs)
         self._callbacks: list[Callable[[], None]] = []
         self.debug = debug
+        self.static = static
 
     def __enter__(self) -> dict[str, Any]:
         def get_repr(attr: str) -> str:
             try:
-                value = getattr(self.obj, attr)
+                value = get_attribute(self.obj, attr)
             except ValueError:
                 return '<N/A>'
             else:
@@ -1000,9 +1021,14 @@ class _preserve_obj_attributes(_CallableContextManager[dict[str, Any]]):
             ))
             setattr(self.obj, attr, value)
 
+        if self.static:
+            get_attribute: _GetAttr = inspect.getattr_static
+        else:
+            get_attribute = getattr
+
         result: dict[str, Any] = {}
         for attr in self.attrs:
-            old = getattr(self.obj, attr, _NotSupplied.NOT_SUPPLIED)
+            old = get_attribute(self.obj, attr, _NotSupplied.NOT_SUPPLIED)
             if old is _NotSupplied.NOT_SUPPLIED:
                 callback = partial(delete, attr)
             else:
@@ -1066,12 +1092,14 @@ old['line_profiler.line_profiler']['main']
         >>> assert main is not line_profiler.main
     """
     def __init__(
-        self, targets: Mapping[str, Collection[str]], debug: bool = _DEBUG,
+        self, targets: Mapping[str, Collection[str]], *,
+        static: bool = True, debug: bool = _DEBUG,
     ) -> None:
         self.targets = {
             target: set(attrs) for target, attrs in targets.items()
         }
         self._stacks: list[ExitStack] = []
+        self.static = static
         self.debug = debug
 
     def __enter__(self) -> dict[str, dict[str, Any]]:
@@ -1080,7 +1108,8 @@ old['line_profiler.line_profiler']['main']
         result: dict[str, Any] = {}
         for target, attrs in self.targets.items():
             result[target] = stack.enter_context(_preserve_obj_attributes(
-                _import_target(target), attrs, debug=self.debug,
+                _import_target(target), attrs,
+                debug=self.debug, static=self.static,
             ))
         return result
 
@@ -1089,13 +1118,17 @@ old['line_profiler.line_profiler']['main']
 
     @staticmethod
     def fetch_current_values(
-        targets: Mapping[str, Collection[str]],
+        targets: Mapping[str, Collection[str]], static: bool = True,
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         na = _NotSupplied.NOT_SUPPLIED
+        if static:
+            get: _GetAttr = inspect.getattr_static
+        else:
+            get = getattr
         for target, attrs in targets.items():
             obj = _import_target(target)
-            result[target] = {attr: getattr(obj, attr, na) for attr in attrs}
+            result[target] = {attr: get(obj, attr, na) for attr in attrs}
         return result
 
     @classmethod
@@ -1104,6 +1137,7 @@ old['line_profiler.line_profiler']['main']
         old: Mapping[str, Mapping[str, Any]],
         comparator: Callable[[Any, Any], bool] = operator.is_,
         assert_true: bool | Mapping[str, Mapping[str, bool]] = True,
+        static: bool = True,
     ) -> dict[str, dict[str, bool]]:
         def get_from_mapping(target: str, attr: str) -> bool:
             if TYPE_CHECKING:
@@ -1119,7 +1153,8 @@ old['line_profiler.line_profiler']['main']
             get_expected = get_from_boolean
 
         result: dict[str, dict[str, bool]] = {}
-        new = cls.fetch_current_values(old)
+        new = cls.fetch_current_values(old, static)
+        failures: list[str] = []
         for target, old_values in old.items():
             new_values = new[target]
             cmp_results = result[target] = {}
@@ -1129,15 +1164,31 @@ old['line_profiler.line_profiler']['main']
                 cmp_results[attr] = cmp_result = comparator(
                     new_value, old_value,
                 )
+                format_msg = partial(
+                    '{}: {}'.format,
+                    f'Compared `{target}.{attr}` '
+                    f'(old: {old_value!r} @ {id(old_value):#x}; '
+                    f'new: {new_value!r} @ {id(new_value):#x})',
+                )
                 expected_result = get_expected(target, attr)
-                if assert_true and (cmp_result != expected_result):
-                    assert False, (
-                        f'Comparing `{target}.{attr}` '
-                        f'(old: {old_value!r} @ {id(old_value):#x}; '
-                        f'new: {new_value!r} @ {id(new_value):#x}): '
-                        f'expected comparison with {comparator!r} to return '
-                        f'{expected_result}, got {cmp_result}'
+                if assert_true:
+                    if cmp_result == expected_result:
+                        message = format_msg(
+                            f'comparison result with {comparator!r} is '
+                            f'{cmp_result} (as expected)'
+                        )
+                    else:
+                        message = format_msg(
+                            f'expected comparison with {comparator!r} to '
+                            f'return {expected_result}, got {cmp_result}'
+                        )
+                        failures.append(message)
+                else:
+                    message = format_msg(
+                        f'comparison result with {comparator!r}: {cmp_result}'
                     )
+                print(message)
+        assert (not failures), '\n'.join(failures)
         return result
 
 
@@ -1745,35 +1796,125 @@ run_literal_code = partial(
 # XXX: Tests in this section concerns implementation details, and the
 # tested APIs and behaviors MUST NOT be relied upon by end-users.
 
-_GLOBAL_PATCHES = {
-    f'{load_pth_hook.__module__}.{load_pth_hook.__qualname__}': frozenset({
-        'called',
-    }),
+_PatchSummary = Mapping[str, Set[str]]
+
+_GLOBAL_MINIMAL_PATCHES = {
     'multiprocessing': frozenset({_PATCHED_MARKER}),
-    'multiprocessing.process.BaseProcess': frozenset({
-        '_bootstrap',  # 'terminate',
-    }),
     'multiprocessing.spawn': frozenset({'runpy'}),
-    'multiprocessing.util': frozenset({
-        'sub_debug', 'debug', 'info', 'sub_warning', 'warn',
-    }),
     'os': frozenset({'fork'}),
 }
+if not hasattr(os, 'fork'):  # E.g. Windows
+    _GLOBAL_MINIMAL_PATCHES.pop('os')
 
 
-@pytest.fixture(scope='module')
-def patched_attributes() -> MappingProxyType[str, frozenset[str]]:
-    result: dict[str, frozenset[str]] = {}
-    for target, attrs in _GLOBAL_PATCHES.items():
+def get_patched_attributes(
+    applied_mp_patches: Collection[str] | None = None,
+) -> MappingProxyType[str, frozenset[str]]:
+    if applied_mp_patches is None:
+        applied_mp_patches = {
+            patch for patch, applied in (
+                ConfigSource.from_config()
+                .get_subconfig('child_processes', 'multiprocessing', 'patches')
+                .conf_dict.items()
+            ) if applied
+        }
+    return _get_patched_attributes(frozenset(applied_mp_patches))
+
+
+@lru_cache()
+def _get_patched_attributes(
+    applied_mp_patches: frozenset[str],
+) -> MappingProxyType[str, frozenset[str]]:
+    # Get the contents of the individual patches
+    patches = _GLOBAL_MINIMAL_PATCHES.copy()
+    for patch in applied_mp_patches:
+        maybe_patch = MP_PATCHES.get(patch)  # type: ignore
+        if maybe_patch:
+            for target, attrs in maybe_patch.summary.items():
+                patches[target] = patches.get(target, frozenset()) | attrs
+    return MappingProxyType({
+        target: frozenset(attrs)
+        for target, attrs in _filter_patches(patches).items()
+    })
+
+
+def _get_toml_patches_section(mp_patches: Collection[str]) -> str:
+    mp_patches_as_dict = {name: name in mp_patches for name in MP_PATCHES}
+    return (
+        '[tool.line_profiler.child_processes.multiprocessing.patches]\n'
+        + '\n'.join(
+            f'{patch} = {str(applied).lower()}'
+            for patch, applied in mp_patches_as_dict.items()
+        )
+    )
+
+
+def _summarize_patches(
+    summaries: Collection[tuple[bool, _PatchSummary]]
+) -> dict[str, dict[str, bool]]:
+    """
+    Example:
+        >>> _summarize_patches([(False, {'foo': {'bar'}})])
+        {'foo': {'bar': False}}
+        >>> _summarize_patches([  # doctest: +NORMALIZE_WHITESPACE
+        ...     (False, {'foo': {'bar', 'baz'}}),
+        ...     (True, {'foo': {'baz', 'foobar'}, 'spam': {'ham'}}),
+        ...     (False, {'foo': {'baz'}, 'spam': {'eggs'}})
+        ... ])
+        {'foo': {'bar': False, 'baz': True, 'foobar': True},
+         'spam': {'eggs': False, 'ham': True}}
+    """
+    def get_all_mentioned(s: Iterable[_PatchSummary]) -> dict[str, set[str]]:
+        all_items: dict[str, set[str]] = {}
+        for summary in s:
+            for target, attrs in summary.items():
+                all_items.setdefault(target, set()).update(attrs)
+        return all_items
+
+    all_items = get_all_mentioned(s for _, s in summaries)
+    all_patched = get_all_mentioned(s for applied, s in summaries if applied)
+    result: dict[str, dict[str, bool]] = {
+        target:
+        {attr: attr in all_patched.get(target, set()) for attr in attrs}
+        for target, attrs in all_items.items()
+    }
+    # Normalize the order for convenience
+    return {
+        target: dict(sorted(attrs.items()))
+        for target, attrs in sorted(result.items())
+    }
+
+
+def _filter_patches(summary: _PatchSummary) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for target, attrs in summary.items():
         try:
             obj = _import_target(target)
         except ImportError:
             continue
-        present_attrs = frozenset(a for a in attrs if hasattr(obj, a))
+        present_attrs = {a for a in attrs if hasattr(obj, a)}
         # Drop if none of the attributes is present
         if present_attrs:
             result[target] = present_attrs
-    return MappingProxyType(result)
+    return result
+
+
+# This is only patched if we called
+# `_line_profiler_hooks.load_pth_hook()`
+_HOOK_PATCHES = {
+    f'{load_pth_hook.__module__}.{load_pth_hook.__qualname__}':
+        frozenset({'called'}),
+}
+# Upper limit of what we could've patched
+_GLOBAL_PATCHES = {
+    **_GLOBAL_MINIMAL_PATCHES,
+    **_HOOK_PATCHES,
+    **get_patched_attributes(MP_PATCHES),
+}
+# Actual patches using the default config
+DEFAULT_GLOBAL_PATCHES = {
+    **_GLOBAL_MINIMAL_PATCHES, **get_patched_attributes(),
+}
 
 
 @pytest.mark.parametrize(('run_profiled_code', 'label1'),
@@ -1913,33 +2054,59 @@ def test_cache_dump_load(
         assert set(os.environ) == envvars
 
 
-@pytest.mark.parametrize(('wrap_os_fork', 'label1'),
-                         [(True, 'with-wrap-fork'), (False, 'no-wrap-fork')])
-@pytest.mark.parametrize(('debug', 'label2'),
-                         [(True, 'with-debug'), (False, 'no-debug')])
+@(_Params.new(('wrap_os_fork', 'label1'),
+              [(True, 'with-wrap-fork'), (False, 'no-wrap-fork')])
+  + _Params.new(('debug', 'label2'),
+                [(True, 'with-debug'), (False, 'no-debug')])
+  + _Params.new(('patch_pool', 'patch_process', 'intercept_logs', 'label3'),
+                [(True, True, True, 'all-patches'),
+                 (True, True, False, 'pool-and-process'),
+                 (True, False, True, 'pool-and-logging'),
+                 (True, False, False, 'pool-only'),
+                 (False, True, True, 'process-and-logging'),
+                 (False, True, False, 'process-only'),
+                 (False, False, True, 'logging-only'),
+                 (False, False, False, 'no-patches')])).sorted()
 def test_cache_setup_main_process(
+    tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
-    patched_attributes: MappingProxyType[str, frozenset[str]],
     wrap_os_fork: bool,
     debug: bool,
-    label1: str, label2: str,
+    patch_pool: bool,
+    patch_process: bool,
+    intercept_logs: bool,
+    label1: str, label2: str, label3: str,
 ) -> None:
     """
     Test that :py:meth:`LineProfilingCache._setup_in_main_process` works
     as expected.
     """
-    cache = create_cache(debug=debug)
-    # By default, we don't patch the `multiprocessing.util` logging
-    # facilities
-    patches: dict[str, dict[str, bool]] = {
-        target: dict.fromkeys(attrs, target != 'multiprocessing.util')
-        for target, attrs in patched_attributes.items()
-    }
+    mp_patches: set[str] = set()
+    if patch_pool:
+        mp_patches.add('pool')
+    if patch_process:
+        mp_patches.add('process')
+    if intercept_logs:
+        mp_patches.add('logging')
+
+    config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
+    config.write_text(_get_toml_patches_section(mp_patches))
+    cache = create_cache(debug=debug, config=config)
+
+    # Check that only the requested patches are applied
+    patches = _summarize_patches([
+        (True, _GLOBAL_MINIMAL_PATCHES),
+        *(
+            (name in mp_patches, _filter_patches(patch.summary))
+            for name, patch in MP_PATCHES.items()
+        ),
+    ])
     try:
         patches['os']['fork'] = wrap_os_fork
     except KeyError:
         # `os.fork()` pruned because it doesn't exist on e.g. Windows
         assert not hasattr(os, 'fork')
+
     with ExitStack() as stack:
         patched = stack.enter_context(_preserve_attributes(patches))
         compare_patched = partial(
@@ -2083,7 +2250,6 @@ def test_cache_setup_child(
 @_preserve_attributes(_GLOBAL_PATCHES)
 def test_load_pth_hook(
     create_cache: Callable[..., LineProfilingCache],
-    patched_attributes: MappingProxyType[str, frozenset[str]],
     another_pid: int,
     ppid_should_match: bool | None,
 ) -> None:
@@ -2122,8 +2288,7 @@ def test_load_pth_hook(
     cache.dump()
 
     compare = _preserve_attributes.compare_with_current_values
-    patches = patched_attributes.copy()
-    del patches['multiprocessing.util']  # Not patched by default
+    patches = {**DEFAULT_GLOBAL_PATCHES, **_HOOK_PATCHES}
     with _preserve_attributes(patches) as patched:
         try:
             # NOTE: this creates a cache instance that isn't
@@ -2163,7 +2328,7 @@ def _test_apply_mp_patches(
     ext_module_object: ModuleType,
     test_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
-    intercept_logs: bool,
+    mp_patches: Collection[str],
     fail: bool,
     n: int,
     nprocs: int,
@@ -2185,17 +2350,14 @@ def _test_apply_mp_patches(
         )
 
     config = tmp_path_factory.mktemp('myconfig') / 'mytoml.toml'
-    cfg_chunks: list[str] = []
-    if intercept_logs:
-        cfg_chunks.append(
-            '[tool.line_profiler.child_processes.multiprocessing]\n'
-            'intercept_logs = true'
-        )
-    # This is easier to debug than `ResultMismatch`
-    cfg_chunks.append(
+    intercept_logs = 'logging' in mp_patches
+    patch_process = 'process' in mp_patches
+    cfg_chunks: list[str] = [
+        _get_toml_patches_section(mp_patches),
+        # This is easier to debug than `ResultMismatch`
         '[tool.line_profiler.child_processes.multiprocessing.polling]\n'
-        'on_timeout = "error"'
-    )
+        'on_timeout = "error"',
+    ]
     config.write_text('\n\n'.join(cfg_chunks))
 
     # Note: no need to test the case for `my_local_sum()` separately,
@@ -2266,11 +2428,16 @@ def _test_apply_mp_patches(
 
     # Check the debug logs to see if we have done everything right, esp.
     # the logging interception part not covered by other tests
-    patterns: dict[str, bool] = {
-        'Cleanup succeeded.*: .*dump_stats.*' + re.escape(path.name): True
-        for path in Path(cache.cache_dir).glob('*.lprof')
-        if is_valid_stats_file(path)
-    }
+    patterns: dict[str, bool] = {}
+    if patch_process:
+        # Note: if we're not using `Process`-based patch, there is no
+        # guaratee that the profiling result is written via cleanup
+        iter_stats: Iterable[Path] = Path(cache.cache_dir).glob('*.lprof')
+        iter_stats = filter(is_valid_stats_file, iter_stats)
+        pat = 'Cleanup succeeded.*: .*dump_stats.*{}'
+        patterns.update({
+            pat.format(re.escape(path.name)): True for path in iter_stats
+        })
     patterns[re.escape('`multiprocessing` logging (debug)')] = intercept_logs
     _search_cache_logs(cache, True, patterns)
 
@@ -2280,9 +2447,13 @@ def _test_apply_mp_patches(
               defaults='dummy')
   # We only need to check if `intercept_logs` work, the other
   # parametrizations don't matter
-  + _Params.new(('intercept_logs', 'label'),
+  + _Params.new(('intercept_logs', 'label1'),
                 [(True, 'with-intercept-logs'), (False, 'no-intercept-logs')],
                 defaults=(False, 'no-intercept-logs'))).sorted()
+@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label2'),
+                         [(True, True, 'pool-and-process'),
+                          (True, False, 'pool-only'),
+                          (False, True, 'process-only')])
 @pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
 def test_apply_mp_patches_success(
     tmp_path_factory: pytest.TempPathFactory,
@@ -2290,10 +2461,13 @@ def test_apply_mp_patches_success(
     ext_module_object: ModuleType,
     test_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
+    patch_pool: bool,
+    patch_process: bool,
     intercept_logs: bool,
     n: int,
     nprocs: int,
-    label: str,
+    label1: str,
+    label2: str,
 ) -> None:
     """
     Test that :py:func:`line_profiler._child_process_profiling\
@@ -2303,6 +2477,13 @@ def test_apply_mp_patches_success(
     See also:
         :py:func:`test_apply_mp_patches_failure`
     """
+    mp_patches: list[str] = []
+    if patch_pool:
+        mp_patches.append('pool')
+    if patch_process:
+        mp_patches.append('process')
+    if intercept_logs:
+        mp_patches.append('logging')
     with _check_warnings() as cw:
         cw.forbid_warnings(category=UserWarning, module='line_profiler')
         cw.forbid_warnings(module='multiprocessing')
@@ -2312,16 +2493,27 @@ def test_apply_mp_patches_success(
             ext_module_object=ext_module_object,
             test_module_object=test_module_object,
             start_method=start_method,
-            intercept_logs=intercept_logs,
+            mp_patches=mp_patches,
             fail=False,
             n=n,
             nprocs=nprocs,
         )
 
 
-@pytest.mark.retry(_NUM_RETRIES, exceptions=(ResultMismatch, _Poller.Timeout))
+@pytest.mark.retry(
+    _NUM_RETRIES,
+    exceptions=(ResultMismatch, _Poller.Timeout),
+    # Patching `Pool` should be foolproof no matter the platform
+    # (as long as we use `Pool` for our parallelism);
+    # `Process` though...
+    condition='not patch_pool',
+)
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
+@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label'),
+                         [(True, True, 'pool-and-process'),
+                          (True, False, 'pool-only'),
+                          (False, True, 'process-only')])
 @pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
 def test_apply_mp_patches_failure(
     tmp_path_factory: pytest.TempPathFactory,
@@ -2329,8 +2521,11 @@ def test_apply_mp_patches_failure(
     ext_module_object: ModuleType,
     test_module_object: ModuleType,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
+    patch_pool: bool,
+    patch_process: bool,
     n: int,
     nprocs: int,
+    label: str,
 ) -> None:
     """
     Test that :py:func:`line_profiler._child_process_profiling\
@@ -2340,6 +2535,11 @@ def test_apply_mp_patches_failure(
     See also:
         :py:func:`test_apply_mp_patches_success`
     """
+    mp_patches: list[str] = []
+    if patch_pool:
+        mp_patches.append('pool')
+    if patch_process:
+        mp_patches.append('process')
     with _check_warnings() as cw:
         cw.forbid_warnings(category=UserWarning, module='line_profiler')
         cw.forbid_warnings(module='multiprocessing')
@@ -2349,7 +2549,7 @@ def test_apply_mp_patches_failure(
             ext_module_object=ext_module_object,
             test_module_object=test_module_object,
             start_method=start_method,
-            intercept_logs=False,
+            mp_patches=mp_patches,
             fail=True,
             n=n,
             nprocs=nprocs,
@@ -2629,8 +2829,6 @@ def test_profiling_multiproc_script_success(
     )
 
 
-@pytest.mark.retry(_NUM_RETRIES,
-                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
 @(_fuzz_prof_mp_markers[True])
 @pytest.mark.parametrize(('nnums', 'nprocs'), [(2000, 3)])
 def test_profiling_multiproc_script_failure(
@@ -2787,8 +2985,6 @@ def test_profiling_bare_python_success(
     )
 
 
-@pytest.mark.retry(_NUM_RETRIES,
-                   exceptions=(ResultMismatch, subprocess.TimeoutExpired))
 @_fuzz_bare
 def test_profiling_bare_python_failure(
     tmp_path_factory: pytest.TempPathFactory,
