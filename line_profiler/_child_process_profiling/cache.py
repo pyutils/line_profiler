@@ -19,7 +19,6 @@ from collections.abc import (
 )
 from functools import partial, cached_property, wraps
 from importlib import import_module
-from operator import attrgetter
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
@@ -55,18 +54,9 @@ _DEBUG_LOG_FILENAME_PATTERN = 'debug_log_{main_pid}_{current_pid}.log'
 _PROFILING_OUTPUT_PREFIX_PATTERN = (
     'child-prof-output-{main_pid}-{current_pid}-{prof}-'
 )
-_DEFAULT_GATHER_STATS_EXCLUDES: set[tuple[str, str]] = {
-    # Note: the `ResourceTracker` server process is spawned when the
-    # first `multiprocessing` child process is created via the `spawn`
-    # or `forkserver` start method. While this server process does not
-    # meaningfully contribute to the profiling result either way, since
-    # it can be created with profiling set up, its longevity means that
-    # `LineProfilingCache.gather_stats()` often catches an empty .lprof
-    # file which it has occupied but not written to. To reduce noise
-    # while keeping the warning for other zero-length files, just
-    # explictly exclude said process
-    ('multiprocessing.resource_tracker', '_resource_tracker._pid'),
-}
+_POSSIBLE_EMPTY_STATS_PREFIX_PATTERN = (
+    'ignore-empty-stats-file-{main_pid}-{current_pid}-'
+)
 
 
 def _import_sibling(submodule: str) -> ModuleType:
@@ -103,6 +93,10 @@ class LineProfilingCache(Cleanup):
     )
     _rlock: RLock = _private_field(default_factory=RLock)
     _dump_stats: Callable[..., None] | None = _private_field(default=None)
+    # These are unstructured fields; other components can decide on what
+    # to put in them. They are also pickled by `.dump()`, and are thus
+    # retrievable in `.load()`-ed instances.
+    _additional_data: dict[str, Any] = _private_field(default_factory=dict)
 
     _loaded_instance: ClassVar[LineProfilingCache | None] = None
 
@@ -163,7 +157,10 @@ class LineProfilingCache(Cleanup):
         Note:
             Cleanup callbacks are not serialized.
         """
-        content = self._get_init_args()
+        content = {
+            'init_args': self._get_init_args(),
+            'additional_data': self._additional_data,
+        }
         msg = f'Dumping instance data to {self.filename}: {content!r}'
         self._debug_output(msg)
         with open(self.filename, mode='wb') as fobj:
@@ -234,23 +231,11 @@ class LineProfilingCache(Cleanup):
 
         filter_excludes: Callable[[Iterable[Path]], Iterable[Path]]
         if exclude_pids is None:
-            exclude_pids = set()
-            for import_target, attr in _DEFAULT_GATHER_STATS_EXCLUDES:
-                try:
-                    module = import_module(import_target)
-                except ImportError:
-                    continue
-                try:
-                    maybe_pid = attrgetter(attr)(module)
-                except AttributeError:
-                    maybe_pid = None
-                if maybe_pid is None:
-                    continue
-                exclude_pids.add(cast(int, maybe_pid))
             # NOTE: there is no guarantee that the PID hasn't previously
             # been used for another child process that we DID properly
             # profile and SHOULD include, so we only filter out empty
             # files
+            exclude_pids = self._get_pids_possibly_lacking_stats()
             filter_excludes = partial(filter, is_empty)
         else:  # User-provided values, who are we to object?
             filter_excludes = iter
@@ -314,11 +299,13 @@ class LineProfilingCache(Cleanup):
             for entry in CacheLoggingEntry.from_file(log)
         )
 
+    def _glob(self, *args, **kwargs) -> Iterable[Path]:
+        return Path(self.cache_dir).glob(*args, **kwargs)
+
     def _get_debug_logfiles(self) -> Iterable[Path]:
-        pattern = _DEBUG_LOG_FILENAME_PATTERN.format(
+        return self._glob(_DEBUG_LOG_FILENAME_PATTERN.format(
             main_pid=self.main_pid, current_pid='?*',
-        )
-        return Path(self.cache_dir).glob(pattern)
+        ))
 
     def _get_profiling_outfiles(self, pid: Any = '?*') -> Iterable[Path]:
         prefix = _PROFILING_OUTPUT_PREFIX_PATTERN.format(
@@ -328,7 +315,7 @@ class LineProfilingCache(Cleanup):
             # `._setup_in_child_process()`
             prof='0x?*',
         )
-        return Path(self.cache_dir).glob(prefix + '?*.lprof')
+        return self._glob(prefix + '?*.lprof')
 
     def inject_env_vars(
         self, env: MutableMapping[str, str] | None = None,
@@ -652,6 +639,46 @@ coverage/control.py
 
         self.patch(os, 'fork', wrapper, name='os')
 
+    def _warn_possible_lack_of_stats(
+        self, pids: int | Collection[int],
+    ) -> None:
+        """
+        Register PID(s) which may have created a profiling stats file
+        without writing to it; when calling :py:meth:`.gather_stats`,
+        empty stats files associated with those PIDs are ignored instead
+        of warned against or treated as an error.
+        """
+        if not isinstance(pids, Collection):
+            pids = pids,
+        with self._empty_stats_pid_registry.open(mode='a') as fobj:
+            print(*pids, sep='\n', file=fobj)
+
+    def _get_pids_possibly_lacking_stats(self) -> set[int]:
+        """
+        See also
+            :py:meth:`._warn_possible_lack_of_stats`
+        """
+        prefix = _POSSIBLE_EMPTY_STATS_PREFIX_PATTERN.format(
+            main_pid=self.main_pid,
+            current_pid='?*',  # Gather from all child processes
+        )
+        result: set[int] = set()
+        for registry in self._glob(prefix + '?*.dat'):
+            from_reg: set[int] = set()
+            with registry.open() as fobj:
+                for line in fobj:
+                    try:
+                        from_reg.add(int(line))
+                    except ValueError:
+                        pass
+            if from_reg:
+                self._debug_output(
+                    f'Loaded {len(from_reg)} PID(s) possibly lacking '
+                    f'profiling output from {registry.name!r}: {from_reg!r}'
+                )
+                result.update(from_reg)
+        return result
+
     def make_tempfile(self, **kwargs) -> Path:
         """
         Create a fresh tempfile under :py:attr:`~.cache_dir`. The other
@@ -677,7 +704,10 @@ coverage/control.py
     @classmethod
     def _from_path(cls, fname: os.PathLike[str] | str) -> Self:
         with open(fname, mode='rb') as fobj:
-            return cls(**pickle.load(fobj))
+            content = pickle.load(fobj)
+        instance = cls(**content['init_args'])
+        instance._additional_data.update(content.get('additional_data', {}))
+        return instance
 
     def _get_init_args(self) -> dict[str, Any]:
         init_fields = [
@@ -844,3 +874,11 @@ coverage/control.py
         else:
             config = str(self.config)
         return ConfigSource.from_config(config)
+
+    @cached_property
+    def _empty_stats_pid_registry(self) -> Path:
+        prefix = _POSSIBLE_EMPTY_STATS_PREFIX_PATTERN.format(
+            main_pid=self.main_pid,
+            current_pid=os.getpid(),
+        )
+        return self.make_tempfile(prefix=prefix, suffix='.dat', delete=False)

@@ -16,20 +16,22 @@ from __future__ import annotations
 
 import dataclasses
 import multiprocessing
+import sys
 import warnings
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from functools import partial
 from importlib import import_module
 from inspect import getattr_static, signature
+from multiprocessing.context import BaseContext
 from multiprocessing.process import BaseProcess
 from multiprocessing.pool import Pool
 from operator import attrgetter
 from time import sleep, monotonic
-from types import MappingProxyType, ModuleType
+from types import MappingProxyType as mappingproxy, MethodType, ModuleType
 from typing import (
     TYPE_CHECKING,
     Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
-    cast, final,
+    cast, final, overload,
 )
 
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -48,6 +50,12 @@ else:
     _CAN_USE_FORKSERVER = (
         'forkserver' in multiprocessing.get_all_start_methods()
     )
+try:
+    from multiprocessing import resource_tracker
+except ImportError:
+    _CAN_USE_RESOURCE_TRACKER = False
+else:
+    _CAN_USE_RESOURCE_TRACKER = True
 
 from .. import _diagnostics as diagnostics
 from ..toml_config import ConfigSource
@@ -61,14 +69,18 @@ __all__ = ('apply',)
 T = TypeVar('T')
 T1 = TypeVar('T1')
 T2 = TypeVar('T2')
+P = TypeVar('P', bound=BaseProcess)
+Pt = TypeVar('Pt', bound='_Patch')
 PS = ParamSpec('PS')
 PS1 = ParamSpec('PS1')
 PS2 = ParamSpec('PS2')
 _OnTimeout = Literal['ignore', 'warn', 'error']
-_PatchName = Literal['pool', 'process', 'logging']
+PublicPatch = Literal['pool', 'process', 'logging']
 
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
 _LOGGERS = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
+_PATCHES: dict[str, '_Patch'] = {}
+
 
 # ------------------------------ Helpers -------------------------------
 
@@ -264,30 +276,94 @@ class _PollerArgs(NamedTuple):
     on_timeout: str | None
 
     @classmethod
-    def from_config(cls, config: ConfigSource) -> Self:
-        values = _get_config(config)['polling']
+    def new(cls, cooldown: Any, timeout: Any, on_timeout: Any) -> Self:
         try:
-            cooldown = max(float(values['cooldown']), 0)
+            cd = max(float(cooldown), 0)
         except (TypeError, ValueError):
-            cooldown = 0
+            cd = 0
         try:
-            timeout = max(float(values['timeout']), 0)
+            to = max(float(timeout), 0)
         except (TypeError, ValueError):
-            timeout = 0
+            to = 0
         try:
-            on_timeout: str | None = values['on_timeout'].lower()
+            ot: str | None = on_timeout.lower()
         except Exception:  # Fallback (use `_Poller`'s default)
-            on_timeout = None
-        return cls(cooldown, timeout, on_timeout)
+            ot = None
+        return cls(cd, to, ot)
+
+
+@final
+@dataclasses.dataclass
+class MPConfig:
+    """
+    Consolidate the config options into a structured object.
+    """
+    catch_sigterm: bool
+    patches: dict[PublicPatch, bool]
+    polling: _PollerArgs
+
+    def _get_terminate_poller(
+        self, cache: LineProfilingCache, process: BaseProcess,
+    ) -> _Poller:
+        cd, timeout, on_timeout = self.polling
+        if on_timeout not in ('ignore', 'warn', 'error'):
+            on_timeout = self.get_defaults().polling.on_timeout
+        # `_process_has_returned()` takes a `timeout` which it passes to
+        # `popen.wait()`; said timeout is essentially a limit as to how
+        # often the function is called, hence our cooldown
+        poller = _Poller.poll_until(
+            self._process_has_returned, process, cache, cd,
+        )
+        return poller.with_timeout(timeout, cast(_OnTimeout, on_timeout))
+
+    @classmethod
+    def from_config(cls, config: ConfigSource) -> Self:
+        loaded = (
+            config
+            .get_subconfig('child_processes', 'multiprocessing')
+            .conf_dict
+        )
+        polling = _PollerArgs.new(**loaded['polling'])
+        return cls(
+            catch_sigterm=loaded['catch_sigterm'],
+            patches=dict(loaded['patches']),
+            polling=polling,
+        )
+
+    @classmethod
+    def from_cache(cls, cache: LineProfilingCache) -> Self:
+        key = 'mp_config'
+        try:
+            return cache._additional_data[key]
+        except KeyError:
+            config = cls.from_config(cache._config_source)
+            return cache._additional_data.setdefault(key, config)
 
     @classmethod
     def get_defaults(cls) -> Self:
         namespace = globals()
+        name = '_DEFAULT_CONFIG'
         try:
-            return namespace['_DEFAULT_POLLER_ARGS']
+            return namespace[name]
         except KeyError:
             defaults = cls.from_config(ConfigSource.from_default(copy=False))
-            return namespace.setdefault('_DEFAULT_POLLER_ARGS', defaults)
+            return namespace.setdefault(name, defaults)
+
+    @staticmethod
+    def _process_has_returned(
+        proc: BaseProcess, cache: LineProfilingCache, timeout: float,
+    ) -> bool:
+        popen = getattr(proc, '_popen', None)
+        if popen is None:
+            msg, result = 'No associated process', True
+        else:
+            result = popen.wait(timeout) is not None
+            if result:
+                msg = f'Process {popen.pid} has returned'
+            else:
+                msg = f'Waiting for process {popen.pid} to return...'
+        cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
+        return result
 
 
 class TaskWrapper(Generic[PS, T]):
@@ -310,6 +386,47 @@ class TaskWrapper(Generic[PS, T]):
         finally:
             if dump_stats is not None:
                 dump_stats()
+
+
+def _no_op(*_, **__) -> None:
+    pass
+
+
+# ---------------------- Patching infrastructure -----------------------
+
+
+class _Patch(Protocol):
+    """
+    Interface for patches.
+    """
+    def apply(
+        self,
+        cache: LineProfilingCache,
+        *,
+        cleanup: bool = True,
+        **kwargs
+    ) -> Any:
+        """
+        Apply the patch.
+
+        Args:
+            cache (LineProfilingCache):
+                Session cache
+            cleanup (bool):
+                Whether ``cache.cleanup()`` should reverse the patch
+            **kwargs
+                Individual implementations should pick the ones they
+                need and ignore the rest.
+        """
+        ...
+
+    @property
+    def summary(self) -> Mapping[str, Set[str]]:
+        """
+        A mapping from dotted-path names of objects to the set of
+        attributes patched thereon.
+        """
+        ...
 
 
 @dataclasses.dataclass
@@ -360,11 +477,63 @@ dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
         Convenience method for gradually constructing the patch with a
         fluent interface.
 
+        Args:
+            target (str):
+                Dotted path to the object in :py:attr:`.submodule`
+            patches (Mapping[str, Callable[[Any], Any] \
+| Sequence[Callable[[Any], Any]]]):
+                Mapping from patched attrbute names to the wrappers to
+                apply thereto; sequences of wrappers are applied in
+                order
+
         Returns:
             This instance
         """
         self.targets.setdefault(target, {}).update(patches)
         return self
+
+    def add_method(
+        self,
+        target: str,
+        method: str,
+        wrapper: Callable[[Any], Any],
+        methodtype: (
+            type[classmethod] | type[staticmethod]
+            | Literal['class', 'static'] | None
+        ) = None,
+    ) -> Self:
+        """
+        Convenience method for gradually constructing the patch with a
+        fluent interface.
+
+        Args:
+            target (str):
+                Dotted path to the object in :py:attr:`.submodule`
+            method (str):
+                Name of the (class, static, or instance) method to patch
+            wrapper (Callable[[Any], Any]):
+                Wrapping callable which takes the method-implementaion
+                callable and returns a wrapper thereof
+            methodtype (type[classmethod] | type[staticmethod] | \
+Literal['class', 'static'] | None):
+                Optional type of the method if not an instance method;
+                the strings ``'class'`` and ``'static'`` are respective
+                shorthands for :py:class:`classmethod` and
+                :py:class:`staticmethod`
+
+        Returns:
+            This instance
+        """
+        wrappers: Callable[[Any], Any] | list[Callable[[Any], Any]]
+        if methodtype is None:
+            wrappers = wrapper
+        else:
+            if methodtype == 'class':
+                methodtype = classmethod
+            elif methodtype == 'static':
+                methodtype = staticmethod
+            wrappers = [attrgetter('__func__'), wrapper, methodtype]
+        return self.add_target(target, {method: wrappers})
 
     def apply(
         self,
@@ -372,6 +541,7 @@ dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
         *,
         cleanup: bool = True,
         static: bool = True,
+        **_
     ) -> list[str]:
         """
         Apply the patch.
@@ -380,7 +550,7 @@ dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
             cache (LineProfilingCache):
                 Session cache
             cleanup (bool):
-                Whether ``cache.cleanup()`` should reverse the patches
+                Whether ``cache.cleanup()`` should reverse the patch
             static (bool):
                 Whether to use :py:func:`inspect.getattr_static` to
                 retrieve to the attributes to be patched on the patch
@@ -445,50 +615,46 @@ dict[str, Callable[[Any], Any] | Sequence[Callable[[Any], Any]]]]):
         return self._join(self.package, self.submodule)
 
     @property
-    def summary(self) -> MappingProxyType[str, frozenset[str]]:
+    def summary(self) -> mappingproxy[str, frozenset[str]]:
         """
         Summary of the dotted paths to the patched objects and their
         patched attributes
         """
         add_prefix = partial(self._join, self.module)
-        return MappingProxyType({
+        return mappingproxy({
             add_prefix(target): frozenset(patches)
             for target, patches in self.targets.items()
         })
 
 
-def _get_config(config: ConfigSource) -> Mapping[str, Any]:
-    cd = dict(
-        config.get_subconfig('child_processes', 'multiprocessing', copy=True)
-        .conf_dict
-    )
-    assert isinstance(cd.get('patches'), Mapping)
-    assert isinstance(cd.get('polling'), Mapping)
-    return MappingProxyType({
-        **cd,
-        'patches': MappingProxyType(cd['patches']),
-        'polling': MappingProxyType(cd['polling']),
-    })
+@overload
+def _register_patch(name: str, patch: Pt) -> Pt:
+    ...
 
 
-def _process_has_returned(
-    proc: BaseProcess, cache: LineProfilingCache, timeout: float,
-) -> bool:
-    popen = getattr(proc, '_popen', None)
-    if popen is None:
-        msg, result = 'No associated process', True
-    else:
-        result = popen.wait(timeout) is not None
-        if result:
-            msg = f'Process {popen.pid} has returned'
-        else:
-            msg = f'Waiting for process {popen.pid} to return...'
-    cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
-    return result
+@overload
+def _register_patch(name: str, patch: None = None) -> _Patch:
+    ...
 
 
-def _no_op(*_, **__) -> None:
-    pass
+def _register_patch(name: str, patch: _Patch | None = None) -> _Patch:
+    """
+    Register the ``patch`` under ``name`` and return it as-is. If
+    ``patch`` isn't provided, look for the existing patch registered
+    under the name.
+
+    Note:
+        Patches named with leading double underscores are applied no
+        matter the user input (e.g. via ``apply(..., patches=...)`` or
+        the config file).
+    """
+    if patch is not None:
+        if _PATCHES.setdefault(name, patch) is not patch:
+            raise ValueError(
+                f'name = {name!r}, patch = {patch!r}: '
+                'name already in use by {_PATCHES[name]}'
+            )
+    return _PATCHES[name]
 
 
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
@@ -508,7 +674,7 @@ def wrap_get_tasks(
     processes before the parent process assumes control.
 
     Note:
-        :py:meth:`Pool._get_tasks` is a static method.
+        :py:meth:`.Pool._get_tasks` is a static method.
     """
     return vanilla_impl(TaskWrapper(func), *args, **kwargs)
 
@@ -531,6 +697,58 @@ def wrap_guarded_task_generation(
     return vanilla_impl(self, result_job, TaskWrapper(func), *args, **kwargs)
 
 
+@LineProfilingCache._method_wrapper
+def wrap_repopulate_pool_static(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[
+        Concatenate[BaseContext, type[P], int, list[P], PS], None
+    ],
+    ctx: BaseContext,
+    Process: type[P],
+    processes: int,
+    pool: list[P],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> None:
+    """
+    Wrap around :py:meth:`.Pool._repopulate_pool_static` so that we can
+    keep track of the PIDs of the created child processes.
+
+    Note:
+        :py:meth:`.Pool._repopulate_pool_static` is a static method.
+    """
+    try:
+        vanilla_impl(ctx, Process, processes, pool, *args, **kwargs)
+    finally:
+        patches = MPConfig.from_cache(cache).patches
+        if not patches.get('process', False):
+            # Notes:
+            # - if the `process` patch is active, child processes should
+            #   always have called `.cache.profiler.dump_stats()` at
+            #   least once before exiting, so there's no need to warn
+            #   the cache against children possibly not having written
+            #   profiling data.
+            # - Since the vanilla implementation calls `Process.start()`
+            #   on each child, they should all have valid PIDs. However:
+            #   - The process might have terminated for whatever reason.
+            #     and
+            #   - `multiprocessing.dummy.DummyProcess` doesn't have
+            #     `.pid`.
+            #   So we add a fallback to `None` just in case.
+            pids = cast(
+                set[int],
+                {getattr(process, 'pid', None) for process in pool} - {None},
+            )
+            cache._warn_possible_lack_of_stats(pids)
+
+
+_patch_pool = partial(
+    _register_patch('pool', Patch('pool')).add_method, 'Pool',
+)
+_patch_pool('_get_tasks', wrap_get_tasks, 'static')
+_patch_pool('_guarded_task_generation', wrap_guarded_task_generation)
+_patch_pool('_repopulate_pool_static', wrap_repopulate_pool_static, 'static')
+
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
 
 
@@ -541,7 +759,7 @@ def wrap_terminate(
     self: BaseProcess,
 ) -> None:
     """
-    Wrap around :py:meth:`BaseProcess.terminate` to make sure that we
+    Wrap around :py:meth:`.BaseProcess.terminate` to make sure that we
     don't actually kill the child (OS-level) process before it has the
     chance to properly clean up.
 
@@ -552,14 +770,8 @@ def wrap_terminate(
         after the performance-critical part of the code (said workload).
     """
     try:
-        cd, timeout, on_timeout = _PollerArgs.from_config(cache._config_source)
-        if on_timeout not in ('ignore', 'warn', 'error'):
-            on_timeout = _PollerArgs.get_defaults().on_timeout
-        # `_process_has_returned()` takes a `timeout` which it passes to
-        # `popen.wait()`; said timeout is essentially a limit as to how
-        # often the function is called, hence our cooldown
-        poller = _Poller.poll_until(_process_has_returned, self, cache, cd)
-        with poller.with_timeout(timeout, cast(_OnTimeout, on_timeout)):
+        config = MPConfig.from_cache(cache)
+        with config._get_terminate_poller(cache, self):
             pass
     except _Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
         cache._debug_output(f'{type(e).__qualname__}: {e}')
@@ -577,7 +789,7 @@ def wrap_bootstrap(
     *args: PS.args, **kwargs: PS.kwargs
 ) -> T:
     """
-    Wrap around :py:meth:`BaseProcess._bootstrap` to run
+    Wrap around :py:meth:`.BaseProcess._bootstrap` to run
     ``LineProfilingCache.load().cleanup()`` so that profiling results
     can be gathered.
 
@@ -590,13 +802,13 @@ def wrap_bootstrap(
           before it. Hence the ``# nocover``.
 
         - ``SIGTERM`` handling is not consistent on Windows, so we made
-          :py:meth:`LineProfilingCache._add_signal_handler` a no-op
+          :py:meth:`.LineProfilingCache._add_signal_handler` a no-op
           there. Hence :py:func:`wrap_terminate` remains necessary in
           mitigating unclean exits.
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
-    if _get_config(cache._config_source)['catch_sigterm']:
+    if MPConfig.from_cache(cache).catch_sigterm:
         cache._add_signal_handler()
     try:
         return vanilla_impl(self, *args, **kwargs)
@@ -609,6 +821,15 @@ def wrap_bootstrap(
         # `.cleanup()` call
         cache.cleanup(new_thread=True)
 
+
+_patch_process = partial(
+    _register_patch('process', Patch('process')).add_method, 'BaseProcess',
+)
+_patch_process('_bootstrap', wrap_bootstrap)
+# We only need to patch `Process.terminate()` if we can't do SIGTERM
+# handling, i.e. on Windows
+if sys.platform == 'win32':
+    _patch_process('terminate', wrap_terminate)
 
 # --------------- `multiprocessing.util` logging patches ---------------
 
@@ -634,7 +855,7 @@ def tee_log(
     **kwargs: PS.kwargs
 ) -> None:
     """
-    Wrap around logging functions like
+Wrap around logging functions like
     :py:func:`multiprocessing.util.debug` so that we can tee log
     messages from the package to our own logs.
     """
@@ -647,56 +868,165 @@ def tee_log(
     )
 
 
+_register_patch('logging', Patch('util')).add_target(
+    # The logging functions exists directly in the module namespace so
+    # no further attribute access is needed
+    '', {func: partial(partial, tee_log, func) for func in _LOGGERS},
+)
+
+# --------------------------- Misc. patches ----------------------------
+
+
+class RebootForkserverPatch:
+    """
+    Reboot the process backing the global
+    :py:class:`multiprocessing.forkserver.ForkServer` instance:
+
+    - When the patch is applied, so as to ensure that child processes
+      forked therefrom actually receives the active patches; and
+
+    - When the session cache is cleaned up, so that child processes
+      forked therefrom is no longer polluted by the patches.
+
+    Note:
+        This uses
+        :py:method:`multiprocessing.forkserver.ForkServer._stop()` which
+        is private API, but it's the same hack used in Python's own test
+        suite -- see the comment to said method.
+    """
+    summary: ClassVar[mappingproxy[str, frozenset[str]]] = mappingproxy({})
+
+    @classmethod
+    def apply(cls, cache: LineProfilingCache, **_) -> None:
+        if not _CAN_USE_FORKSERVER:
+            return
+        cls.reboot()
+        cache.add_cleanup(cls.reboot)
+
+    @staticmethod
+    def reboot() -> None:
+        # Appease the type-checker since `._stop()` is not public API
+        stop = getattr(forkserver._forkserver, '_stop', None)
+        assert callable(stop)
+        stop()
+
+
+class ResourceTrackerPatch:
+    """
+    Patch :py:mod:`multiprocessing.resource_tracker` so that
+    :py:func:`multiprocessing.resource_tracker.ensure_running` and the
+    eponymous method of
+    :py:class:`multiprocessing.resource_tracker.ResourceTracker` report
+    the resource-tracker server PIDs to the session cache.
+
+    Note:
+        The ``ResourceTracker`` server process is spawned when the first
+        :py:mod:`multiprocessing` child process is created via the
+        ``spawn`` or ``forkserver`` start methods. While this server
+        process does not meaningfully contribute to the profiling result
+        either way, since it can be created with profiling set up, its
+        longevity means that :py:meth:`.LineProfilingCache.gather_stats`
+        often catches empty .lprof files which it has occupied but not
+        written to.
+
+        To reduce noise while keeping the empty-file warning for other
+        output files, we report the PIDs used by the server to the
+        session cache so that they can be ignored if necessary.
+    """
+    if _CAN_USE_RESOURCE_TRACKER:
+        summary: ClassVar[mappingproxy[str, frozenset[str]]] = mappingproxy({
+            'multiprocessing.resource_tracker':
+            frozenset({'ensure_running'}),
+            'multiprocessing.resource_tracker.ResourceTracker':
+            frozenset({'ensure_running'}),
+        })
+    else:
+        summary = mappingproxy({})
+
+    @staticmethod
+    @LineProfilingCache._method_wrapper
+    def wrap_ensure_running(
+        cache: LineProfilingCache,
+        vanilla_impl: Callable[['resource_tracker.ResourceTracker'], None],
+        self: 'resource_tracker.ResourceTracker',
+    ) -> None:
+        """
+        Wrap around :py:meth:`multiprocessing.resource_tracker\
+.ResourceTracker.ensure_running`
+        so that the session cache can keep track of the PIDs used by the
+        resource-tracer server.
+        """
+        maybe_pids: set[int | None] = {getattr(self, '_pid', None)}
+        try:
+            vanilla_impl(self)
+        finally:
+            maybe_pids.add(getattr(self, '_pid', None))
+            pids = cast(set[int], maybe_pids - {None})
+            if pids:
+                cache._warn_possible_lack_of_stats(pids)
+
+    @classmethod
+    def apply(
+        cls, cache: LineProfilingCache, *, cleanup: bool = True, **_,
+    ) -> list[str]:
+        if _CAN_USE_RESOURCE_TRACKER:
+            patch = partial(cache.patch, cleanup=cleanup)
+            # Patch the method on the class
+            method = resource_tracker.ResourceTracker.ensure_running
+            method = cls.wrap_ensure_running(method)
+            patch(resource_tracker.ResourceTracker, 'ensure_running', method)
+            # Patch the preexisting bound method on the module
+            instance = resource_tracker._resource_tracker
+            bound_method = MethodType(method, instance)
+            patch(resource_tracker, 'ensure_running', bound_method)
+        return list(cls.summary)
+
+
+class RunpyPatch:
+    """
+    Patch the copy of :py:mod:`runpy` in the
+    :py:mod:`multiprocessing.spawn` namespace so that subprocesses can
+    perform rewrite-based profiling as with
+    :py:func:`line_profiler.autoprofile.autoprofile.run`.
+
+    See also:
+        :py:mod:`line_profiler._child_process_profiling.runpy_patches`
+    """
+    summary: ClassVar[mappingproxy[str, frozenset[str]]]
+    if _CAN_USE_SPAWN and hasattr(spawn, 'runpy'):
+        summary = mappingproxy({'multiprocessing.spawn': frozenset({'runpy'})})
+    else:
+        summary = mappingproxy({})
+
+    @classmethod
+    def apply(
+        cls, cache: LineProfilingCache, *, cleanup: bool = True, **_,
+    ) -> list[str]:
+        if cls.summary:
+            patch = partial(cache.patch, cleanup=cleanup)
+            patch(spawn, 'runpy', create_runpy_wrapper(cache))
+        return list(cls.summary)
+
+
+# See `ty` issue #3429 for why we need the casts
+_register_patch('__reboot_forkserver', cast(_Patch, RebootForkserverPatch))
+_register_patch('__resource_tracker', cast(_Patch, ResourceTrackerPatch))
+_register_patch('__spawn_runpy', cast(_Patch, RunpyPatch))
+
 # -------------------------- Applying patches --------------------------
 
 
-_PATCHES: dict[_PatchName, Patch] = {
-    'process': Patch('process').add_target(
-        'BaseProcess',
-        {'terminate': wrap_terminate, '_bootstrap': wrap_bootstrap},
-    ),
-    'pool': Patch('pool').add_target(
-        'Pool', {
-            # `._get_task()` is a static method, so the wrapper function
-            # needs additional wrapping
-            '_get_tasks': [
-                attrgetter('__func__'), wrap_get_tasks, staticmethod,
-            ],
-            '_guarded_task_generation': wrap_guarded_task_generation,
-        },
-    ),
-    'logging': Patch('util').add_target(
-        # The logging functions exists directly in the module namespace
-        # so no further attribute access is needed
-        '', {func: partial(partial, tee_log, func) for func in _LOGGERS},
-    ),
-}
-
-
-def _stop_forkserver() -> None:
-    """
-    Note:
-        This uses `ForkServer._stop()` which is private API, but it's
-        the same hack used in Python's own test suite -- see the comment
-        to said method
-    """
-    # Appease the type-checker since `._stop()` is not public API
-    stop = getattr(forkserver._forkserver, '_stop', None)
-    assert callable(stop)
-    stop()
-
-
 def apply(
-    lp_cache: LineProfilingCache,
+    cache: LineProfilingCache,
     reboot_forkserver: bool = True,
-    patches: Collection[_PatchName] | None = None,
+    patches: Collection[PublicPatch] | None = None,
 ) -> None:
     """
     Set up profiling in :py:mod:`multiprocessing` child processes by
     applying patches to the module.
 
     Args:
-        lp_cache (LineProfilingCache):
+        cache (LineProfilingCache):
             Cache instance governing the profiling run.
         reboot_forkserver (bool):
             Whether to reboot the global
@@ -716,9 +1046,9 @@ def apply(
             methods so that parallel tasks write profiling output.
         ``'process'``:
             Patch :py:class:`multiprocessing.process.BaseProcess`'s
-            ``.terminate()`` and ``._bootstrap()`` methods so that child
-            processes write profiling output on exit and are given
-            enough time for that.
+            ``._bootstrap()`` method (and ``.terminate()`` on Windows)
+            so that child processes write profiling output on exit and
+            are given enough time for that.
         ``'logging'``:
             Patch :py:mod:`multiprocessing.util`'s logging methods (e.g.
             ``debug()`` and ``info()``) so that their messages are teed
@@ -731,9 +1061,9 @@ def apply(
 
           - Immediately
 
-          - When ``lp_cache.cleanup()`` is run
+          - When ``cache.cleanup()`` is run
 
-        - Cleanup callbacks registered via ``lp_cache.add_cleanup()``
+        - Cleanup callbacks registered via ``cache.add_cleanup()``
 
     Note:
         Rebooting the fork server is necessary because its process
@@ -761,26 +1091,21 @@ def apply(
     if getattr(multiprocessing, _PATCHED_MARKER, False):
         return
     if patches is None:
-        config = _get_config(lp_cache._config_source)['patches']
-        patches_ = {patch for patch, applied in config.items() if applied}
+        patches_dict = MPConfig.from_cache(cache).patches
+        patches_: set[str] = {p for p, use in patches_dict.items() if use}
     else:
         patches_ = {p.lower() for p in patches}
-    # Patch `multiprocessing.spawn`
-    if _CAN_USE_SPAWN and hasattr(spawn, 'runpy'):
-        lp_cache.patch(spawn, 'runpy', create_runpy_wrapper(lp_cache))
-    # Patch methods/functions in these entities:
-    # - `multiprocessing.pool.Pool`
-    # - `multiprocessing.process.BaseProcess`
-    # - `multiprocessing.util`
     for name, patch in _PATCHES.items():
         if name in patches_:
-            patch.apply(lp_cache)
-    # Stop the current `ForkServer` server process:
-    # - Now, so that the (rebooted) fork-server process has profiling
-    #   set up; and
-    # - Also as a part of cache cleanup
-    if _CAN_USE_FORKSERVER and reboot_forkserver:
-        _stop_forkserver()
-        lp_cache.add_cleanup(_stop_forkserver)
+            should_apply = True
+        elif name.startswith('__'):
+            should_apply = (name != '__reboot_forkserver' or reboot_forkserver)
+        else:
+            should_apply = False
+        if should_apply:
+            msg = f'applying `multiprocessing` patch {name!r}'
+            cache._debug_output(msg.capitalize() + '...')
+            patch.apply(cache)
+            cache._debug_output('Done with ' + msg)
     # Mark `multiprocessing` as having been patched
-    lp_cache.patch(multiprocessing, _PATCHED_MARKER, True)
+    cache.patch(multiprocessing, _PATCHED_MARKER, True)

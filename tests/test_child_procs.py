@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import inspect
+import itertools
 import multiprocessing.pool
 import operator
 import os
@@ -1798,14 +1799,6 @@ run_literal_code = partial(
 
 _PatchSummary = Mapping[str, Set[str]]
 
-_GLOBAL_MINIMAL_PATCHES = {
-    'multiprocessing': frozenset({_PATCHED_MARKER}),
-    'multiprocessing.spawn': frozenset({'runpy'}),
-    'os': frozenset({'fork'}),
-}
-if not hasattr(os, 'fork'):  # E.g. Windows
-    _GLOBAL_MINIMAL_PATCHES.pop('os')
-
 
 def get_patched_attributes(
     applied_mp_patches: Collection[str] | None = None,
@@ -1827,11 +1820,11 @@ def _get_patched_attributes(
 ) -> MappingProxyType[str, frozenset[str]]:
     # Get the contents of the individual patches
     patches = _GLOBAL_MINIMAL_PATCHES.copy()
-    for patch in applied_mp_patches:
-        maybe_patch = MP_PATCHES.get(patch)  # type: ignore
-        if maybe_patch:
-            for target, attrs in maybe_patch.summary.items():
-                patches[target] = patches.get(target, frozenset()) | attrs
+    iter_summaries = (
+        MP_PATCHES[patch].summary
+        for patch in applied_mp_patches if patch in MP_PATCHES
+    )
+    patches = _get_patch_summary_union(patches, *iter_summaries)
     return MappingProxyType({
         target: frozenset(attrs)
         for target, attrs in _filter_patches(patches).items()
@@ -1847,6 +1840,16 @@ def _get_toml_patches_section(mp_patches: Collection[str]) -> str:
             for patch, applied in mp_patches_as_dict.items()
         )
     )
+
+
+def _get_patch_summary_union(
+    *summaries: _PatchSummary,
+) -> dict[str, frozenset[str]]:
+    result: dict[str, frozenset[str]] = {}
+    for summary in summaries:
+        for target, attrs in summary.items():
+            result[target] = result.get(target, frozenset()) | frozenset(attrs)
+    return result
 
 
 def _summarize_patches(
@@ -1899,6 +1902,30 @@ def _filter_patches(summary: _PatchSummary) -> dict[str, set[str]]:
     return result
 
 
+_GLOBAL_MINIMAL_PATCHES = {
+    'multiprocessing': frozenset({_PATCHED_MARKER}),
+}
+# Get patches that are dynamically resolved: while these patches are
+# always applied, some of the patch targets are
+# platform-/Pyhon-version-specific and may not always exist
+_dynamically_resolved_patch_summaries: Iterable[_PatchSummary] = (
+    patch.summary for name, patch in MP_PATCHES.items()
+    # Basic `multiprocessing` patches are always applied
+    if name.startswith('__')
+)
+_dynamically_resolved_patch_summaries = itertools.chain(
+    _dynamically_resolved_patch_summaries,
+    # some platforms e.g. Windows don't have `fork()`
+    [{'os': frozenset({'fork'})}],
+)
+_dynamically_resolved_patch_summaries = cast(  # See `ty` issue #3428
+    Iterable[_PatchSummary],
+    map(_filter_patches, _dynamically_resolved_patch_summaries),
+)
+_GLOBAL_MINIMAL_PATCHES = _get_patch_summary_union(
+    _GLOBAL_MINIMAL_PATCHES, *_dynamically_resolved_patch_summaries,
+)
+
 # This is only patched if we called
 # `_line_profiler_hooks.load_pth_hook()`
 _HOOK_PATCHES = {
@@ -1906,15 +1933,17 @@ _HOOK_PATCHES = {
         frozenset({'called'}),
 }
 # Upper limit of what we could've patched
-_GLOBAL_PATCHES = {
-    **_GLOBAL_MINIMAL_PATCHES,
-    **_HOOK_PATCHES,
-    **get_patched_attributes(MP_PATCHES),
-}
+_GLOBAL_PATCHES = _get_patch_summary_union(
+    _GLOBAL_MINIMAL_PATCHES,
+    _HOOK_PATCHES,
+    get_patched_attributes([
+        name for name in MP_PATCHES if not name.startswith('__')
+    ]),
+)
 # Actual patches using the default config
-DEFAULT_GLOBAL_PATCHES = {
-    **_GLOBAL_MINIMAL_PATCHES, **get_patched_attributes(),
-}
+DEFAULT_GLOBAL_PATCHES = _get_patch_summary_union(
+    _GLOBAL_MINIMAL_PATCHES, get_patched_attributes(),
+)
 
 
 @pytest.mark.parametrize(('run_profiled_code', 'label1'),
@@ -2030,6 +2059,8 @@ def test_cache_dump_load(
     envvars: set[str] = set(os.environ)
     try:
         original.inject_env_vars()  # Needed for `.load()`
+        # Also test slipping stuff into the `._additional_data`
+        original._additional_data['foo'] = [1, 'string', None]
         try:
             # Env vars should be inserted
             assert set(os.environ) == envvars.union(original.environ) > envvars
@@ -2047,6 +2078,8 @@ def test_cache_dump_load(
                     getattr(original, field.name)
                     == getattr(loaded, field.name)
                 )
+            # Compare `._additional_data`
+            assert original._additional_data == loaded._additional_data
         finally:  # Explicitly cleanup
             for cache in cache_instances:
                 cache.cleanup()
@@ -2433,7 +2466,9 @@ def _test_apply_mp_patches(
         # Note: if we're not using `Process`-based patch, there is no
         # guaratee that the profiling result is written via cleanup
         iter_stats: Iterable[Path] = Path(cache.cache_dir).glob('*.lprof')
-        iter_stats = filter(is_valid_stats_file, iter_stats)
+        iter_stats = cast(  # See `ty` issue #3428
+            Iterable[Path], filter(is_valid_stats_file, iter_stats),
+        )
         pat = 'Cleanup succeeded.*: .*dump_stats.*{}'
         patterns.update({
             pat.format(re.escape(path.name)): True for path in iter_stats
