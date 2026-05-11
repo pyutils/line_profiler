@@ -2542,6 +2542,7 @@ def test_apply_mp_patches_success(
     # (as long as we use `Pool` for our parallelism);
     # `Process` though...
     condition='not patch_pool',
+    require='all',  # Check consistency
 )
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])

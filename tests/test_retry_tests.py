@@ -1,15 +1,31 @@
 """
 Tests to make sure that our :py:deco:`pytest.mark.retry` decorator
 works.
+
+Notes:
+    This test module is written to work both:
+
+    - When :py:mod:`pytest_mark_retry` (`link`_) is installed from
+      source along with this file and the rest of the test suite, or
+
+    - In a test directory containing (among other things):
+
+      - This file as a standalone test module, and
+
+      - A ``conftest.py`` containing the content of single-file module
+        ``pytest_mark_retry.py``.
+
+.. _link: https://gitlab.com/TTsangSC/pytest-mark-retry
 """
 from __future__ import annotations
 
 import re
 import pprint
 import textwrap
-from collections.abc import Callable, Collection, Generator, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
-from functools import partial
+from functools import cached_property, partial
+from importlib.util import find_spec
 from operator import attrgetter
 from pathlib import Path
 from shutil import rmtree
@@ -22,12 +38,11 @@ import pytest
 pytest_plugins = ('pytester',)
 
 _Status = Literal['passed', 'failed', 'skipped']
-_RunPytest_Method = Literal[
+_RunPytestMethod = Literal[
     'runpytest', 'runpytest_inprocess', 'runpytest_subprocess',
 ]
-_RunPytest = Callable[..., pytest.RunResult]
-_RunnerGetter = Callable[[str, str], _RunPytest]
 
+PROJECT_MODULE = 'pytest_mark_retry'
 
 TEST_COUNTERS = """
 from __future__ import annotations
@@ -335,11 +350,94 @@ def test_bad_dynamic_condition() -> None:
 @pytest.mark.parametrize('n', [0, 1, 2])
 def test_dynamic_condition_test_params(n: int) -> None:
     '''
-    Subtests `[0]` and `[2]` (resp. subtest `[1]`) should fail without
-    retries (resp. with 1 retry) because the condition evaluates to
-    false (resp. true) on the test's parametrization.
+    Subtests ``[0]`` and ``[2]`` (resp. subtest ``[1]``) should fail
+    without retries (resp. with 1 retry) because the condition evaluates
+    to false (resp. true) on the test's parametrization.
     '''
     raise RuntimeError
+"""
+TEST_BAD_MARKERS = """
+from __future__ import annotations
+
+import pytest
+
+
+@pytest.mark.retry(1, 2)  # `exceptions` cannot be 2
+def test_passing_bad_exceptions() -> None:
+    '''
+    This test passes with a warning because its retry marker has an
+    invalid :py:attr:`RetryMarker.exceptions`.
+    '''
+    pass
+
+
+@pytest.mark.retry(foo=1)  # No argument named `foo`
+def test_passing_stray_arg() -> None:
+    '''
+    This test also passes with a warning because its retry marker has am
+    stray argument ``foo``
+    '''
+    pass
+
+
+@pytest.mark.retry(condition='')  # Syntax error
+def test_failing_bad_condition() -> None:
+    '''
+    This test fails with a warning and without retries, because its
+    retry marker got a bad :py:attr:`RetryMarker.condition`.
+    '''
+    assert False
+"""
+TEST_REQUIRE = """
+from __future__ import annotations
+
+import itertools
+
+import pytest
+
+
+@pytest.fixture(scope='module')
+def counter() -> itertools.count:
+    return itertools.count()
+
+
+@pytest.fixture
+def index(counter: itertools.count) -> int:
+    return next(counter)
+
+
+@pytest.mark.retry(3)
+def test_passing_retry_require_any(index: int) -> None:
+    '''
+    This passes with two retries and leave ``index`` at 2.
+    '''
+    assert index >= 2
+
+
+@pytest.mark.retry(3, require='any')
+def test_failing_retry_require_any(index: int) -> None:
+    '''
+    This fails with three retries and leave ``index`` at 6.
+    '''
+    assert index < 3
+
+
+@pytest.mark.retry(3, require='all')
+def test_failing_retry_require_all(index: int) -> None:
+    '''
+    This fails with zero retries and leave ``index`` at 7.
+    '''
+    # Fails right out the gate, no need to continue retrying
+    assert index > 7
+
+
+@pytest.mark.retry(3, require='all')
+def test_passing_retry_require_all(index: int) -> None:
+    '''
+    This passes with three retries and leave ``index`` at 11.
+    '''
+    # All attempts pass, but we are instructed to exhaust the retries
+    assert index > 0
 """
 
 
@@ -385,7 +483,7 @@ class _TestModule:
         check_results: bool = False,
         check_summary: Literal['verbose', 'concise'] | None = None,
         check_warnings: int | None = None,
-        runner: _RunPytest_Method = 'runpytest',
+        runner: _RunPytestMethod = 'runpytest',
         additional_stdout_lines: Collection[str] = (),
         additional_stderr_lines: Collection[str] = (),
     ) -> pytest.RunResult:
@@ -420,7 +518,11 @@ class _TestModule:
         tempfiles: list[Path] = []
         tempdirs: list[Path] = []
         try:
-            conftests: list[str] = [self._get_proj_conftest().read_text()]
+            conftests: list[str] = []
+            if not self.marker_plugin_globally_installed:
+                # If we don't do this the project will be loaded twice
+                # as a plugin, leading to a clash
+                conftests.append(self.marker_plugin_path.read_text())
             if self.conftest:
                 conftests.append(self.conftest)
             # Create separate conftest.py in nested subdirs to avoid
@@ -474,7 +576,9 @@ class _TestModule:
         for outcomes in self.expected_outcomes.values():
             for outcome in outcomes:
                 counts[outcome.status] = counts.get(outcome.status, 0) + 1
-        result.assert_outcomes(warnings=warnings, **counts)
+        result.assert_outcomes(
+            warnings=warnings, **cast(dict[str, int], counts),
+        )
 
     def check_verbose_summary(
         self,
@@ -551,6 +655,32 @@ class _TestModule:
             for test_name in names:
                 assert test_name in line
 
+    @property
+    def marker_plugin_path(self) -> Path:
+        return self._source[0]
+
+    @property
+    def marker_plugin_globally_installed(self) -> bool:
+        return self._source[1]
+
+    @cached_property
+    def _source(self) -> tuple[Path, bool]:
+        sources = {
+            f'module `{PROJECT_MODULE}`': (self._get_proj_module_path, True),
+            repr('conftest.py'): (self._get_proj_conftest, False),
+        }
+        for src, (get_path, retry_globally_installed) in sources.items():
+            try:
+                path = get_path()
+                assert 'class RetryMarker' in path.read_text()
+                print(f'Loaded project source from {src}: {str(path)!r}')
+                return path, retry_globally_installed
+            except Exception:
+                pass
+        raise RuntimeError(
+            f'Failed to load the project source from any of: {sources!r}',
+        )
+
     @staticmethod
     def _check_lines(
         result: pytest.RunResult,
@@ -580,8 +710,14 @@ class _TestModule:
         )
 
     @staticmethod
-    def _get_proj_conftest() -> Path:
+    def _get_proj_conftest() -> Path:  # If installed as the conftest
         return Path(__file__).parent / 'conftest.py'
+
+    @staticmethod
+    def _get_proj_module_path() -> Path:  # If installed as a module
+        spec = find_spec(PROJECT_MODULE)
+        assert spec and spec.origin
+        return Path(spec.origin)
 
     @staticmethod
     def _strip(text: str) -> str:
@@ -616,129 +752,131 @@ def _identical_items_are_adjacent(items: Iterable[Any]) -> bool:
     return True
 
 
+def _outcomes_to_outcome_dict(
+    outcomes: Iterable[_TestOutcome],
+) -> dict[str, list[_TestOutcome]]:
+    """
+    Example:
+        >>> o0 = _TestOutcome('foo', 'passed', 0)
+        >>> o1 = _TestOutcome('bar[1-2-3]', 'failed', 1)
+        >>> o2 = _TestOutcome('bar[4-5-6]', 'passed', 2)
+        >>> outcomes = {'foo': [o0], 'bar': [o1, o2]}
+        >>> assert _outcomes_to_outcome_dict([o1, o0, o2]) == outcomes
+    """
+    result: dict[str, list[_TestOutcome]] = {}
+    for outcome in outcomes:
+        name = outcome.name
+        if name.endswith(']') and '[' in name:  # Subtest
+            base_name, *_ = name.partition('[')
+        else:
+            base_name = name
+        result.setdefault(base_name, []).append(outcome)
+    return result
+
+
 @pytest.fixture
-def counters_module(
-    pytester: pytest.Pytester,
-) -> Generator[_TestModule, None, None]:
+def counters_module(pytester: pytest.Pytester) -> _TestModule:
     dynamic_p = _TestOutcome('test_dynamic_fixtures_persisted').subtest
     static_p = _TestOutcome('test_static_fixtures_persisted').subtest
     dynamic_r = _TestOutcome('test_dynamic_fixtures_reset').subtest
     static_r = _TestOutcome('test_static_fixtures_reset').subtest
-    outcomes = {
-        'test_dynamic_fixtures_persisted': [
-            dynamic_p('func-0'),
-            dynamic_p('func-2', retries=2),
-            dynamic_p('func-6', status='failed', retries=3),
-            dynamic_p('module-4', status='failed', retries=3),
-            dynamic_p('module-5', retries=1),
-        ],
-        'test_static_fixtures_persisted': [
-            static_p('func-3', retries=3),
-            static_p('func-4', status='failed', retries=3),
-            static_p('module-4'),
-            static_p('module-9', retries=2),
-        ],
-        'test_dynamic_fixtures_reset': [
-            dynamic_r('func-0'),
-            dynamic_r('func-1', status='failed', retries=1),
-            dynamic_r('module-11', retries=1),
-        ],
-        'test_static_fixtures_reset': [
-            static_r('func-0'),
-            static_r('func-1', status='failed', retries=2),
-            static_r('module-14', retries=2),
-        ],
-    }
-    yield _TestModule('test_counters', TEST_COUNTERS, outcomes, pytester)
+    outcomes = _outcomes_to_outcome_dict([
+        dynamic_p('func-0'),
+        dynamic_p('func-2', retries=2),
+        dynamic_p('func-6', status='failed', retries=3),
+        dynamic_p('module-4', status='failed', retries=3),
+        dynamic_p('module-5', retries=1),
+        static_p('func-3', retries=3),
+        static_p('func-4', status='failed', retries=3),
+        static_p('module-4'),
+        static_p('module-9', retries=2),
+        dynamic_r('func-0'),
+        dynamic_r('func-1', status='failed', retries=1),
+        dynamic_r('module-11', retries=1),
+        static_r('func-0'),
+        static_r('func-1', status='failed', retries=2),
+        static_r('module-14', retries=2),
+    ])
+    return _TestModule('test_counters', TEST_COUNTERS, outcomes, pytester)
 
 
 @pytest.fixture
-def teardown_module(
-    pytester: pytest.Pytester,
-) -> Generator[_TestModule, None, None]:
-    yield _TestModule(
-        'test_teardown',
-        TEST_TEARDOWN,
-        {
-            'test_no_fixture_reset':
-            [_TestOutcome('test_no_fixture_reset', 'failed', 2)],
-            'test_with_fixture_reset':
-            [_TestOutcome('test_with_fixture_reset', 'failed', 1)],
-        },
-        pytester,
-        conftest="""
-        from __future__ import annotations
+def teardown_module(pytester: pytest.Pytester) -> _TestModule:
+    outcomes = _outcomes_to_outcome_dict([
+        _TestOutcome('test_no_fixture_reset', 'failed', 2),
+        _TestOutcome('test_with_fixture_reset', 'failed', 1),
+    ])
+    cf = """
+    from __future__ import annotations
 
-        from pathlib import Path
+    from pathlib import Path
 
-        import pytest
+    import pytest
 
 
-        def pytest_addoption(parser: pytest.Parser) -> None:
-            parser.addoption(
-                '--my-temp-dir',
-                type=Path,
-                help=f'persisted tempdir location for {__file__!r}',
-            )
-            parser.addoption(
-                '--my-log',
-                type=Path,
-                help=f'log file location for tempfile creation/deletion',
-            )
-        """,
-    )
+    def pytest_addoption(parser: pytest.Parser) -> None:
+        parser.addoption(
+            '--my-temp-dir',
+            type=Path,
+            help=f'persisted tempdir location for {__file__!r}',
+        )
+        parser.addoption(
+            '--my-log',
+            type=Path,
+            help=f'log file location for tempfile creation/deletion',
+        )
+    """
+    return _TestModule('test_teardown', TEST_TEARDOWN, outcomes, pytester, cf)
 
 
 @pytest.fixture
-def exceptions_module(
-    pytester: pytest.Pytester,
-) -> Generator[_TestModule, None, None]:
-    yield _TestModule(
-        'test_exceptions',
-        TEST_EXCEPTIONS,
-        {
-            'test_all_xc_types':
-            [_TestOutcome('test_all_xc_types', retries=3)],
-            'test_one_xc_type':
-            [_TestOutcome('test_one_xc_type', 'failed', 1)],
-            'test_two_xc_types':
-            [_TestOutcome('test_two_xc_types', 'failed', 2)],
-            'test_three_xc_types':
-            [_TestOutcome('test_three_xc_types', retries=3)],
-        },
-        pytester,
-    )
+def exceptions_module(pytester: pytest.Pytester) -> _TestModule:
+    outcomes = _outcomes_to_outcome_dict([
+        _TestOutcome('test_all_xc_types', retries=3),
+        _TestOutcome('test_one_xc_type', 'failed', 1),
+        _TestOutcome('test_two_xc_types', 'failed', 2),
+        _TestOutcome('test_three_xc_types', retries=3),
+    ])
+    return _TestModule('test_exceptions', TEST_EXCEPTIONS, outcomes, pytester)
 
 
 @pytest.fixture
-def conditions_module(
-    pytester: pytest.Pytester,
-) -> Generator[_TestModule, None, None]:
+def conditions_module(pytester: pytest.Pytester) -> _TestModule:
     test = partial(_TestOutcome, status='failed')
     param_test_name = 'test_dynamic_condition_test_params'
     param_test = partial(test(param_test_name).subtest, status='failed')
-    yield _TestModule(
-        'test_conditions',
-        TEST_CONDITIONS,
-        {
-            'test_concrete_positive_condition':
-            [test('test_concrete_positive_condition', retries=2)],
-            'test_concrete_negative_condition':
-            [test('test_concrete_negative_condition')],
-            'test_dynamic_positive_condition_test_module_globals':
-            [test(
-                'test_dynamic_positive_condition_test_module_globals',
-                retries=1,
-            )],
-            'test_dynamic_negative_condition_test_module_globals':
-            [test('test_dynamic_negative_condition_test_module_globals')],
-            'test_bad_dynamic_condition':
-            [test('test_bad_dynamic_condition')],
-            param_test_name:
-            [param_test('0'), param_test('1', retries=1), param_test('2')],
-        },
-        pytester,
-    )
+    outcomes = _outcomes_to_outcome_dict([
+        test('test_concrete_positive_condition', retries=2),
+        test('test_concrete_negative_condition'),
+        test('test_dynamic_positive_condition_test_module_globals', retries=1),
+        test('test_dynamic_negative_condition_test_module_globals'),
+        test('test_bad_dynamic_condition'),
+        param_test('0'),
+        param_test('1', retries=1),
+        param_test('2'),
+    ])
+    return _TestModule('test_conditions', TEST_CONDITIONS, outcomes, pytester)
+
+
+@pytest.fixture
+def bad_markers_module(pytester: pytest.Pytester) -> _TestModule:
+    outcomes = _outcomes_to_outcome_dict([
+        _TestOutcome('test_passing_bad_exceptions'),
+        _TestOutcome('test_passing_stray_arg'),
+        _TestOutcome('test_failing_bad_condition', 'failed'),
+    ])
+    return _TestModule('test_bad', TEST_BAD_MARKERS, outcomes, pytester)
+
+
+@pytest.fixture
+def require_module(pytester: pytest.Pytester) -> _TestModule:
+    outcomes = _outcomes_to_outcome_dict([
+        _TestOutcome('test_passing_retry_require_any', retries=2),
+        _TestOutcome('test_failing_retry_require_any', 'failed', 3),
+        _TestOutcome('test_failing_retry_require_all', 'failed'),
+        _TestOutcome('test_passing_retry_require_all', retries=3),
+    ])
+    return _TestModule('test_require', TEST_REQUIRE, outcomes, pytester)
 
 
 @pytest.mark.parametrize('verbose', [True, False])
@@ -804,9 +942,10 @@ def test_fixture_teardown(
     # we can verify that by checking that the ids of the `makefile()`
     # fixtures appear in contiguous blocks
 
-    # Note: there seems to be a weird corner case where neighboring tests
-    # may reuse the same fixture id (see failing job 73520441960 in
-    # pipeline 25091142386); probably has to do with object lifetime.
+    # Note: there seems to be a weird corner case where neighboring
+    # tests may reuse the same fixture id (see `line_profiler` failing
+    # job 73520441960 in pipeline 25091142386); probably has to do with
+    # object lifetime.
     # So instead of just checking the `fixture_id`, also consult
     # `test`; it suffices to see that WITHIN THE SAME TEST we don't have
     # fixture values stepping over one another
@@ -836,18 +975,66 @@ def test_retry_conditions(conditions_module: _TestModule) -> None:
     """
     Test that the decorator correctly handles retry conditions.
     """
+    # `test_bad_dynamic_condition()` should have failed with a
+    # `RetryConditionFailure`, listing the error encountered in the last
+    # trial and the error encountered when `eval()`-ing the condition
+    # (Note: grepping for the entire error message in the short test
+    # summary is fragile since it may be elided; so we just use a
+    # separate pattern to grep it from the tracebacks)
+    lines = [
+        'FAILED .*::test_bad_dynamic_condition - .*RetryConditionFailure',
+        r'.*RetryConditionFailure: \(RuntimeError: bar\) '
+        r"-> \(condition: 'foo == 1' -> NameError: .*'foo'.*\)",
+    ]
     conditions_module.run(
         '--verbose',
-        check_results=True,
-        check_summary='verbose',
-        check_warnings=0,
-        # `test_bad_dynamic_condition()` should have failed with a
-        # `_RetryFailure`, listing the error encountered in the last
-        # trial and the error encountered when `eval()`-ing the
-        # condition
-        additional_stdout_lines=[
-            'FAILED +.*::test_bad_dynamic_condition - '
-            r".*_RetryFailure: +\(RuntimeError: bar\) +"
-            r"-> +\(condition: +'foo == 1' +-> +NameError: .*'foo'.*\)"
+        check_results=True, check_summary='verbose', check_warnings=0,
+        additional_stdout_lines=lines,
+    )
+
+
+def test_bad_markers(bad_markers_module: _TestModule) -> None:
+    """
+    Test that the decorator gracefully handles incorrect constructions.
+    """
+    stdout = bad_markers_module.run(
+        '--verbose',
+        check_results=True, check_summary='verbose', check_warnings=3,
+    ).stdout
+    # Check the warnings emitted
+    # (Since we want to match across multiple lines we can't use
+    # `additional_stdout_lines`)
+    errors: str | Sequence[str]
+    pattern = (
+        '{0}\n'
+        r'.*RetryMarkerWarning: .*{0}.*: disregarding .* marker: \(.*{1}.*\)'
+    )
+    for test, errors in {
+        'test_passing_bad_exceptions': [
+            r'TypeError: \.exceptions = .*2.*: expected .*exception',
+            r'TypeError: .*not iterable',
+            r'TypeError: too many positional arguments',
+            r'TypeError: .*takes 1 positional argument but'
         ],
+        'test_passing_stray_arg':
+            r'TypeError: .*unexpected keyword argument \'foo\'',
+        'test_failing_bad_condition':
+            r'ValueError: \.condition = \'\': not a valid expression '
+            r'\(SyntaxError.*\)',
+    }.items():
+        if isinstance(errors, str):
+            errors = [errors]
+        messages = [pattern.format(re.escape(test), error) for error in errors]
+        if not any(re.search(msg, str(stdout)) for msg in messages):
+            msg = f'none of the patterns {messages!r} matched {stdout!r}'
+            raise AssertionError(msg)
+
+
+def test_requirement(require_module: _TestModule) -> None:
+    """
+    Test that the decorator correctly handles requirements that all
+    trials should pass (via ``require='all'``).
+    """
+    require_module.run(
+        '--verbose', check_results=True, check_summary='verbose',
     )
