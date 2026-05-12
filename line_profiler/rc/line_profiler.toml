@@ -234,14 +234,15 @@ catch_sigterm = true
 [tool.line_profiler.child_processes.multiprocessing.patches]
 
 # - `multiprocessing.patches.pool` (bool):
-#   Whether to patch `multiprocessing.pool.Pool`, so that each tasks
-#   write profiling output before pushing result back to the parent
-#   process
+#   Whether to patch `multiprocessing.pool.worker()`, so that each child
+#   process write profiling output as it runs out of tasks
 pool = true
 # - `multiprocessing.patches.process` (bool):
 #   Whether to patch `multiprocessing.process.BaseProcess`, so that each
 #   child process write profiling output before exiting
 process = true
+# NOTE: for the best result, stick to the default and have both applied
+
 # - `multiprocessing.patches.logging` (bool):
 #   Whether to patch logging functions in `multiprocessing.util`, so
 #   that the internal logs of `multiprocessing` are teed to the session

@@ -16,15 +16,15 @@ from __future__ import annotations
 
 import dataclasses
 import multiprocessing
+import os
 import sys
 import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from functools import partial
 from importlib import import_module
-from inspect import getattr_static, signature
-from multiprocessing.context import BaseContext
+from inspect import getattr_static
 from multiprocessing.process import BaseProcess
-from multiprocessing.pool import Pool
+from multiprocessing.queues import SimpleQueue
 from operator import attrgetter
 from time import sleep, monotonic
 from types import MappingProxyType as mappingproxy, MethodType, ModuleType
@@ -58,6 +58,7 @@ else:
     _CAN_USE_RESOURCE_TRACKER = True
 
 from .. import _diagnostics as diagnostics
+from ..cleanup import Cleanup
 from ..toml_config import ConfigSource
 from .cache import LineProfilingCache
 from .runpy_patches import create_runpy_wrapper
@@ -366,31 +367,21 @@ class MPConfig:
         return result
 
 
-class TaskWrapper(Generic[PS, T]):
-    """
-    Pickle-able wrapper around the supplied task callable, which writes
-    to the session's profiling-stats file on exit.
-    """
-    def __init__(self, func: Callable[PS, T]) -> None:
-        self.func = func
-        try:
-            self.__signature__ = signature(func)
-        except Exception:  # nocover
-            # Can happen with e.g. certain builin/c-based callables
-            pass
-
-    def __call__(self, *args, **kwargs) -> T:
-        dump_stats = LineProfilingCache.load()._dump_stats
-        try:
-            return self.func(*args, **kwargs)
-        finally:
-            if dump_stats is not None:
-                dump_stats()
-
-
 def _no_op(*_, **__) -> None:
     pass
 
+
+def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
+    key = 'mp_added_sigterm_handler'
+    if not MPConfig.from_cache(cache).catch_sigterm:
+        return
+    if cache.main_pid == os.getpid():  # Not in a child process
+        return
+    if cache._additional_data.get(key, False):
+        # Already added (e.g. by another plugin)
+        return
+    cache._add_signal_handler()
+    cache._additional_data[key] = True
 
 # ---------------------- Patching infrastructure -----------------------
 
@@ -660,94 +651,67 @@ def _register_patch(name: str, patch: _Patch | None = None) -> _Patch:
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
 
 
-@LineProfilingCache._method_wrapper
-def wrap_get_tasks(
-    _,  # No need to use the cache, but `_method_wrapper` expects it
-    vanilla_impl: Callable[Concatenate[Callable[PS1, T1], PS2], T2],
-    func: Callable[PS1, T1],
-    *args: PS2.args,
-    **kwargs: PS2.kwargs
-) -> T2:
-    """
-    Wrap around :py:meth:`.Pool._get_tasks` so that the writing of
-    profiling stats is handled within the callables sent to the child
-    processes before the parent process assumes control.
-
-    Note:
-        :py:meth:`.Pool._get_tasks` is a static method.
-    """
-    return vanilla_impl(TaskWrapper(func), *args, **kwargs)
-
-
-@LineProfilingCache._method_wrapper
-def wrap_guarded_task_generation(
-    _,  # No need to use the cache, but `_method_wrapper` expects it
-    vanilla_impl: Callable[Concatenate[Pool, int, Callable[PS1, T1], PS2], T2],
-    self: Pool,
-    result_job: int,
-    func: Callable[PS1, T1],
-    *args: PS2.args,
-    **kwargs: PS2.kwargs
-) -> T2:
-    """
-    Wrap around :py:meth:`.Pool._guarded_task_generation` so that the
-    writing of profiling stats is handled within the callables sent to
-    the child processes before the parent process assumes control.
-    """
-    return vanilla_impl(self, result_job, TaskWrapper(func), *args, **kwargs)
-
-
-@LineProfilingCache._method_wrapper
-def wrap_repopulate_pool_static(
+@LineProfilingCache._method_wrapper  # nocover
+def wrap_worker(
     cache: LineProfilingCache,
-    vanilla_impl: Callable[
-        Concatenate[BaseContext, type[P], int, list[P], PS], None
-    ],
-    ctx: BaseContext,
-    Process: type[P],
-    processes: int,
-    pool: list[P],
+    vanilla_impl: Callable[Concatenate[SimpleQueue, PS], None],
+    inqueue: SimpleQueue,
     *args: PS.args,
     **kwargs: PS.kwargs
 ) -> None:
     """
-    Wrap around :py:meth:`.Pool._repopulate_pool_static` so that we can
-    keep track of the PIDs of the created child processes.
+    Wrap around :py:func:`multiprocessing.pool.worker` so that child
+    processes can write profiling output as soon as the pool runs out of
+    tasks.
 
     Note:
-        :py:meth:`.Pool._repopulate_pool_static` is a static method.
+        This is only called in child processes and thus we can't
+        reliably measure coverage thereon; see also
+        :py:func:`wrap_bootstrap`.
     """
-    try:
-        vanilla_impl(ctx, Process, processes, pool, *args, **kwargs)
-    finally:
-        patches = MPConfig.from_cache(cache).patches
-        if not patches.get('process', False):
-            # Notes:
-            # - if the `process` patch is active, child processes should
-            #   always have called `.cache.profiler.dump_stats()` at
-            #   least once before exiting, so there's no need to warn
-            #   the cache against children possibly not having written
-            #   profiling data.
-            # - Since the vanilla implementation calls `Process.start()`
-            #   on each child, they should all have valid PIDs. However:
-            #   - The process might have terminated for whatever reason.
-            #     and
-            #   - `multiprocessing.dummy.DummyProcess` doesn't have
-            #     `.pid`.
-            #   So we add a fallback to `None` just in case.
-            pids = cast(
-                set[int],
-                {getattr(process, 'pid', None) for process in pool} - {None},
+    # Set a signal handler for SIGTERM to help child processes with
+    # consistently cleaning up
+    _add_sigterm_handler_in_child(cache)
+    # Note: using the `cache` itself as the context manager is prone to
+    # deadlock
+    with Cleanup() as cleanup:
+        if isinstance(inqueue.get, MethodType):
+            get = partial(_wrap_queue_get, cache, inqueue.get.__func__)
+            cleanup.patch(
+                inqueue, 'get', MethodType(get, inqueue),
+                name='<current process>._inqueue',
             )
-            cache._warn_possible_lack_of_stats(pids)
+        return vanilla_impl(inqueue, *args, **kwargs)
 
 
-_patch_pool = partial(
-    _register_patch('pool', Patch('pool')).add_method, 'Pool',
-)
-_patch_pool('_get_tasks', wrap_get_tasks, 'static')
-_patch_pool('_guarded_task_generation', wrap_guarded_task_generation)
-_patch_pool('_repopulate_pool_static', wrap_repopulate_pool_static, 'static')
+def _wrap_queue_get(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[Concatenate[SimpleQueue, PS], T],
+    self: SimpleQueue,
+    /,
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> T:
+    result = vanilla_impl(self, *args, **kwargs)
+    ntasks: dict[int, int]
+    ntasks = cache._additional_data.setdefault('mp_queue_ntasks', {})
+    queue_id = id(self)
+    if result is None:
+        n = ntasks.pop(queue_id, 0)
+        msg = f'`multiprocessing.pool.worker`: recieved {n} task(s) in total'
+        cache._debug_output(msg)
+        # Got sentinel value, process is about to exit
+        cache.cleanup(
+            new_thread=True,
+            reason='ran out of tasks in `multiprocessing.process.worker()`',
+        )
+    else:
+        ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
+    return result
+
+
+_patch_pool = _register_patch('pool', Patch('pool')).add_method
+_patch_pool('', 'worker', wrap_worker)
 
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
 
@@ -808,8 +772,7 @@ def wrap_bootstrap(
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
-    if MPConfig.from_cache(cache).catch_sigterm:
-        cache._add_signal_handler()
+    _add_sigterm_handler_in_child(cache)
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
@@ -819,7 +782,7 @@ def wrap_bootstrap(
         # `.cleanup()` call
         cache.cleanup(
             new_thread=True,
-            reason='exiting `multiprocessing.Process._bootstrap`',
+            reason='exiting `multiprocessing.Process._bootstrap()`',
         )
 
 
@@ -1042,9 +1005,9 @@ def apply(
 
     Patches:
         ``'pool'``:
-            Patch :py:class:`multiprocessing.pool.Pool`'s
-            ``._get_tasks()`` and ``._guarded_task_generation()``
-            methods so that parallel tasks write profiling output.
+            Patch :py:func:`multiprocessing.pool.worker` so that
+            profiling output is written as each child process runs out
+            of task.
         ``'process'``:
             Patch :py:class:`multiprocessing.process.BaseProcess`'s
             ``._bootstrap()`` method (and ``.terminate()`` on Windows)
