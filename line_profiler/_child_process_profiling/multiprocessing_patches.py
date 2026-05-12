@@ -813,13 +813,14 @@ def wrap_bootstrap(
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
-        msg = 'Calling cleanup hook via `BaseProcess._bootstrap`'
-        cache._debug_output(msg)
         # Execute cleanup in a separate thread so as to avoid deadlocks,
         # in case when `LineProfilingCache._handle_signal()` caught a
         # signal as we're in the middle of this and initiated another
         # `.cleanup()` call
-        cache.cleanup(new_thread=True)
+        cache.cleanup(
+            new_thread=True,
+            reason='exiting `multiprocessing.Process._bootstrap`',
+        )
 
 
 _patch_process = partial(

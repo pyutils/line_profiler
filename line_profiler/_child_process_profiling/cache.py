@@ -522,7 +522,7 @@ class LineProfilingCache(Cleanup):
 
         # Set `.cleanup()` as an atexit hook to handle everything when
         # the child process is about to terminate
-        atexit.register(self.cleanup)
+        atexit.register(partial(self.cleanup, reason='`atexit` callback'))
 
         self._debug_output(f'Setup successful ({context})')
         return True
@@ -544,9 +544,9 @@ class LineProfilingCache(Cleanup):
             :py:meth:`coverage.control.Converage._on_sigterm`
         """
         name = self._get_signal_name(signum)
-        msg = f'Caught `{name}` ({signum}), cleaning up...'
-        self._debug_output(msg)
-        state = 'succeeded'
+        # Shouldn't happen, but all kinds of weird things happen at the
+        # interpreter's EoL...
+        state = 'not initiated?!'
         try:
             # We don't care about profiler state and such if we're
             # already being SIGTERM-ed, so just handle cleanup on a
@@ -554,7 +554,7 @@ class LineProfilingCache(Cleanup):
             # this prevents a duplicate call to `.cleanup()` when we're
             # already inside one (e.g. when `Process._bootstrap()` is
             # exiting, or the `atexit` hook is triggered)
-            self.cleanup(new_thread=True)
+            self.cleanup(new_thread=True, reason=f'caught `{name}` ({signum})')
         except BaseException as e:
             xc = f'{type(e).__name__}'
             msg = str(e)
@@ -562,6 +562,8 @@ class LineProfilingCache(Cleanup):
                 xc = f'{xc}: {msg}'
             state = f'failed ({xc})'
             raise e
+        else:
+            state = 'succeeded'
         finally:
             handler = self._sighandlers.pop(signum, None)
             msg = f'Cleanup {state}, passing `{name}` onto {handler!r}...'

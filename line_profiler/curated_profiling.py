@@ -220,7 +220,7 @@ class CuratedProfilerContext(Cleanup):
         self.patch(self, '_installed', True)
 
     def uninstall(self) -> None:
-        self.cleanup()
+        self.cleanup(reason='uninstalling profiling context')
 
     def __enter__(self) -> Self:
         self.install()

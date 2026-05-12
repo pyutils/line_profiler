@@ -80,11 +80,13 @@ class Cleanup:
         Call ``~.cleanup(1)``, clearing the level of cleanup stacks we
         previously :py:meth:`~.__enter__`-ed into.
         """
-        self.cleanup(1)
+        self.cleanup(1, reason='context exit')
 
     # Cleanup methods
 
-    def cleanup(self, levels: int | None = None) -> None:
+    def cleanup(
+        self, levels: int | None = None, *, reason: str | None = None,
+    ) -> None:
         """
         Pop cleanup callbacks from the internal stacks added via
         :py:meth:`~.add_cleanup` etc. and call them in order.
@@ -93,6 +95,8 @@ class Cleanup:
             levels (int | None):
                 Number of stack levels to clear; passing :py:const`None`
                 clears the entire stack of callback stacks
+            reason (str | None):
+                Optional description of the reason for cleaning up
         """
         def pop_all_contexts(
             contexts: _StackContexts,
@@ -114,19 +118,24 @@ class Cleanup:
             pop_contexts = pop_all_contexts(self._contexts)
         else:
             pop_contexts = pop_n_levels_of_contexts(self._contexts, levels)
-        cleanup = partial(self._cleanup, self._debug_output)
+        cleanup = partial(self._cleanup, self._debug_output, reason=reason)
         for stacks in pop_contexts:
             cleanup(stacks)
 
     @staticmethod
-    def _cleanup(log: Callable[[str], Any], stacks: _Stacks) -> None:
+    def _cleanup(
+        log: Callable[[str], Any], stacks: _Stacks, reason: str | None,
+    ) -> None:
         ncallbacks_total = sum(len(stack) for stack in stacks.values())
+        note = f'{ncallbacks_total} callback(s)'
+        if reason:
+            note = f'{reason}; {note}'
         if not ncallbacks_total:
-            log('Cleanup aborted (no registered callbacks)')
+            log(f'Cleanup aborted ({note})')
             return
         # Bookend the cleanup loop with log messages to help detect if
         # child processes are prematurely terminated
-        log(f'Starting cleanup ({ncallbacks_total} callback(s))...')
+        log(f'Starting cleanup ({note})...')
         ncallbacks_run = 0
         for priority in sorted(stacks, reverse=True):
             callbacks = stacks.pop(priority)
@@ -145,7 +154,7 @@ class Cleanup:
                     f'- Cleanup {state} '
                     f'({ncallbacks_run}/{ncallbacks_total}): {msg}',
                 )
-        log(f'... cleanup completed ({ncallbacks_total} callback(s))')
+        log(f'... cleanup completed ({note})')
 
     def add_cleanup(
         self, callback: Callable[PS, Any], *args: PS.args, **kwargs: PS.kwargs,
