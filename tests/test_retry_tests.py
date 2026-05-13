@@ -978,11 +978,10 @@ def test_retry_conditions(conditions_module: _TestModule) -> None:
     # `test_bad_dynamic_condition()` should have failed with a
     # `RetryConditionFailure`, listing the error encountered in the last
     # trial and the error encountered when `eval()`-ing the condition
-    # (Note: grepping for the entire error message in the short test
-    # summary is fragile since it may be elided; so we just use a
-    # separate pattern to grep it from the tracebacks)
+    # (Note: grepping for the error details in the short test summary is
+    # fragile since it may be elided or even entirely omitted; so we
+    # just use a separate pattern to grep it from the tracebacks)
     lines = [
-        'FAILED .*::test_bad_dynamic_condition - .*RetryConditionFailure',
         r'.*RetryConditionFailure: \(RuntimeError: bar\) '
         r"-> \(condition: 'foo == 1' -> NameError: .*'foo'.*\)",
     ]
