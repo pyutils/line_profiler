@@ -66,13 +66,9 @@ NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
 
-# XXX: owing to the shenanigans in
-# `line_profiler._child_process_profiling.multiprocessing_patches`,
-# there is a risk that failing child processes are not properly
-# `.terminate()`-ed. So just put in a timeout...
-_NUM_RETRIES = 2
 _SUBPROC_TIMEOUT = 5  # Seconds
 _DEBUG = True
+_WINDOWS = sys.platform == 'win32'
 
 
 def strip(s: str) -> str:
@@ -1540,7 +1536,7 @@ def _search_cache_logs(
 # though an "intentionally" undocumented API (cpython issue #10308),
 # it's been around since 2.4, seems stable enough, and does exactly what
 # is needed
-if sys.platform == 'win32':
+if _WINDOWS:
     concat_command_line: Callable[
         [Sequence[str]], str
     ] = subprocess.list2cmdline
@@ -2355,7 +2351,7 @@ def test_load_pth_hook(
 
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
-def _test_apply_mp_patches(
+def _test_apply_mp_patches_inner(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
@@ -2477,6 +2473,27 @@ def _test_apply_mp_patches(
     _search_cache_logs(cache, True, patterns)
 
 
+def _test_apply_mp_patches(
+    patch_pool: bool, patch_process: bool, intercept_logs: bool, **kwargs
+) -> None:
+    mp_patches: list[str] = []
+    if patch_pool:
+        mp_patches.append('pool')
+    if patch_process:
+        mp_patches.append('process')
+    if intercept_logs:
+        mp_patches.append('logging')
+    with _check_warnings() as cw:
+        # Note: we can't guarantee that everything is set up early
+        # enough for cleanup to occur properly in child processes which
+        # don't receive any tasks, unless both the `process` and `pool`
+        # patches are applied
+        if patch_pool and patch_process:
+            cw.forbid_warnings(category=UserWarning, module='line_profiler')
+        cw.forbid_warnings(module='multiprocessing')
+        _test_apply_mp_patches_inner(mp_patches=mp_patches, **kwargs)
+
+
 @(_Params.new('start_method',
               ['fork', 'forkserver', 'spawn', 'dummy'],
               defaults='dummy')
@@ -2512,37 +2529,37 @@ def test_apply_mp_patches_success(
     See also:
         :py:func:`test_apply_mp_patches_failure`
     """
-    mp_patches: list[str] = []
-    if patch_pool:
-        mp_patches.append('pool')
-    if patch_process:
-        mp_patches.append('process')
-    if intercept_logs:
-        mp_patches.append('logging')
-    with _check_warnings() as cw:
-        cw.forbid_warnings(category=UserWarning, module='line_profiler')
-        cw.forbid_warnings(module='multiprocessing')
-        _test_apply_mp_patches(
-            tmp_path_factory=tmp_path_factory,
-            create_cache=create_cache,
-            ext_module_object=ext_module_object,
-            test_module_object=test_module_object,
-            start_method=start_method,
-            mp_patches=mp_patches,
-            fail=False,
-            n=n,
-            nprocs=nprocs,
-        )
+    _test_apply_mp_patches(
+        patch_pool,
+        patch_process,
+        intercept_logs,
+        tmp_path_factory=tmp_path_factory,
+        create_cache=create_cache,
+        ext_module_object=ext_module_object,
+        test_module_object=test_module_object,
+        start_method=start_method,
+        fail=False,
+        n=n,
+        nprocs=nprocs,
+    )
 
 
+# XXX: on POSIX child processes can hang around for long enough for
+# profiling-stats collection to occur somewhat robustly, thanks to
+# signal handling. But unfortunately on Windows:
+# - When `patch_pool` is true, we wrap the task callables so that they
+#   always write profiling stats before returning/erroring out. This
+#   incurs extra overhead, but effectively prevents the reliquishing of
+#   control back to the parent process before the stats are ready.
+# - However, when `patch_pool` is false, we can only try to block/delay
+#   child-process termination. A timeout is used to prevent indefinite
+#   waits for them to finish, and there's always the off chance that the
+#   end-of-process cleanup still haven't finished at the end.
+# Hence the conditional need for retries...
 @pytest.mark.retry(
-    _NUM_RETRIES,
+    retries=2,
+    condition='_WINDOWS and not patch_pool',
     exceptions=(ResultMismatch, _Poller.Timeout),
-    # Patching `Pool` should be foolproof no matter the platform
-    # (as long as we use `Pool` for our parallelism);
-    # `Process` though...
-    condition='not patch_pool',
-    require='all',  # Check consistency
 )
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
@@ -2571,25 +2588,19 @@ def test_apply_mp_patches_failure(
     See also:
         :py:func:`test_apply_mp_patches_success`
     """
-    mp_patches: list[str] = []
-    if patch_pool:
-        mp_patches.append('pool')
-    if patch_process:
-        mp_patches.append('process')
-    with _check_warnings() as cw:
-        cw.forbid_warnings(category=UserWarning, module='line_profiler')
-        cw.forbid_warnings(module='multiprocessing')
-        _test_apply_mp_patches(
-            tmp_path_factory=tmp_path_factory,
-            create_cache=create_cache,
-            ext_module_object=ext_module_object,
-            test_module_object=test_module_object,
-            start_method=start_method,
-            mp_patches=mp_patches,
-            fail=True,
-            n=n,
-            nprocs=nprocs,
-        )
+    _test_apply_mp_patches(
+        patch_pool,
+        patch_process,
+        intercept_logs=False,
+        tmp_path_factory=tmp_path_factory,
+        create_cache=create_cache,
+        ext_module_object=ext_module_object,
+        test_module_object=test_module_object,
+        start_method=start_method,
+        fail=True,
+        n=n,
+        nprocs=nprocs,
+    )
 
 
 # XXX: End of tests for implementation details
