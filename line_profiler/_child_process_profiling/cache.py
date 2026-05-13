@@ -22,7 +22,7 @@ from importlib import import_module
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
-from threading import current_thread, main_thread, RLock, Thread
+from threading import current_thread, main_thread
 from types import FrameType, ModuleType
 from typing import Any, ClassVar, Literal, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -91,8 +91,7 @@ class LineProfilingCache(Cleanup):
     _sighandlers: dict[int, _SignalHandler | int | None] = (
         _private_field(default_factory=dict)
     )
-    _rlock: RLock = _private_field(default_factory=RLock)
-    _dump_stats: Callable[..., None] | None = _private_field(default=None)
+    _stats_dumper: Cleanup | None = _private_field(default=None)
     # These are unstructured fields; other components can decide on what
     # to put in them. They are also pickled by `.dump()`, and are thus
     # retrievable in `.load()`-ed instances.
@@ -165,43 +164,6 @@ class LineProfilingCache(Cleanup):
         self._debug_output(msg)
         with open(self.filename, mode='wb') as fobj:
             pickle.dump(content, fobj, protocol=HIGHEST_PROTOCOL)
-
-    def cleanup(self, *args, new_thread: bool = False, **kwargs) -> None:
-        """
-        Perform cleanup.
-
-        Args:
-            new_thread (bool):
-                Whether to relegate the call to
-                :py:meth:`Cleanup,cleanup` to a new thread (see Notes)
-            *args, **kwargs:
-                Passed to :py:meth:`Cleanup.cleanup`
-
-        Note:
-            - In child processes we set a ``SIGTERM`` handler to always
-              call :py:meth:`~.cleanup`. However, this may happen when
-              we're already in the middle of a cleanup call, which
-              results in undefined behavior. To prevent this, we can
-              supply ``new_thread=True`` so that the
-              :py:meth:`Cleanup.cleanup` call is handled by a separate
-              thread which acquires an instance-specific lock.
-
-            - However, this method is supposed to clean up the session
-              profiler by completely disabling it, and that part must
-              happen on the main thread or deallocation will be botched.
-              Hence ``new_thread=True`` is made an option and not the
-              default.
-        """
-        if not new_thread:
-            self._cleanup_worker(*args, **kwargs)
-            return
-        thread = Thread(target=self._cleanup_worker, args=args, kwargs=kwargs)
-        thread.start()
-        thread.join()
-
-    def _cleanup_worker(self, *args, **kwargs) -> None:
-        with self._rlock:
-            super().cleanup(*args, **kwargs)
 
     def gather_stats(
         self,
@@ -514,8 +476,17 @@ class LineProfilingCache(Cleanup):
             suffix='.lprof',
             delete=False,
         )
-        dump_stats = self._dump_stats = partial(prof.dump_stats, prof_outfile)
+        dump_stats = partial(prof.dump_stats, prof_outfile)
         self.add_cleanup_with_priority(dump_stats, 1)
+
+        # Create a cleanup object for the express purpose of dumping
+        # stats in an emergency (e.g. when a signal is caught)
+        self._stats_dumper = dumper = Cleanup()
+        self.patch(
+            dumper, '_debug_output', self._debug_output,
+            cleanup=False, name=f'{self!r}._stats_dumper',
+        )
+        dumper.add_cleanup(dump_stats)
 
         # Various setups
         self._setup_common(wrap_os_fork, {'reboot_forkserver': False})
@@ -548,13 +519,11 @@ class LineProfilingCache(Cleanup):
         # interpreter's EoL...
         state = 'not initiated?!'
         try:
-            # We don't care about profiler state and such if we're
-            # already being SIGTERM-ed, so just handle cleanup on a
-            # separate thread;
-            # this prevents a duplicate call to `.cleanup()` when we're
-            # already inside one (e.g. when `Process._bootstrap()` is
-            # exiting, or the `atexit` hook is triggered)
-            self.cleanup(new_thread=True, reason=f'caught `{name}` ({signum})')
+            # Just dump the stats ASAP without running `.cleanup()` to
+            # avoid deadlocks
+            self._debug_output(f'Caught `{name}` ({signum}), dumping stats...')
+            if self._stats_dumper is not None:
+                self._stats_dumper.cleanup()
         except BaseException as e:
             xc = f'{type(e).__name__}'
             msg = str(e)
@@ -566,11 +535,14 @@ class LineProfilingCache(Cleanup):
             state = 'succeeded'
         finally:
             handler = self._sighandlers.pop(signum, None)
-            msg = f'Cleanup {state}, passing `{name}` onto {handler!r}...'
+            msg = f'Stat-dumping {state}, passing `{name}` onto {handler!r}...'
             self._debug_output(msg)
-            if handler is not None:
+            if handler is None:
+                msg = 'original handler set from outside of Python'
+                raise RuntimeError(msg)
+            else:
                 signal.signal(signum, handler)
-            signal.raise_signal(signum)
+                signal.raise_signal(signum)
 
     def _add_signal_handler(
         self, signum: int = signal.SIGTERM,

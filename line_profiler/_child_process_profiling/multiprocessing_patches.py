@@ -701,10 +701,8 @@ def _wrap_queue_get(
         msg = f'`multiprocessing.pool.worker`: recieved {n} task(s) in total'
         cache._debug_output(msg)
         # Got sentinel value, process is about to exit
-        cache.cleanup(
-            new_thread=True,
-            reason='ran out of tasks in `multiprocessing.process.worker()`',
-        )
+        reason = 'ran out of tasks in `multiprocessing.process.worker()`'
+        cache.cleanup(reason=reason)
     else:
         ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
     return result
@@ -780,10 +778,8 @@ def wrap_bootstrap(
         # in case when `LineProfilingCache._handle_signal()` caught a
         # signal as we're in the middle of this and initiated another
         # `.cleanup()` call
-        cache.cleanup(
-            new_thread=True,
-            reason='exiting `multiprocessing.Process._bootstrap()`',
-        )
+        reason = 'exiting `multiprocessing.Process._bootstrap()`'
+        cache.cleanup(reason=reason)
 
 
 _patch_process = partial(
