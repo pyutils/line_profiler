@@ -234,8 +234,14 @@ catch_sigterm = true
 [tool.line_profiler.child_processes.multiprocessing.patches]
 
 # - `multiprocessing.patches.pool` (bool):
-#   Whether to patch `multiprocessing.pool.worker()`, so that each child
-#   process write profiling output as it runs out of tasks
+#   Whether to patch `multiprocessing.pool`:
+#   - POSIX:
+#     Patch `multiprocessing.pool.worker()` so that each child process
+#     write profiling output as it runs out of tasks
+#   - Windows:
+#     Patch `multiprocessing.pool.Pool` so that each task writes
+#     profiling output before pushing the result back to the parent
+#     process
 pool = true
 # - `multiprocessing.patches.process` (bool):
 #   Whether to patch `multiprocessing.process.BaseProcess`, so that each

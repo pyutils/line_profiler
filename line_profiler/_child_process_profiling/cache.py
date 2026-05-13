@@ -66,6 +66,23 @@ def _import_sibling(submodule: str) -> ModuleType:
 _private_field = partial(dataclasses.field, init=False, repr=False)
 
 
+class _DumpStatsHelper(Cleanup):
+    def __init__(
+        self, prof: LineProfiler, outfile: os.PathLike[str] | str,
+    ) -> None:
+        super().__init__()
+        callback = self._callback = partial(prof.dump_stats, outfile)
+        self.add_cleanup(callback)
+
+    def __repr__(self) -> str:
+        name = type(self).__name__
+        get_repr = _CALLBACK_REPR_HELPER.repr
+        return f'<{name} @ {hex(id(self))}: {get_repr(self._callback)}>'
+
+    def __call__(self) -> None:
+        self._callback()
+
+
 @final
 @dataclasses.dataclass
 class LineProfilingCache(Cleanup):
@@ -91,7 +108,7 @@ class LineProfilingCache(Cleanup):
     _sighandlers: dict[int, _SignalHandler | int | None] = (
         _private_field(default_factory=dict)
     )
-    _stats_dumper: Cleanup | None = _private_field(default=None)
+    _stats_dumper: _DumpStatsHelper | None = _private_field(default=None)
     # These are unstructured fields; other components can decide on what
     # to put in them. They are also pickled by `.dump()`, and are thus
     # retrievable in `.load()`-ed instances.
@@ -464,9 +481,11 @@ class LineProfilingCache(Cleanup):
                 code = compile(fobj.read(), self.preimports_module, 'exec')
                 exec(code, {})  # Use a fresh, empty namespace
 
-        # Occupy a tempfile slot in `.cache_dir` and set the profiler
-        # up to write thereto when the process terminates (with high
-        # priority)
+        # - Occupy a tempfile slot in `.cache_dir`
+        # - Set the profiler up to write thereto when the process
+        #   terminates (with high priority)
+        #   (Also keep a separate reference to the callback for e.g.
+        #   dumping stats ASAP when a signal is caught)
         prof_outfile = self.make_tempfile(
             prefix=_PROFILING_OUTPUT_PREFIX_PATTERN.format(
                 main_pid=self.main_pid,
@@ -476,17 +495,15 @@ class LineProfilingCache(Cleanup):
             suffix='.lprof',
             delete=False,
         )
-        dump_stats = partial(prof.dump_stats, prof_outfile)
-        self.add_cleanup_with_priority(dump_stats, 1)
-
-        # Create a cleanup object for the express purpose of dumping
-        # stats in an emergency (e.g. when a signal is caught)
-        self._stats_dumper = dumper = Cleanup()
+        self._stats_dumper = dumper = _DumpStatsHelper(prof, prof_outfile)
         self.patch(
+            # If we call `dumper.cleanup()` instead of `dumper` (e.g.
+            # in `._handle_signal()`), the subsequent debug-log messages
+            # are attributed to and handled by this cache instance
             dumper, '_debug_output', self._debug_output,
-            cleanup=False, name=f'{self!r}._stats_dumper',
+            cleanup=False, name='<this cache object>._stats_dumper',
         )
-        dumper.add_cleanup(dump_stats)
+        self.add_cleanup_with_priority(self._stats_dumper, 1)
 
         # Various setups
         self._setup_common(wrap_os_fork, {'reboot_forkserver': False})
@@ -519,11 +536,14 @@ class LineProfilingCache(Cleanup):
         # interpreter's EoL...
         state = 'not initiated?!'
         try:
-            # Just dump the stats ASAP without running `.cleanup()` to
-            # avoid deadlocks
-            self._debug_output(f'Caught `{name}` ({signum}), dumping stats...')
-            if self._stats_dumper is not None:
-                self._stats_dumper.cleanup()
+            # Just use the `._stats_dumper` to dump the stats ASAP
+            # without running this cache's `.cleanup()` to avoid
+            # deadlocks
+            if self._stats_dumper is None:
+                state = 'unavailable'
+            else:
+                reason = f'caught `{name}` ({signum})'
+                self._stats_dumper.cleanup(reason=reason)
         except BaseException as e:
             xc = f'{type(e).__name__}'
             msg = str(e)

@@ -22,7 +22,8 @@ import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from functools import partial
 from importlib import import_module
-from inspect import getattr_static
+from inspect import getattr_static, signature
+from multiprocessing.pool import Pool
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import SimpleQueue
 from operator import attrgetter
@@ -78,6 +79,7 @@ PS2 = ParamSpec('PS2')
 _OnTimeout = Literal['ignore', 'warn', 'error']
 PublicPatch = Literal['pool', 'process', 'logging']
 
+_CAN_CATCH_SIGTERM = sys.platform != 'win32'
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
 _LOGGERS = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
 _PATCHES: dict[str, '_Patch'] = {}
@@ -367,6 +369,42 @@ class MPConfig:
         return result
 
 
+class TaskWrapper(Generic[PS, T]):
+    """
+    Pickle-able wrapper around the supplied task callable, which writes
+    to the session's profiling-stats file on exit.
+
+    Note:
+        Since this produces extra overhead for each invocation of the
+        callable, it is only used when we can't reliably do
+        end-of-process cleanup. This mainly happens on Windows, where
+        we can't catch and handle ``SIGTERM``.
+    """
+    def __init__(self, func: Callable[PS, T]) -> None:
+        self.func = func
+        try:
+            self.__signature__ = signature(func)
+        except Exception:  # nocover
+            # Can happen with e.g. certain builin/c-based callables
+            pass
+
+    def __call__(self, *args, **kwargs) -> T:
+        stats_dumper: Callable[[], None] | None = None
+        try:
+            stats_dumper = LineProfilingCache.load()._stats_dumper
+        except Exception:
+            pass
+
+        try:
+            return self.func(*args, **kwargs)
+        finally:
+            if stats_dumper is not None:
+                # Calling the `_DumpStatsHelper` instead of using its
+                # `.cleanup()` prevents excessive per-task debugging
+                # output (and extra *extra* overhead)
+                stats_dumper()
+
+
 def _no_op(*_, **__) -> None:
     pass
 
@@ -651,6 +689,43 @@ def _register_patch(name: str, patch: _Patch | None = None) -> _Patch:
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
 
 
+@LineProfilingCache._method_wrapper
+def wrap_get_tasks(
+    _,  # No need to use the cache, but `_method_wrapper` expects it
+    vanilla_impl: Callable[Concatenate[Callable[PS1, T1], PS2], T2],
+    func: Callable[PS1, T1],
+    *args: PS2.args,
+    **kwargs: PS2.kwargs
+) -> T2:
+    """
+    Wrap around :py:meth:`.Pool._get_tasks` so that the writing of
+    profiling stats is handled within the callables sent to the child
+    processes before the parent process assumes control.
+
+    Note:
+        :py:meth:`.Pool._get_tasks` is a static method.
+    """
+    return vanilla_impl(TaskWrapper(func), *args, **kwargs)
+
+
+@LineProfilingCache._method_wrapper
+def wrap_guarded_task_generation(
+    _,  # No need to use the cache, but `_method_wrapper` expects it
+    vanilla_impl: Callable[Concatenate[Pool, int, Callable[PS1, T1], PS2], T2],
+    self: Pool,
+    result_job: int,
+    func: Callable[PS1, T1],
+    *args: PS2.args,
+    **kwargs: PS2.kwargs
+) -> T2:
+    """
+    Wrap around :py:meth:`.Pool._guarded_task_generation` so that the
+    writing of profiling stats is handled within the callables sent to
+    the child processes before the parent process assumes control.
+    """
+    return vanilla_impl(self, result_job, TaskWrapper(func), *args, **kwargs)
+
+
 @LineProfilingCache._method_wrapper  # nocover
 def wrap_worker(
     cache: LineProfilingCache,
@@ -664,10 +739,14 @@ def wrap_worker(
     processes can write profiling output as soon as the pool runs out of
     tasks.
 
-    Note:
-        This is only called in child processes and thus we can't
-        reliably measure coverage thereon; see also
-        :py:func:`wrap_bootstrap`.
+    Notes:
+        - This is only called in child processes and thus we can't
+          reliably measure coverage thereon; see also
+          :py:func:`wrap_bootstrap`.
+
+        - This only works reliably for POSIX because we can handle
+          ``SIGTERM`` on child processes and ensure that they aren't
+          prematurely terminated.
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
@@ -709,7 +788,18 @@ def _wrap_queue_get(
 
 
 _patch_pool = _register_patch('pool', Patch('pool')).add_method
-_patch_pool('', 'worker', wrap_worker)
+if _CAN_CATCH_SIGTERM:
+    # Only write profiling output once per process if it can be helped
+    _patch_pool('', 'worker', wrap_worker)
+else:
+    # Don't have a choice on platform like Windows, the only reliable
+    # way to ensure that the child survives until profiling output is
+    # written is to write it for every task before control is returned
+    # to the parent
+    _patch_pool('Pool', '_get_tasks', wrap_get_tasks, 'static')
+    _patch_pool(
+        'Pool', '_guarded_task_generation', wrap_guarded_task_generation,
+    )
 
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
 
@@ -788,7 +878,7 @@ _patch_process = partial(
 _patch_process('_bootstrap', wrap_bootstrap)
 # We only need to patch `Process.terminate()` if we can't do SIGTERM
 # handling, i.e. on Windows
-if sys.platform == 'win32':
+if not _CAN_CATCH_SIGTERM:
     _patch_process('terminate', wrap_terminate)
 
 # --------------- `multiprocessing.util` logging patches ---------------
@@ -1001,9 +1091,14 @@ def apply(
 
     Patches:
         ``'pool'``:
-            Patch :py:func:`multiprocessing.pool.worker` so that
-            profiling output is written as each child process runs out
-            of task.
+            On Windows
+                Patch :py:class:`multiprocessing.pool.Pool`'s
+                ``._get_tasks()`` and ``._guarded_task_generation()``
+                methods so that parallel tasks write profiling output.
+            Else
+                Patch :py:func:`multiprocessing.pool.worker` so that
+                profiling output is written as each child process runs
+                out of task.
         ``'process'``:
             Patch :py:class:`multiprocessing.process.BaseProcess`'s
             ``._bootstrap()`` method (and ``.terminate()`` on Windows)
