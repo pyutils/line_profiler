@@ -45,7 +45,7 @@ from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
 from line_profiler._child_process_profiling.multiprocessing_patches import (
-    _Poller, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
+    _Poller, MPConfig, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
 )
 from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler.curated_profiling import (
@@ -1795,6 +1795,9 @@ run_literal_code = partial(
 
 _PatchSummary = Mapping[str, Set[str]]
 
+_mp_patch_is_internal: Callable[[str], bool]
+_mp_patch_is_internal = operator.methodcaller('startswith', '__')
+
 
 def get_patched_attributes(
     applied_mp_patches: Collection[str] | None = None,
@@ -1828,7 +1831,10 @@ def _get_patched_attributes(
 
 
 def _get_toml_patches_section(mp_patches: Collection[str]) -> str:
-    mp_patches_as_dict = {name: name in mp_patches for name in MP_PATCHES}
+    mp_patches_as_dict = {
+        name: name in mp_patches for name in MP_PATCHES
+        if not _mp_patch_is_internal(name)
+    }
     return (
         '[tool.line_profiler.child_processes.multiprocessing.patches]\n'
         + '\n'.join(
@@ -1907,7 +1913,7 @@ _GLOBAL_MINIMAL_PATCHES = {
 _dynamically_resolved_patch_summaries: Iterable[_PatchSummary] = (
     patch.summary for name, patch in MP_PATCHES.items()
     # Basic `multiprocessing` patches are always applied
-    if name.startswith('__')
+    if _mp_patch_is_internal(name)
 )
 _dynamically_resolved_patch_summaries = itertools.chain(
     _dynamically_resolved_patch_summaries,
@@ -1933,13 +1939,15 @@ _GLOBAL_PATCHES = _get_patch_summary_union(
     _GLOBAL_MINIMAL_PATCHES,
     _HOOK_PATCHES,
     get_patched_attributes([
-        name for name in MP_PATCHES if not name.startswith('__')
+        name for name in MP_PATCHES if not _mp_patch_is_internal(name)
     ]),
 )
 # Actual patches using the default config
 DEFAULT_GLOBAL_PATCHES = _get_patch_summary_union(
     _GLOBAL_MINIMAL_PATCHES, get_patched_attributes(),
 )
+
+_DEFAULT_MP_CONFIG = MPConfig.from_config(ConfigSource.from_default())
 
 
 @pytest.mark.parametrize(('run_profiled_code', 'label1'),
@@ -2128,6 +2136,7 @@ def test_cache_setup_main_process(
         *(
             (name in mp_patches, _filter_patches(patch.summary))
             for name, patch in MP_PATCHES.items()
+            if not _mp_patch_is_internal(name)
         ),
     ])
     try:
@@ -2474,21 +2483,24 @@ def _test_apply_mp_patches_inner(
 
 
 def _test_apply_mp_patches(
-    patch_pool: bool, patch_process: bool, intercept_logs: bool, **kwargs
+    patch_pool: bool | None = None,
+    patch_process: bool | None = None,
+    intercept_logs: bool | None = None,
+    trace_pids: bool | None = None,
+    **kwargs
 ) -> None:
-    mp_patches: list[str] = []
-    if patch_pool:
-        mp_patches.append('pool')
-    if patch_process:
-        mp_patches.append('process')
-    if intercept_logs:
-        mp_patches.append('logging')
+    patches = cast(dict[str, bool], _DEFAULT_MP_CONFIG.patches.copy())
+    for name, applied in {
+        'pool': patch_pool, 'process': patch_process,
+        'logging': intercept_logs, 'child_pids': trace_pids,
+    }.items():
+        if applied is not None:
+            patches[name] = applied
+    mp_patches = [name for name, applied in patches.items() if applied]
     with _check_warnings() as cw:
-        # Note: we can't guarantee that everything is set up early
-        # enough for cleanup to occur properly in child processes which
-        # don't receive any tasks, unless both the `process` and `pool`
-        # patches are applied
-        if patch_pool and patch_process:
+        if 'child_pids' in mp_patches:
+            # With PID bookkeeping we should be able to weed out all
+            # the child processes which didn't perform any work
             cw.forbid_warnings(category=UserWarning, module='line_profiler')
         cw.forbid_warnings(module='multiprocessing')
         _test_apply_mp_patches_inner(mp_patches=mp_patches, **kwargs)
@@ -2497,12 +2509,16 @@ def _test_apply_mp_patches(
 @(_Params.new('start_method',
               ['fork', 'forkserver', 'spawn', 'dummy'],
               defaults='dummy')
-  # We only need to check if `intercept_logs` work, the other
+  # We only need to check if `intercept_logs = logging` work, the other
   # parametrizations don't matter
   + _Params.new(('intercept_logs', 'label1'),
-                [(True, 'with-intercept-logs'), (False, 'no-intercept-logs')],
-                defaults=(False, 'no-intercept-logs'))).sorted()
-@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label2'),
+                [(True, 'with-logging'), (False, 'no-logging')],
+                defaults=(None, 'default-logging'))
+  # Same deal with `trace_pids = child_pids`
+  + _Params.new(('trace_pids', 'label2'),
+                [(True, 'with-child_pids'), (False, 'no-child-pids')],
+                defaults=(None, 'default-child-pids'))).sorted()
+@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label3'),
                          [(True, True, 'pool-and-process'),
                           (True, False, 'pool-only'),
                           (False, True, 'process-only')])
@@ -2515,11 +2531,13 @@ def test_apply_mp_patches_success(
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     patch_pool: bool,
     patch_process: bool,
-    intercept_logs: bool,
+    intercept_logs: bool | None,
+    trace_pids: bool | None,
     n: int,
     nprocs: int,
     label1: str,
     label2: str,
+    label3: str,
 ) -> None:
     """
     Test that :py:func:`line_profiler._child_process_profiling\
@@ -2533,6 +2551,7 @@ def test_apply_mp_patches_success(
         patch_pool,
         patch_process,
         intercept_logs,
+        trace_pids,
         tmp_path_factory=tmp_path_factory,
         create_cache=create_cache,
         ext_module_object=ext_module_object,
@@ -2591,7 +2610,6 @@ def test_apply_mp_patches_failure(
     _test_apply_mp_patches(
         patch_pool,
         patch_process,
-        intercept_logs=False,
         tmp_path_factory=tmp_path_factory,
         create_cache=create_cache,
         ext_module_object=ext_module_object,
