@@ -254,6 +254,12 @@ process = true
 #   that the internal logs of `multiprocessing` are teed to the session
 #   cache's debug logs
 logging = false
+# - `multiprocessing.patches.child_pids` (bool):
+#   Whether to patch `multiprocessing.pool.worker()` and
+#   `multiprocessing.pool.Pool` so that the the parent process keeps
+#   track of the workload sent to each child, suppressing stray warnings
+#   about empty output files where appropriate
+child_pids = true
 
 # Polling controls, used for the `pool` patch
 

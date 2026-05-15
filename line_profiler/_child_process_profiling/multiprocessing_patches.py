@@ -20,13 +20,13 @@ import os
 import sys
 import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence, Set
-from functools import partial
+from functools import partial, wraps
 from importlib import import_module
 from inspect import getattr_static, signature
 from multiprocessing.pool import Pool
 from multiprocessing.process import BaseProcess
-from multiprocessing.queues import SimpleQueue
 from operator import attrgetter
+from queue import SimpleQueue
 from time import sleep, monotonic
 from types import MappingProxyType as mappingproxy, MethodType, ModuleType
 from typing import (
@@ -34,7 +34,6 @@ from typing import (
     Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
     cast, final, overload,
 )
-
 from typing_extensions import Concatenate, ParamSpec, Self
 
 try:
@@ -77,7 +76,7 @@ PS = ParamSpec('PS')
 PS1 = ParamSpec('PS1')
 PS2 = ParamSpec('PS2')
 _OnTimeout = Literal['ignore', 'warn', 'error']
-PublicPatch = Literal['pool', 'process', 'logging']
+PublicPatch = Literal['pool', 'process', 'logging', 'child_pids']
 
 _CAN_CATCH_SIGTERM = sys.platform != 'win32'
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
@@ -90,6 +89,18 @@ _PATCHES: dict[str, '_Patch'] = {}
 
 class _Wrapper(Protocol, Generic[PS, T]):
     def __call__(self, func: Callable[PS, T], /) -> Callable[PS, T]:
+        ...
+
+
+class _Queue(Protocol):
+    """
+    Protocol for methods common to e.g. :py:class:`queue.SimpleQueue`
+    and :py:class:`multiprocessing.queues.SimpleQueue`.
+    """
+    def put(self, obj: Any) -> None:
+        ...
+
+    def get(self) -> Any:
         ...
 
 
@@ -403,6 +414,34 @@ class TaskWrapper(Generic[PS, T]):
                 # `.cleanup()` prevents excessive per-task debugging
                 # output (and extra *extra* overhead)
                 stats_dumper()
+
+
+class _QueuePIDWrapper:
+    """
+    Wrap around a :py:class:`queue.SimpleQueue` (used by
+    :py:mod:`multiprocessing.dummy`) so that the PID info is attached to
+    the :py:meth:`.SimpleQueue.put` tuple.
+
+    Notes:
+        - Used by the ``child_pids`` patch.
+
+        - While the PID info is useless when using
+          :py:mod:`multiprocessing.dummy`, it is nonetheless necessary
+          because :py:meth:`multiprocessing.pool.Pool._handle_results`
+          has also been patched to expect the queue-item-getter function
+          to return the tuple ``(pid, original_put_value)``.
+    """
+    def __init__(self, queue: _Queue) -> None:
+        self._queue = queue
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._queue, attr)
+
+    def put(self, obj: Any) -> None:
+        self._queue.put((os.getpid(), obj))
+
+    def get(self) -> Any:
+        return self._queue.get()
 
 
 def _no_op(*_, **__) -> None:
@@ -727,10 +766,10 @@ def wrap_guarded_task_generation(
 
 
 @LineProfilingCache._method_wrapper  # nocover
-def wrap_worker(
+def wrap_worker_pool(
     cache: LineProfilingCache,
-    vanilla_impl: Callable[Concatenate[SimpleQueue, PS], None],
-    inqueue: SimpleQueue,
+    vanilla_impl: Callable[Concatenate[_Queue, PS], None],
+    inqueue: _Queue,
     *args: PS.args,
     **kwargs: PS.kwargs
 ) -> None:
@@ -755,7 +794,7 @@ def wrap_worker(
     # deadlock
     with Cleanup() as cleanup:
         if isinstance(inqueue.get, MethodType):
-            get = partial(_wrap_queue_get, cache, inqueue.get.__func__)
+            get = partial(_wrap_inqueue_get, cache, inqueue.get.__func__)
             cleanup.patch(
                 inqueue, 'get', MethodType(get, inqueue),
                 name='<current process>._inqueue',
@@ -763,14 +802,18 @@ def wrap_worker(
         return vanilla_impl(inqueue, *args, **kwargs)
 
 
-def _wrap_queue_get(
+def _wrap_inqueue_get(
     cache: LineProfilingCache,
-    vanilla_impl: Callable[Concatenate[SimpleQueue, PS], T],
-    self: SimpleQueue,
+    vanilla_impl: Callable[Concatenate[_Queue, PS], T],
+    self: _Queue,
     /,
     *args: PS.args,
     **kwargs: PS.kwargs
 ) -> T:
+    """
+    Intecept the sentinel value (:py:const:`None`) signifiying the end
+    of the queue and perform cleanup.
+    """
     result = vanilla_impl(self, *args, **kwargs)
     ntasks: dict[int, int]
     ntasks = cache._additional_data.setdefault('mp_queue_ntasks', {})
@@ -790,7 +833,7 @@ def _wrap_queue_get(
 _patch_pool = _register_patch('pool', Patch('pool')).add_method
 if _CAN_CATCH_SIGTERM:
     # Only write profiling output once per process if it can be helped
-    _patch_pool('', 'worker', wrap_worker)
+    _patch_pool('', 'worker', wrap_worker_pool)
 else:
     # Don't have a choice on platform like Windows, the only reliable
     # way to ensure that the child survives until profiling output is
@@ -855,7 +898,7 @@ def wrap_bootstrap(
 
         - ``SIGTERM`` handling is not consistent on Windows, so we made
           :py:meth:`.LineProfilingCache._add_signal_handler` a no-op
-          there. Hence :py:func:`wrap_terminate` remains necessary in
+          there. Hence :py:func:`wrap_terminate` remains necessary for
           mitigating unclean exits.
     """
     # Set a signal handler for SIGTERM to help child processes with
@@ -880,6 +923,178 @@ _patch_process('_bootstrap', wrap_bootstrap)
 # handling, i.e. on Windows
 if not _CAN_CATCH_SIGTERM:
     _patch_process('terminate', wrap_terminate)
+
+# ---------------------- PID bookkeeping patches -----------------------
+
+
+@LineProfilingCache._method_wrapper
+def wrap_handle_results(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[
+        Concatenate[_Queue, Callable[[], tuple[Any, ...] | None], PS],
+        None
+    ],
+    outqueue: _Queue,
+    # Since we patched `outqueue.put()` in the child process, the result
+    # tuple pushed to the parent has an extra item (the child PID)
+    get: Callable[[], tuple[int, tuple[Any, ...]] | None],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> None:
+    """
+    Wrap around :py:meth:`multiprocessing.pool.Pool._handle_results` so
+    that it handles the extra info (PID of child process handling the
+    task) included by :py:func:`.wrap_worker_pid`.
+
+    Note:
+        :py:meth:`.Pool._handle_results` is a static method.
+    """
+    # Somehow this doesn't type-check with either `mypy` or `ty` when
+    # we use a `TypeVar` instead of `Any` with the tuple items...
+    # (see `ty` issue #3467)
+    wrapped_get = partial(_wrap_outqueue_quick_get, cache, get)
+    vanilla_impl(outqueue, wrapped_get, *args, **kwargs)
+
+
+@LineProfilingCache._method_wrapper  # nocover
+def wrap_worker_pid(
+    _,  # We don't need the cache instance, but `@_method_wrapper` does
+    vanilla_impl: Callable[Concatenate[_Queue, _Queue, PS], None],
+    inqueue: _Queue,
+    outqueue: _Queue,
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> None:
+    """
+    Wrap around :py:func:`multiprocessing.pool.worker` so that child
+    processes report their PIDs as they pass the task results back to
+    the parent.
+
+    Note:
+        This is only called in child processes and thus we can't
+        reliably measure coverage thereon; see also
+        :py:func:`wrap_bootstrap`.
+    """
+    # Note: using the `cache` itself as the context manager is prone to
+    # deadlock
+    with Cleanup() as cleanup:
+        if isinstance(outqueue, SimpleQueue):
+            # `multiprocessing.dummy` instantiates C-based queue
+            # objects, which doesn't permit assigning to the instance
+            # (because it doesn't have an instance dict)...
+            # so just wrap the queue with a helper class
+            outqueue = _QueuePIDWrapper(outqueue)
+        elif isinstance(outqueue.put, MethodType):
+            put = partial(_wrap_outqueue_put, outqueue.put.__func__)
+            cleanup.patch(
+                outqueue, 'put', MethodType(put, outqueue),
+                name='<current process>._outqueue',
+            )
+        return vanilla_impl(inqueue, outqueue, *args, **kwargs)
+
+
+@LineProfilingCache._method_wrapper
+def wrap_process(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[PS, P],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> P:
+    """
+    Wrap around :py:func:`multiprocessing.pool.Pool.Process` so that the
+    processes created can report on usage when
+    :py:meth:`.BaseProcess.join`-ed or
+    :py:meth:`.BaseProcess.terminate`-ed.
+
+    Note:
+        :py:meth:`.Pool.Process` is a static method.
+    """
+    proc = vanilla_impl(*args, **kwargs)
+    # Note: since we don't clean up here, there's no need to instantiate
+    # another `Cleanup` helper
+    name = f'<{type(proc).__name__} @ {hex(id(proc))}>'
+    patch = partial(cache.patch, cleanup=False, name=name)
+    for method, action in ('join', 'joining'), ('terminate', 'terminating'):
+        bound = getattr(proc, method)
+        if isinstance(bound, MethodType):
+            finalize = _wrap_process_finalize(cache, bound.__func__, action)
+            patch(proc, method, MethodType(finalize, proc))
+    return proc
+
+
+def _wrap_process_finalize(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[Concatenate[P, PS], None],
+    action: str,
+) -> Callable[Concatenate[P, PS], None]:
+    """
+    Check if the process has run any tasks;
+    if not, report to the cache.
+
+    Note:
+        Since the process object is pickled, this method has to directly
+        return a function object instead of merely being
+        :py:func:`partial`-ed and wrapped in a
+        :py:class:`types.MethodType`.
+    """
+    @wraps(vanilla_impl)
+    def finaize(self: P, *args: PS.args, **kwargs: PS.kwargs) -> None:
+        pid: int | None = getattr(self, 'pid', None)
+        if pid is not None:
+            ntasks = _get_ntasks(cache).pop(pid, 0)
+            if not ntasks:
+                cache._warn_possible_lack_of_stats(pid)
+            msg = f'{action} process {pid} which ran {ntasks} task(s)'
+            cache._debug_output(msg)
+        vanilla_impl(self, *args, **kwargs)
+
+    action = action.capitalize()
+    return finaize
+
+
+def _wrap_outqueue_put(
+    vanilla_impl: Callable[
+        Concatenate[_Queue, tuple[Any, ...], PS], None
+    ],
+    self: _Queue,
+    obj: tuple[Any, ...],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> None:
+    """
+    Smuggle in the PID of the child process so that the parent can keep
+    track of which child completed what task.
+    """
+    vanilla_impl(self, (os.getpid(), obj), *args, **kwargs)
+
+
+def _wrap_outqueue_quick_get(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[PS, tuple[int, tuple[Any, ...]] | None],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> tuple[Any, ...] | None:
+    """
+    Take and process the PID of the child process completing the task.
+    """
+    result = vanilla_impl(*args, **kwargs)
+    if result is None:
+        return None
+    pid, orig_result = result
+    ntasks = _get_ntasks(cache)
+    ntasks[pid] = ntasks.get(pid, 0) + 1
+    return orig_result
+
+
+def _get_ntasks(cache: LineProfilingCache) -> dict[int, int]:
+    key = 'mp_proc_ntasks'
+    return cache._additional_data.setdefault(key, cast(dict[int, int], {}))
+
+
+_patch_pid = _register_patch('child_pids', Patch('pool')).add_method
+_patch_pid('', 'worker', wrap_worker_pid)
+_patch_pid('Pool', '_handle_results', wrap_handle_results, 'static')
+_patch_pid('Pool', 'Process', wrap_process, 'static')
 
 # --------------- `multiprocessing.util` logging patches ---------------
 
@@ -1084,7 +1299,8 @@ def apply(
             so as to ensure that profiling happens on processes forked
             therefrom (see Note).
         patches \
-(Collection[Literal['pool', 'process', 'logging'] | None]):
+(Collection[Literal['pool', 'process', 'logging', 'child_pids'] \
+| None]):
             Patches to apply to :py:mod:`multiprocessing`; see the
             following section for a description of each;
             the default is taken from the TOML config file.
@@ -1108,6 +1324,18 @@ def apply(
             Patch :py:mod:`multiprocessing.util`'s logging methods (e.g.
             ``debug()`` and ``info()``) so that their messages are teed
             to the cache's debug log.
+        ``'child_pids'``:
+            Patch the following components of
+            :py:mod:`multiprocess.pool` so that the parent process keeps
+            track of the workload executed by each child process,
+            reducing stray warnings about the lack of profiling stats
+            reported thereby:
+
+            - :py:func:`multiprocessing.pool.worker`
+
+            - :py:meth:`multiprocessing.pool.Pool._handle_results`
+
+            - :py:meth:`multiprocessing.pool.Pool.Process`
 
     Side effects:
         - The aforementioned patches applied
