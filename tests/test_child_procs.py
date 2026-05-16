@@ -7,11 +7,13 @@ import itertools
 import multiprocessing.pool
 import operator
 import os
+import pickle
 import re
 import shlex
 import subprocess
 import sys
 import sysconfig
+import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -20,8 +22,11 @@ from collections.abc import (
 )
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from functools import lru_cache, partial, wraps
-from io import StringIO
+from io import BytesIO, StringIO
 from importlib import import_module
+from multiprocessing.pool import (  # type: ignore
+    ExceptionWithTraceback as ExceptionHelper,
+)
 from numbers import Real
 from pathlib import Path
 from runpy import run_path
@@ -30,7 +35,7 @@ from textwrap import dedent, indent
 from time import monotonic
 from types import MappingProxyType, ModuleType, TracebackType
 from typing import (
-    TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar,
+    TYPE_CHECKING, Any, Generic, IO, Literal, Protocol, TypeVar,
     cast, final, overload,
 )
 from typing_extensions import Self, ParamSpec
@@ -66,7 +71,7 @@ NUM_NUMBERS = 100
 NUM_PROCS = 4
 START_METHODS = set(multiprocessing.get_all_start_methods())
 
-_SUBPROC_TIMEOUT = 5  # Seconds
+_TEST_TIMEOUT = 5  # Seconds
 _DEBUG = True
 _WINDOWS = sys.platform == 'win32'
 
@@ -609,6 +614,13 @@ class ResultMismatch(ValueError):
                 tb.tb_frame.f_code.co_filename, tb.tb_lineno, msg,
             )
         return msg
+
+
+class _TestTimeout(RuntimeError):
+    """
+    Error raised by the :py:func:`_timeout` decorator.
+    """
+    pass
 
 
 @final
@@ -1788,6 +1800,101 @@ run_literal_code = partial(
     _run_test_module, _run_as_literal_code, profiled_code_is_tempfile=True,
 )
 
+
+@overload
+def _timeout(
+    func: Callable[PS, T], *, timeout: float = _TEST_TIMEOUT,
+) -> Callable[PS, T]:
+    ...
+
+
+@overload
+def _timeout(
+    func: None = None, *, timeout: float = _TEST_TIMEOUT,
+) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
+    ...
+
+
+def _timeout(
+    func: Callable[PS, T] | None = None, *,
+    timeout: float = _TEST_TIMEOUT,
+) -> Callable[PS, T] | Callable[[Callable[PS, T]], Callable[PS, T]]:
+    """
+    Decorate the test function so that it is run in another thread and
+    can be timed out.
+
+    Example:
+        >>> from time import sleep
+
+        >>> @_timeout(timeout=.5)
+        ... def my_func(
+        ...     n: int, delay: float = 1, error: bool = False,
+        ... ) -> list[int]:
+        ...     sleep(delay)
+        ...     if error:
+        ...         raise RuntimeError('my error message')
+        ...     return list(range(n))
+
+        Normal execution:
+
+        >>> my_func(3, 0) + [3]
+        [0, 1, 2, 3]
+
+        Erroring out:
+
+        >>> my_func(3, 0, error=True)
+        Traceback (most recent call last):
+          ...
+        RuntimeError: my error message
+
+        Timing out:
+
+        >>> my_func(4, delay=5)  # doctest: +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+          ...
+        test_child_procs._TestTimeout:
+        my_func(4, delay=5): timed out after 0.5 s
+    """
+    if func is None:
+        return cast(
+            Callable[[Callable[PS, T]], Callable[PS, T]],
+            partial(_timeout, timeout=timeout),
+        )
+
+    @wraps(func)
+    def inner_wrapper(
+        fobj: IO[bytes], /, *args: PS.args, **kwargs: PS.kwargs
+    ) -> None:
+        try:
+            result = True, func(*args, **kwargs)
+        except Exception as e:
+            result = False, ExceptionHelper(e, e.__traceback__)
+        pickle.dump(result, fobj)
+
+    @wraps(func)
+    def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
+        with BytesIO() as bio:
+            thread = new_thread(args=(bio, *args), kwargs=kwargs)
+            thread.start()
+            thread.join(timeout)
+            if not thread.is_alive():
+                successful, result = pickle.loads(bio.getvalue())
+                if successful:
+                    return result
+                assert isinstance(result, Exception)
+                raise result
+        args_repr = [repr(a) for a in args]
+        args_repr.extend(f'{k}={v!r}' for k, v in kwargs.items())
+        name = getattr(func, '__name__', repr(func))
+        call_repr = f'{name}({", ".join(args_repr)})'
+        msg = f'{call_repr}: timed out after {timeout:.2g} s'
+        raise _TestTimeout(msg)
+
+    new_thread = partial(threading.Thread, target=inner_wrapper, daemon=True)
+
+    return wrapper
+
+
 # ============================= Unit tests =============================
 
 # XXX: Tests in this section concerns implementation details, and the
@@ -2402,8 +2509,14 @@ def _test_apply_mp_patches_inner(
     # with `preimports_module=True`, both are just imported and added
     # to the profiler, so the code paths are the same
     profiled_func = ext_module_object.my_external_sum
+    # Note: it would have been more intuitive to just apply `@_timeout`
+    # to this whole function and run it all in a new thread, but that
+    # seem to interact adversely with patch application and prof-data
+    # collection... so just timeout the function invoking
+    # `multiprocessing`
+    sum_with_timeout = _timeout(test_module_object.sum_in_child_procs)
     called_func = partial(
-        test_module_object.sum_in_child_procs,
+        sum_with_timeout,
         n=nprocs,
         my_sum=profiled_func,
         start_method=start_method,
@@ -2438,7 +2551,8 @@ def _test_apply_mp_patches_inner(
     loop_line = get_lineno(ext_module_object.__file__, 'EXT-LOOP')
 
     if fail:
-        xc_context: AbstractContextManager[Any] = pytest.raises(RuntimeError)
+        xc_context: AbstractContextManager[Any]
+        xc_context = pytest.raises(RuntimeError, match='^forced failure$')
         nloops_expected = n
     else:
         xc_context = nullcontext()
@@ -2807,7 +2921,7 @@ def _test_profiling_multiproc_script(
         nhits=nhits,
         nnums=nnums,
         nprocs=nprocs,
-        timeout=_SUBPROC_TIMEOUT,
+        timeout=_TEST_TIMEOUT,
         debug_log=(
             'debug.log' if prof_child_procs and _DEBUG else None
         ),
@@ -2997,7 +3111,7 @@ def _test_profiling_bare_python(
         """.format(concat_command_line(sub_cmd)))
     cmd.extend(['-c', code])
     proc = _run_subproc(
-        cmd, text=True, capture_output=True, timeout=_SUBPROC_TIMEOUT,
+        cmd, text=True, capture_output=True, timeout=_TEST_TIMEOUT,
     )
 
     nhits = {'EXT-INVOCATION': 1, 'EXT-LOOP': n}
