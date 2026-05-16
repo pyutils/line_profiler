@@ -1038,18 +1038,23 @@ def _wrap_process_finalize(
         :py:class:`types.MethodType`.
     """
     @wraps(vanilla_impl)
-    def finaize(self: P, *args: PS.args, **kwargs: PS.kwargs) -> None:
-        pid: int | None = getattr(self, 'pid', None)
-        if pid is not None:
-            ntasks = _get_ntasks(cache).pop(pid, 0)
-            if not ntasks:
-                cache._warn_possible_lack_of_stats(pid)
-            msg = f'{action} process {pid} which ran {ntasks} task(s)'
-            cache._debug_output(msg)
-        vanilla_impl(self, *args, **kwargs)
+    def finalize(self: P, *args: PS.args, **kwargs: PS.kwargs) -> None:
+        try:
+            pid: int | None = getattr(self, 'pid', None)
+            checked_procs = _get_checked_processes(cache)
+            identifier = id(self), pid
+            if not (pid is None or identifier in checked_procs):
+                ntasks = _get_ntasks(cache).pop(pid, 0)
+                if not ntasks:
+                    cache._warn_possible_lack_of_stats(pid)
+                msg = f'{action} process {pid} which ran {ntasks} task(s)'
+                cache._debug_output(msg)
+                checked_procs.add(cast(tuple[int, int], identifier))
+        finally:
+            vanilla_impl(self, *args, **kwargs)
 
     action = action.capitalize()
-    return finaize
+    return finalize
 
 
 def _wrap_outqueue_put(
@@ -1089,6 +1094,15 @@ def _wrap_outqueue_quick_get(
 def _get_ntasks(cache: LineProfilingCache) -> dict[int, int]:
     key = 'mp_proc_ntasks'
     return cache._additional_data.setdefault(key, cast(dict[int, int], {}))
+
+
+def _get_checked_processes(
+    cache: LineProfilingCache,
+) -> set[tuple[int, int]]:
+    key = 'mp_proc_checked_workload'
+    return cache._additional_data.setdefault(
+        key, cast(set[tuple[int, int]], set()),
+    )
 
 
 _patch_pid = _register_patch('child_pids', Patch('pool')).add_method
