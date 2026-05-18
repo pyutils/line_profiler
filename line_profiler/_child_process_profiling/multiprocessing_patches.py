@@ -14,6 +14,7 @@ en/latest/subprocess.html#using-multiprocessing>`__.
 """
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import multiprocessing
 import os
@@ -400,20 +401,20 @@ class TaskWrapper(Generic[PS, T]):
             pass
 
     def __call__(self, *args, **kwargs) -> T:
-        stats_dumper: Callable[[], None] | None = None
+        callback: Callable[[], None] = _no_op
         try:
-            stats_dumper = LineProfilingCache.load()._stats_dumper
+            cache = LineProfilingCache.load()
         except Exception:
             pass
+        else:
+            # Note: this doesn't write debugging output... doing so for
+            # every task would be excessive
+            callback = partial(_dump_stats_quick, cache)
 
         try:
             return self.func(*args, **kwargs)
         finally:
-            if stats_dumper is not None:
-                # Calling the `_DumpStatsHelper` instead of using its
-                # `.cleanup()` prevents excessive per-task debugging
-                # output (and extra *extra* overhead)
-                stats_dumper()
+            callback()
 
 
 class _QueuePIDWrapper:
@@ -448,6 +449,32 @@ def _no_op(*_, **__) -> None:
     pass
 
 
+def _setup_in_mp_child(cache: LineProfilingCache) -> None:
+    """
+    Perform :py:mod:`multiprocessing`-specific setup in a child process
+    curated by the module. Currently it does the following:
+
+    - Set up ``cache`` to handle ``SIGTERM`` on POSIX if not already
+      set.
+
+    - Unregister the :py:mod:`atexit` hook associated with ``cache`` to
+      avoid possible clashes with the profiling-file writing managed by
+      this module.
+    """
+    xc: Exception | None = None
+    for setup in [_add_sigterm_handler_in_child, _unregister_atexit_hook]:
+        try:
+            setup(cache)
+        except Exception as e:
+            xc = e
+    if xc is not None:
+        xc_str = type(xc).__name__
+        if str(xc):
+            xc_str = f'{xc_str}: {xc}'
+        cache._debug_output(f'Setup failed in process {os.getpid()}: {xc_str}')
+        raise xc
+
+
 def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
     key = 'mp_added_sigterm_handler'
     if not MPConfig.from_cache(cache).catch_sigterm:
@@ -459,6 +486,35 @@ def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
         return
     cache._add_signal_handler()
     cache._additional_data[key] = True
+
+
+def _unregister_atexit_hook(cache: LineProfilingCache) -> None:
+    atexit.unregister(cache._atexit_hook)
+
+
+def _dump_stats_quick(
+    cache: LineProfilingCache,
+    *,
+    reason: str | None = None,
+    debug: bool = False,
+) -> None:
+    """
+    Note:
+        We don't really care about cleanup in the child process, so just
+        dump the stats and bail to reduce the chance of end-of-process
+        shenanigans causing a deadlock...
+        but do use ``._stats_dumper.cleanup()`` instead of
+        ``.__call__()`` so that we get debugging output (if ``debug`` is
+        true)
+    """
+    stats_dumper = cache._stats_dumper
+    if stats_dumper is None:
+        return
+    if debug:
+        stats_dumper.cleanup(force=True, reason=reason)
+    else:
+        stats_dumper()
+
 
 # ---------------------- Patching infrastructure -----------------------
 
@@ -789,7 +845,7 @@ def wrap_worker_pool(
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
-    _add_sigterm_handler_in_child(cache)
+    _setup_in_mp_child(cache)
     # Note: using the `cache` itself as the context manager is prone to
     # deadlock
     with Cleanup() as cleanup:
@@ -802,7 +858,7 @@ def wrap_worker_pool(
         return vanilla_impl(inqueue, *args, **kwargs)
 
 
-def _wrap_inqueue_get(
+def _wrap_inqueue_get(  # nocover
     cache: LineProfilingCache,
     vanilla_impl: Callable[Concatenate[_Queue, PS], T],
     self: _Queue,
@@ -811,7 +867,7 @@ def _wrap_inqueue_get(
     **kwargs: PS.kwargs
 ) -> T:
     """
-    Intecept the sentinel value (:py:const:`None`) signifiying the end
+    Intercept the sentinel value (:py:const:`None`) signifiying the end
     of the queue and perform cleanup.
     """
     result = vanilla_impl(self, *args, **kwargs)
@@ -824,7 +880,8 @@ def _wrap_inqueue_get(
         cache._debug_output(msg)
         # Got sentinel value, process is about to exit
         reason = 'ran out of tasks in `multiprocessing.process.worker()`'
-        cache.cleanup(reason=reason)
+        if cache.main_pid != os.getpid():
+            _dump_stats_quick(cache, debug=True, reason=reason)
     else:
         ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
     return result
@@ -884,9 +941,8 @@ def wrap_bootstrap(
     *args: PS.args, **kwargs: PS.kwargs
 ) -> T:
     """
-    Wrap around :py:meth:`.BaseProcess._bootstrap` to run
-    ``LineProfilingCache.load().cleanup()`` so that profiling results
-    can be gathered.
+    Wrap around :py:meth:`.BaseProcess._bootstrap` so that profiling
+    stats are written at the end.
 
     Notes:
 
@@ -903,16 +959,12 @@ def wrap_bootstrap(
     """
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
-    _add_sigterm_handler_in_child(cache)
+    _setup_in_mp_child(cache)
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
-        # Execute cleanup in a separate thread so as to avoid deadlocks,
-        # in case when `LineProfilingCache._handle_signal()` caught a
-        # signal as we're in the middle of this and initiated another
-        # `.cleanup()` call
-        reason = 'exiting `multiprocessing.Process._bootstrap()`'
-        cache.cleanup(reason=reason)
+        reason = 'exiting `multiprocessing.process.BaseProcess._bootstrap`'
+        _dump_stats_quick(cache, debug=True, reason=reason)
 
 
 _patch_process = partial(

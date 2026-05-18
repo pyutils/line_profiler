@@ -82,6 +82,11 @@ class _DumpStatsHelper(Cleanup):
     def __call__(self) -> None:
         self._callback()
 
+    def cleanup(self, *args, force: bool = False, **kwargs) -> None:
+        if force and not any(self._current_context.values()):
+            self.add_cleanup(self._callback)
+        super().cleanup(*args, **kwargs)
+
 
 @final
 @dataclasses.dataclass
@@ -510,7 +515,7 @@ class LineProfilingCache(Cleanup):
 
         # Set `.cleanup()` as an atexit hook to handle everything when
         # the child process is about to terminate
-        atexit.register(partial(self.cleanup, reason='`atexit` callback'))
+        atexit.register(self._atexit_hook)
 
         self._debug_output(f'Setup successful ({context})')
         return True
@@ -543,7 +548,7 @@ class LineProfilingCache(Cleanup):
                 state = 'unavailable'
             else:
                 reason = f'caught `{name}` ({signum})'
-                self._stats_dumper.cleanup(reason=reason)
+                self._stats_dumper.cleanup(force=True, reason=reason)
         except BaseException as e:
             xc = f'{type(e).__name__}'
             msg = str(e)
@@ -876,3 +881,7 @@ coverage/control.py
             current_pid=os.getpid(),
         )
         return self.make_tempfile(prefix=prefix, suffix='.dat', delete=False)
+
+    @cached_property
+    def _atexit_hook(self) -> Callable[[], None]:
+        return partial(self.cleanup, reason='`atexit` callback')
