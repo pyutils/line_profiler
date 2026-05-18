@@ -550,11 +550,7 @@ class LineProfilingCache(Cleanup):
                 reason = f'caught `{name}` ({signum})'
                 self._stats_dumper.cleanup(force=True, reason=reason)
         except BaseException as e:
-            xc = f'{type(e).__name__}'
-            msg = str(e)
-            if msg:
-                xc = f'{xc}: {msg}'
-            state = f'failed ({xc})'
+            state = f'failed ({self._format_exception(e)})'
             raise e
         else:
             state = 'succeeded'
@@ -793,16 +789,18 @@ coverage/control.py
                 if debug_:
                     call_fmt = cache._format_call(name, *args, **kwargs)
                     write(f'Wrapped call made: {call_fmt}...')
-                    state = 'succeeded'
                     try:
                         result = call()
-                    except Exception as e:
-                        state = 'failed'
-                        outcome = f'{type(e).__name__}'
-                        if str(e):
-                            outcome = f'{outcome}: {e}'
+                    except BaseException as e:
+                        # Note: be more defensive than normal and
+                        # prepared to deal with `BaseException`; this
+                        # decorator is often used for functions invoked
+                        # in child processes which don't cleanly
+                        # terminate
+                        state, outcome = 'failed', cache._format_exception(e)
                         raise e
                     else:
+                        state = 'succeeded'
                         outcome = _CALLBACK_REPR_HELPER.repr(result)
                         return result
                     finally:
@@ -832,6 +830,13 @@ coverage/control.py
         if not isinstance(func, str):
             func = cls._get_name(func)
         return func + call
+
+    @staticmethod
+    def _format_exception(xc: BaseException) -> str:
+        formatted = type(xc).__name__
+        if str(xc):
+            formatted = f'{formatted}: {xc}'
+        return formatted
 
     @property
     def environ(self) -> dict[str, str]:

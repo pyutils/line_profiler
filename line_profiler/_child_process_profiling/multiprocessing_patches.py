@@ -1091,7 +1091,10 @@ def _wrap_process_finalize(
     """
     @wraps(vanilla_impl)
     def finalize(self: P, *args: PS.args, **kwargs: PS.kwargs) -> None:
+        log = cache._debug_output
+        call = cache._format_call(vanilla_impl, self, *args, **kwargs)
         try:
+            log(f'Wrapped call made: {call}')
             pid: int | None = getattr(self, 'pid', None)
             checked_procs = _get_checked_processes(cache)
             identifier = id(self), pid
@@ -1099,11 +1102,24 @@ def _wrap_process_finalize(
                 ntasks = _get_ntasks(cache).pop(pid, 0)
                 if not ntasks:
                     cache._warn_possible_lack_of_stats(pid)
-                msg = f'{action} process {pid} which ran {ntasks} task(s)'
-                cache._debug_output(msg)
+                log(f'{action} process {pid} which ran {ntasks} task(s)...')
                 checked_procs.add(cast(tuple[int, int], identifier))
+        except BaseException as e:
+            log(
+                f'Error in bookkeeping ({cache._format_exception(e)}), '
+                'invoking base implementation nonetheless...'
+            )
+            raise e
         finally:
-            vanilla_impl(self, *args, **kwargs)
+            try:
+                vanilla_impl(self, *args, **kwargs)
+            except BaseException as e:
+                state = f'failed ({cache._format_exception(e)})'
+                raise e
+            else:
+                state = 'succeeded'
+            finally:
+                log(f'Wrapped call {call} {state}')
 
     action = action.capitalize()
     return finalize
