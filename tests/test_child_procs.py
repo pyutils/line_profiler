@@ -20,7 +20,7 @@ from collections.abc import (
     Callable,
     Collection, Generator, Iterable, Iterator, Mapping, Sequence, Set,
 )
-from contextlib import AbstractContextManager, ExitStack, nullcontext
+from contextlib import ExitStack
 from functools import lru_cache, partial, wraps
 from io import BytesIO, StringIO
 from importlib import import_module
@@ -1732,12 +1732,12 @@ def _run_test_module(
         if debug_log:
             runner_args.extend(['--debug-log', debug_log])
         old_pth_files = _preserve_pth_files.get_pth_files()
-        proc = run_helper(
-            runner_args, test_args, test_module,
-            text=True, capture_output=True, check=(check and not fail),
-            **kwargs
-        )
         try:
+            proc = run_helper(
+                runner_args, test_args, test_module,
+                text=True, capture_output=True, check=(check and not fail),
+                **kwargs
+            )
             # Checks:
             if fail:
                 # - The process has failed as expected
@@ -1769,7 +1769,7 @@ def _run_test_module(
             for tag, num in (nhits or {}).items():
                 _check_output(proc.stdout, tag, num)
         finally:
-            if debug_log is not None:
+            if debug_log is not None and os.path.exists(debug_log):
                 with open(debug_log) as fobj:
                     print('-- Combined debug logs --', file=sys.stderr)
                     print(indent(fobj.read(), '  '), end='', file=sys.stderr)
@@ -1862,14 +1862,25 @@ def _timeout(
         )
 
     @wraps(func)
-    def inner_wrapper(
+    def worker(
         fobj: IO[bytes], /, *args: PS.args, **kwargs: PS.kwargs
     ) -> None:
         try:
             result = True, func(*args, **kwargs)
         except Exception as e:
             result = False, ExceptionHelper(e, e.__traceback__)
-        pickle.dump(result, fobj)
+        # Do this instead of directly using `pickle.dump(..., fobj)` so
+        # that pickling errors and file-handle-related errors are
+        # handled separately
+        serialized = pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            fobj.write(serialized)
+            fobj.flush()
+        except Exception:
+            # Since this is run in a daemon thread, by the time this
+            # write happens the main thread could've already timed out
+            # and destroyed `fobj`... in that case just gracefully exit
+            pass
 
     @wraps(func)
     def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
@@ -1890,7 +1901,7 @@ def _timeout(
         msg = f'{call_repr}: timed out after {timeout:.2g} s'
         raise _TestTimeout(msg)
 
-    new_thread = partial(threading.Thread, target=inner_wrapper, daemon=True)
+    new_thread = partial(threading.Thread, target=worker, daemon=True)
 
     return wrapper
 
@@ -2550,13 +2561,10 @@ def _test_apply_mp_patches_inner(
     assert ext_module_object.__file__
     loop_line = get_lineno(ext_module_object.__file__, 'EXT-LOOP')
 
-    if fail:
-        xc_context: AbstractContextManager[Any]
-        xc_context = pytest.raises(RuntimeError, match='^forced failure$')
-        nloops_expected = n
-    else:
-        xc_context = nullcontext()
-        nloops_expected = n + nprocs
+    nloops_expected = n
+    if not fail:
+        # Counts from the one final sum over the parallel results
+        nloops_expected += nprocs
 
     if start_method not in ('dummy', *START_METHODS):
         pytest.skip(
@@ -2564,10 +2572,20 @@ def _test_apply_mp_patches_inner(
             'not available on the platform'
         )
 
-    with xc_context:
+    # Note: manually handle the error here instead of using
+    # `pytest.raises()` since we want certain `RuntimeError`s to be
+    # propagated and handled by `@pytest.mark.retry`
+    fail_msg = 'forced failure'
+    try:
         result = called_func(n)
-        # Check correctness of the results
-        if not fail:
+    except RuntimeError as e:
+        if not (fail and str(e) == fail_msg):
+            raise
+    else:
+        if fail:
+            msg = f"expected `RuntimeError({fail_msg!r})`, no error raised"
+            raise ValueError(msg)
+        else:  # Check correctness of the results
             assert result == n * (n + 1) // 2
 
     # Check that calls in children are traced
