@@ -1801,6 +1801,43 @@ run_literal_code = partial(
 )
 
 
+def _cleanup_profiling_in_current_thread() -> None:
+    """
+    Disable all active profiler instances on the current thread, so that
+    we don't trip over ourselves if a new thread down the road happens
+    to reuse the thread ID.
+
+    Note:
+        The thread-local profiler state is supposed to be handled by
+        :py:mod:`line_profiler._threading_patches` and
+        :py:class:`.CuratedProfilerContext`, but since a test function
+        decorated with :py:deco:`._timeout` will be isolated in a new
+        thread BEFORE the fixture setting up such management
+        (:py:func:`curated_profiler`) is invoked, we don't get that
+        managing and will have to deal with profilers ourselves.
+    """
+    class Manager(Protocol):
+        @property
+        def active_instances(self) -> set[LineProfiler]:
+            ...
+
+    lp_managers = cast(
+        dict[int, Manager], getattr(LineProfiler, '_managers', {}),
+    )
+    thread_id = threading.get_ident()
+    if thread_id not in lp_managers:
+        return
+    instances = lp_managers[thread_id].active_instances
+    for prof in set(instances):
+        count = cast(int, getattr(prof, 'enable_count', 0))
+        for _ in range(count):
+            prof.disable_by_count()
+        if count:
+            print('Disabled', prof, 'in thread', hex(thread_id))
+        # Removed after the last `.disable_by_count()`
+        assert prof not in instances
+
+
 @overload
 def _timeout(
     func: Callable[PS, T], *, timeout: float = _TEST_TIMEOUT,
@@ -1866,21 +1903,27 @@ def _timeout(
         fobj: IO[bytes], /, *args: PS.args, **kwargs: PS.kwargs
     ) -> None:
         try:
-            result = True, func(*args, **kwargs)
-        except Exception as e:
-            result = False, ExceptionHelper(e, e.__traceback__)
-        # Do this instead of directly using `pickle.dump(..., fobj)` so
-        # that pickling errors and file-handle-related errors are
-        # handled separately
-        serialized = pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL)
-        try:
-            fobj.write(serialized)
-            fobj.flush()
-        except Exception:
-            # Since this is run in a daemon thread, by the time this
-            # write happens the main thread could've already timed out
-            # and destroyed `fobj`... in that case just gracefully exit
-            pass
+            try:
+                result = True, func(*args, **kwargs)
+            except Exception as e:
+                result = False, ExceptionHelper(e, e.__traceback__)
+            # Do this instead of directly using `pickle.dump(..., fobj)`
+            # so that pickling errors and file-handle-related errors are
+            # handled separately
+            serialized = pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL)
+            try:
+                fobj.write(serialized)
+                fobj.flush()
+            except Exception:
+                # Since this is run in a daemon thread, by the time this
+                # write happens the main thread could've already timed
+                # out and destroyed `fobj`... in that case just
+                # gracefully exit
+                pass
+        finally:
+            # See the docstring for that function to see why this is
+            # needed.
+            _cleanup_profiling_in_current_thread()
 
     @wraps(func)
     def wrapper(*args: PS.args, **kwargs: PS.kwargs) -> T:
@@ -1908,7 +1951,7 @@ def _timeout(
 
 # ============================= Unit tests =============================
 
-# XXX: Tests in this section concerns implementation details, and the
+# XXX: Tests in this section concern implementation details, and the
 # tested APIs and behaviors MUST NOT be relied upon by end-users.
 
 _PatchSummary = Mapping[str, Set[str]]
@@ -2478,6 +2521,7 @@ def test_load_pth_hook(
 
 @_preserve_pth_files()
 @_preserve_attributes(_GLOBAL_PATCHES)
+@_timeout
 def _test_apply_mp_patches_inner(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
@@ -2520,14 +2564,8 @@ def _test_apply_mp_patches_inner(
     # with `preimports_module=True`, both are just imported and added
     # to the profiler, so the code paths are the same
     profiled_func = ext_module_object.my_external_sum
-    # Note: it would have been more intuitive to just apply `@_timeout`
-    # to this whole function and run it all in a new thread, but that
-    # seem to interact adversely with patch application and prof-data
-    # collection... so just timeout the function invoking
-    # `multiprocessing`
-    sum_with_timeout = _timeout(test_module_object.sum_in_child_procs)
     called_func = partial(
-        sum_with_timeout,
+        test_module_object.sum_in_child_procs,
         n=nprocs,
         my_sum=profiled_func,
         start_method=start_method,
@@ -2631,8 +2669,8 @@ def _test_apply_mp_patches(
     mp_patches = [name for name, applied in patches.items() if applied]
     with _check_warnings() as cw:
         if 'child_pids' in mp_patches:
-            # With PID bookkeeping we should be able to weed out all
-            # the child processes which didn't perform any work
+            # With PID bookkeeping we should be able to weed out all the
+            # child processes which didn't perform any work
             cw.forbid_warnings(category=UserWarning, module='line_profiler')
         cw.forbid_warnings(module='multiprocessing')
         _test_apply_mp_patches_inner(mp_patches=mp_patches, **kwargs)
