@@ -1587,7 +1587,6 @@ def _run_subproc(
     cmd: Sequence[str] | str,
     /,
     *args,
-    check: bool = False,
     env: Mapping[str, str] | None = None,
     **kwargs
 ) -> subprocess.CompletedProcess:
@@ -1595,19 +1594,19 @@ def _run_subproc(
     Wrapper around :py:func:`subprocess.run` which writes debugging
     output.
     """
+    class HasStreams(Protocol):
+        @property
+        def stdout(self) -> str | bytes | None:
+            ...
+
+        @property
+        def stderr(self) -> str | bytes | None:
+            ...
+
     if isinstance(cmd, str):
         cmd_str = cmd
     else:
         cmd_str = concat_command_line(cmd)
-
-    # If we're capturing outputs, it may be for the best to wait until
-    # we've processed the output streams to check the return code...
-    check_rc_in_run = check
-    for arg in 'stdout', 'stdin':
-        if kwargs.get(arg) not in {None, subprocess.DEVNULL}:
-            check_rc_in_run = False
-    if kwargs.get('capture_output'):
-        check_rc_in_run = False
 
     print('Command:', cmd_str)
     if env is not None:
@@ -1630,28 +1629,32 @@ def _run_subproc(
     # Note: somehow `mypy` doesn't agree with simply unpacking the
     # `*args` into `subprocess.run()`...
     status: int | str = '???'
-    proc: subprocess.CompletedProcess | None = None
+    result: HasStreams | None = None
+    subproc_errors = (
+        subprocess.CalledProcessError, subprocess.TimeoutExpired,
+    )
     time = monotonic()
     try:
         proc = subprocess.run(  # type: ignore[call-overload]
-            cmd, *args, env=env, check=check_rc_in_run, **kwargs,
+            cmd, *args, env=env, **kwargs,
         )
-    except Exception:
+    except Exception as e:
         status = 'error'
+        if isinstance(e, subproc_errors):
+            result = e
+        if hasattr(e, 'returncode'):  # `CalledProcessError`
+            status = f'{status} ({e.returncode})'
         raise
     else:
-        assert proc is not None
-        if check and not check_rc_in_run:  # Perform missing check
-            proc.check_returncode()
-        status = proc.returncode
+        result, status = proc, proc.returncode
         return proc
     finally:
         time = monotonic() - time
-        if proc is not None:
+        if result is not None:
             captured: str | bytes | None
             for name, captured, stream in [
-                ('stdout', proc.stdout, sys.stdout),
-                ('stderr', proc.stderr, sys.stderr),
+                ('stdout', result.stdout, sys.stdout),
+                ('stderr', result.stderr, sys.stderr),
             ]:
                 if captured is None:
                     continue
@@ -1660,7 +1663,7 @@ def _run_subproc(
                 print(f'{name}:\n{indent(captured, "  ")}', file=stream)
         print(
             f'-- Process end (time elapsed: {time:.2f} s / '
-            f'return status: {status})--'
+            f'return status: {status}) --'
         )
 
 
