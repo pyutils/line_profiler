@@ -14,8 +14,10 @@ import subprocess
 import sys
 import sysconfig
 import threading
+import traceback
 import warnings
 from abc import ABC, abstractmethod
+from argparse import ArgumentError
 from collections.abc import (
     Callable,
     Collection, Generator, Iterable, Iterator, Mapping, Sequence, Set,
@@ -45,6 +47,7 @@ import pytest
 import ubelt as ub
 
 from _line_profiler_hooks import load_pth_hook
+from kernprof import main as kernprof_main
 from line_profiler._child_process_profiling.cache import LineProfilingCache
 from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
@@ -53,6 +56,7 @@ from line_profiler._child_process_profiling.multiprocessing_patches import (
     _Poller, MPConfig, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
 )
 from line_profiler.autoprofile.util_static import modpath_to_modname
+from line_profiler.cleanup import Cleanup
 from line_profiler.curated_profiling import (
     CuratedProfilerContext, ClassifiedPreimportTargets,
 )
@@ -1101,12 +1105,10 @@ old['line_profiler.line_profiler']['main']
         >>> assert main is not line_profiler.main
     """
     def __init__(
-        self, targets: Mapping[str, Collection[str]], *,
+        self, targets: Mapping[str, Collection[str]] | None = None, *,
         static: bool = True, debug: bool = _DEBUG,
     ) -> None:
-        self.targets = {
-            target: set(attrs) for target, attrs in targets.items()
-        }
+        self.targets = targets
         self._stacks: list[ExitStack] = []
         self.static = static
         self.debug = debug
@@ -1199,6 +1201,23 @@ old['line_profiler.line_profiler']['main']
                 print(message)
         assert (not failures), '\n'.join(failures)
         return result
+
+    @property
+    def targets(self) -> dict[str, set[str]]:
+        if self._targets is None:
+            # Defer resolution to context entrance
+            self.targets = _GLOBAL_PATCHES
+            assert self._targets is not None
+        return self._targets
+
+    @targets.setter
+    def targets(self, targets: Mapping[str, Collection[str]] | None) -> None:
+        if targets is None:
+            self._targets = None
+            return
+        self._targets = {
+            target: set(attrs) for target, attrs in targets.items()
+        }
 
 
 class _preserve_pth_files(_CallableContextManager[frozenset[str]]):
@@ -1557,37 +1576,180 @@ else:
 
 
 def _run_as_script(
-    runner_args: list[str], test_args: list[str], test_module: _ModuleFixture,
+    request: pytest.FixtureRequest,
+    runner_args: list[str],
+    test_args: list[str],
+    test_module: _ModuleFixture,
+    *,
+    subproc: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + [str(test_module.path)] + test_args
-    test_module.install(children=True, deps_only=True)
-    return _run_subproc(cmd, **kwargs)
+    if subproc:
+        run: Callable[..., subprocess.CompletedProcess] = _run_subproc
+    else:
+        run = partial(_run_kernprof_main_in_process, request)
+    test_module.install(children=True, local=not subproc, deps_only=True)
+    return run(cmd, **kwargs)
 
 
 def _run_as_module(
-    runner_args: list[str], test_args: list[str], test_module: _ModuleFixture,
+    request: pytest.FixtureRequest,
+    runner_args: list[str],
+    test_args: list[str],
+    test_module: _ModuleFixture,
+    *,
+    subproc: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + ['-m', test_module.name] + test_args
-    test_module.install(children=True)
-    return _run_subproc(cmd, **kwargs)
+    if subproc:
+        run: Callable[..., subprocess.CompletedProcess] = _run_subproc
+    else:
+        run = partial(_run_kernprof_main_in_process, request)
+    test_module.install(children=True, local=not subproc)
+    return run(cmd, **kwargs)
 
 
 def _run_as_literal_code(
-    runner_args: list[str], test_args: list[str], test_module: _ModuleFixture,
+    request: pytest.FixtureRequest,
+    runner_args: list[str],
+    test_args: list[str],
+    test_module: _ModuleFixture,
+    *,
+    subproc: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + ['-c', test_module.path.read_text()] + test_args
-    test_module.install(children=True, deps_only=True)
-    return _run_subproc(cmd, **kwargs)
+    if subproc:
+        run: Callable[..., subprocess.CompletedProcess] = _run_subproc
+    else:
+        run = partial(_run_kernprof_main_in_process, request)
+    test_module.install(children=True, local=not subproc, deps_only=True)
+    return run(cmd, **kwargs)
+
+
+@_preserve_pth_files()
+@_preserve_attributes()
+def _run_kernprof_main_in_process(
+    request: pytest.FixtureRequest, cmd: Sequence[str],
+    *,
+    text: bool = False,
+    capture_output: bool = False,
+    check: bool = False,
+    encoding: str | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+    **_kwargs
+) -> subprocess.CompletedProcess:
+    """
+    Emulate running :cmd:`kernprof` in a subprocess with in-process
+    machineries as best as we can, so that we can retrieve more
+    debugging output when things do go south.
+    """
+    def get_streams(
+    ) -> tuple[str, str] | tuple[bytes, bytes] | tuple[None, None]:
+        if cap is None:
+            return None, None
+        stdout, stderr = cap.readouterr()
+        if text:
+            return stdout, stderr
+        if encoding is None:
+            encode = operator.methodcaller('encode')
+        else:
+            encode = operator.methodcaller('encode', encoding)
+        return encode(stdout), encode(stderr)
+
+    assert not _kwargs
+    assert cmd[0] == 'kernprof'
+
+    cap: pytest.CaptureFixture | None = None
+    stdout: str | bytes | None = None
+    stderr: str | bytes | None = None
+    if capture_output:
+        cap = request.getfixturevalue('capsys')
+    print('Command:', concat_command_line(cmd))
+    _print_env_deltas(env)
+    print('-- Emulated process start --')
+    get_streams()  # Don't include the above in the captured outputs
+
+    status: int | str = '???'
+    timed_out = False
+    time = monotonic()
+    if timeout:
+        main = _timeout(kernprof_main, timeout=timeout)
+    else:
+        main = kernprof_main
+    try:
+        try:
+            with Cleanup() as cleanup:
+                if env is not None:
+                    cleanup.update_mapping(os.environ, env)
+                main(cmd[1:], exit_on_error=False)
+        except _TestTimeout:  # `subprocess` uses `SIGKILL`
+            returncode, timed_out = -9, True
+            status = f'error ({returncode})'
+        except Exception as e:
+            # Format and output the tracebacks, otherwise we would've
+            # suppressed them
+            traceback.print_exception(e)
+            returncode = 2 if isinstance(e, ArgumentError) else 1
+            status = f'error ({returncode})'
+        else:
+            status = returncode = 0
+        stdout, stderr = get_streams()
+
+        # Turn in-process errors into the corresponding `subprocess`
+        # errors
+        if timed_out:
+            assert timeout is not None  # Assure the typechecker
+            raise subprocess.TimeoutExpired(cmd, timeout, stdout, stderr)
+        if check and returncode:
+            raise subprocess.CalledProcessError(
+                returncode, cmd, stdout, stderr,
+            )
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+    finally:
+        time = monotonic() - time
+        captured: str | bytes | None
+        for name, captured, stream in [
+            ('stdout', stdout, sys.stdout), ('stderr', stderr, sys.stderr),
+        ]:
+            if captured is None:
+                continue
+            if isinstance(captured, bytes):  # `text=False`
+                captured = captured.decode()
+            print(f'{name}:\n{indent(captured, "  ")}', file=stream)
+        print(
+            f'-- Emulated process end (time elapsed: {time:.2f} s / '
+            f'return status: {status}) --'
+        )
+
+
+def _print_env_deltas(env: Mapping[str, str] | None = None) -> None:
+    if env is None:
+        return
+    diff: list[str] = []
+    for key in set(os.environ).union(env):
+        old = os.environ.get(key)
+        new = env.get(key)
+        if old is not None is new:
+            item = f'{old!r} -> (deleted)'
+        elif old is None is not new:
+            item = f'{new!r} (added)'
+        else:
+            if old == new:
+                continue
+            item = f'{old!r} -> {new!r}'
+        diff.append(f'${{{key}}}: {item}')
+    if diff:
+        print('Env:', indent('\n'.join(diff), '  '), sep='\n')
 
 
 def _run_subproc(
     cmd: Sequence[str] | str,
     /,
     *args,
-    env: Mapping[str, str] | None = None,
     **kwargs
 ) -> subprocess.CompletedProcess:
     """
@@ -1609,22 +1771,7 @@ def _run_subproc(
         cmd_str = concat_command_line(cmd)
 
     print('Command:', cmd_str)
-    if env is not None:
-        diff: list[str] = []
-        for key in set(os.environ).union(env):
-            old = os.environ.get(key)
-            new = env.get(key)
-            if old is not None is new:
-                item = f'{old!r} -> (deleted)'
-            elif old is None is not new:
-                item = f'{new!r} (added)'
-            else:
-                if old == new:
-                    continue
-                item = f'{old!r} -> {new!r}'
-            diff.append(f'${{{key}}}: {item}')
-        if diff:
-            print('Env:', indent('\n'.join(diff), '  '), sep='\n')
+    _print_env_deltas(kwargs.get('env'))
     print('-- Process start --')
     # Note: somehow `mypy` doesn't agree with simply unpacking the
     # `*args` into `subprocess.run()`...
@@ -1635,9 +1782,7 @@ def _run_subproc(
     )
     time = monotonic()
     try:
-        proc = subprocess.run(  # type: ignore[call-overload]
-            cmd, *args, env=env, **kwargs,
-        )
+        proc = subprocess.run(cmd, *args, **kwargs)
     except Exception as e:
         status = 'error'
         if isinstance(e, subproc_errors):
@@ -1670,6 +1815,7 @@ def _run_subproc(
 @_preserve_pth_files()
 def _run_test_module(
     run_helper: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     runner: str | list[str] = 'kernprof',
@@ -1737,7 +1883,7 @@ def _run_test_module(
         old_pth_files = _preserve_pth_files.get_pth_files()
         try:
             proc = run_helper(
-                runner_args, test_args, test_module,
+                request, runner_args, test_args, test_module,
                 text=True, capture_output=True, check=(check and not fail),
                 **kwargs
             )
@@ -2352,7 +2498,7 @@ def test_cache_setup_main_process(
 @pytest.mark.parametrize(('debug', 'label4'),
                          [(True, 'with-debug'), (False, 'no-debug')])
 @pytest.mark.parametrize('n', [100])
-@_preserve_attributes(_GLOBAL_PATCHES)
+@_preserve_attributes()
 def test_cache_setup_child(
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
@@ -2449,7 +2595,7 @@ def test_cache_setup_child(
 
 
 @pytest.mark.parametrize('ppid_should_match', [True, False, None])
-@_preserve_attributes(_GLOBAL_PATCHES)
+@_preserve_attributes()
 def test_load_pth_hook(
     create_cache: Callable[..., LineProfilingCache],
     another_pid: int,
@@ -2523,7 +2669,7 @@ def test_load_pth_hook(
 
 
 @_preserve_pth_files()
-@_preserve_attributes(_GLOBAL_PATCHES)
+@_preserve_attributes()
 @_timeout
 def _test_apply_mp_patches_inner(
     tmp_path_factory: pytest.TempPathFactory,
@@ -2835,6 +2981,7 @@ def _get_mp_start_method_fuzzer(label_name: str | None) -> _Params:
                 defaults=(None, None))).sorted()
 def test_multiproc_script_sanity_check(
     run_func: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     use_local_func: bool,
@@ -2850,7 +2997,7 @@ def test_multiproc_script_sanity_check(
     with vanilla Python.
     """
     run_func(
-        test_module, tmp_path_factory,
+        request, test_module, tmp_path_factory,
         runner=sys.executable, profile=False,
         fail=fail,
         use_local_func=use_local_func,
@@ -2879,6 +3026,7 @@ def test_multiproc_script_sanity_check(
 )
 def test_running_multiproc_script(
     run_func: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     runner: str | list[str],
@@ -2899,7 +3047,7 @@ def test_running_multiproc_script(
           execution of the code and presence of profiling data
           thereafter.
     """
-    run_func(test_module, tmp_path_factory, runner, outfile, profile)
+    run_func(request, test_module, tmp_path_factory, runner, outfile, profile)
 
 
 _fuzz_prof_mp_run_func = _Params.new(('run_func', 'label1'),
@@ -2929,6 +3077,7 @@ _fuzz_prof_mp_markers = (
 
 def _test_profiling_multiproc_script(
     run_func: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     ext_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
@@ -2970,7 +3119,7 @@ def _test_profiling_multiproc_script(
         # Also make sure to include the external module in `--prof-mod`
         runner.append(f'--prof-mod={ext_module.name}')
     run_func(
-        test_module, tmp_path_factory,
+        request, test_module, tmp_path_factory,
         runner=runner,
         outfile='out.lprof',
         profile=True,
@@ -2984,6 +3133,7 @@ def _test_profiling_multiproc_script(
         debug_log=(
             'debug.log' if prof_child_procs and _DEBUG else None
         ),
+        subproc=False,
     )
 
 
@@ -2995,6 +3145,7 @@ def _test_profiling_multiproc_script(
 )
 def test_profiling_multiproc_script_success(
     run_func: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     ext_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
@@ -3054,6 +3205,7 @@ def test_profiling_multiproc_script_success(
     """
     _test_profiling_multiproc_script(
         run_func=run_func,
+        request=request,
         test_module=test_module,
         ext_module=ext_module,
         tmp_path_factory=tmp_path_factory,
@@ -3071,6 +3223,7 @@ def test_profiling_multiproc_script_success(
 @pytest.mark.parametrize(('nnums', 'nprocs'), [(2000, 3)])
 def test_profiling_multiproc_script_failure(
     run_func: Callable[..., subprocess.CompletedProcess],
+    request: pytest.FixtureRequest,
     test_module: _ModuleFixture,
     ext_module: _ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
@@ -3093,6 +3246,7 @@ def test_profiling_multiproc_script_failure(
     """
     _test_profiling_multiproc_script(
         run_func=run_func,
+        request=request,
         test_module=test_module,
         ext_module=ext_module,
         tmp_path_factory=tmp_path_factory,
