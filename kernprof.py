@@ -241,7 +241,6 @@ from line_profiler import _diagnostics as diagnostics
 
 DIAGNOSITICS_VERBOSITY = 2
 CLEANUP_PRIORITIES = {  # More negative number -> more delayed
-    'rm_cache_dir': -1024,
     'gather_logs': -1,
 }
 
@@ -1357,7 +1356,12 @@ def _prepare_child_profiling_cache(
     # be responsible for managing their lifetimes, while derivative
     # instances in child processes will merely inherit and use them
     cache = LineProfilingCache(
-        cache_dir=tempfile.mkdtemp(),
+        # We don't need to manage this tempdir separately,
+        # `options.tmpdir` and its contents will be deleted or
+        # preserved as is appropriate
+        cache_dir=tempfile.mkdtemp(
+            dir=options.tmpdir, prefix='line-profiling-cache-',
+        ),
         config=options.config,
         profiling_targets=options.prof_mod,
         rewrite_module=script_file,
@@ -1367,14 +1371,6 @@ def _prepare_child_profiling_cache(
         debug=bool(options.debug or options.debug_log),
     )
     clean_up = functools.partial(cache.add_cleanup, _remove, missing_ok=True)
-    if not diagnostics.KEEP_TEMPDIRS:
-        # Defer the scrubbing of the cache dir and let the context
-        # handle it, ideally speaking the cache dir should survive the
-        # cache object
-        ctx.add_cleanup_with_priority(
-            _remove, CLEANUP_PRIORITIES['rm_cache_dir'], cache.cache_dir,
-            recursive=True,
-        )
     clean_up(cache.filename)
 
     # This file is handed to us at the end of

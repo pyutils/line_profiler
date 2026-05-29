@@ -645,8 +645,13 @@ coverage/control.py
         """
         if not isinstance(pids, Collection):
             pids = pids,
-        with self._empty_stats_pid_registry.open(mode='a') as fobj:
-            print(*pids, sep='\n', file=fobj)
+        try:
+            with self._empty_stats_pid_registry.open(mode='a') as fobj:
+                print(*pids, sep='\n', file=fobj)
+        except FileNotFoundError:
+            # At cleanup time, the tempdir backing the cache instance
+            # may already have ceased to exist; just let that be
+            pass
 
     def _get_pids_possibly_lacking_stats(self) -> set[int]:
         """
@@ -692,7 +697,7 @@ coverage/control.py
     def _replace_loaded_instance(self, force: bool = False) -> bool:
         cls = type(self)
         if force or self._consistent_with_loaded_instance:
-            cls._loaded_instance = self
+            self.patch(cls, '_loaded_instance', self)
             return True
         return False
 

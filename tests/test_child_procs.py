@@ -2466,11 +2466,11 @@ def test_cache_setup_main_process(
         new_pth_hook, = _preserve_pth_files.get_pth_files() - original_pths
         # Check whether the patches are applied
         compare_patched(operator.is_not, assert_true=patches)
+        # Check that the instance is set as the `.load()`-ed one
+        assert cache is cache.load()
         # Check whether the patches are reversed
         cache.cleanup()
         compare_patched()
-        # Check that the instance is set as the `.load()`-ed one
-        assert cache is cache.load()
 
     # Check the debug-log output
     patterns: dict[str, bool] = dict.fromkeys(
