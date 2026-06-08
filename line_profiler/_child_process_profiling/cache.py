@@ -874,7 +874,15 @@ coverage/control.py
 
     @cached_property
     def _consistent_with_loaded_instance(self) -> bool:
-        return type(self).load()._get_init_args() == self._get_init_args()
+        cls = type(self)
+        # Note: calling `.load()` can cause a new instance to be created
+        # and stored at `._loaded_instance`, if there isn't already one
+        # such instance; guard against that
+        already_loaded = cls._loaded_instance
+        try:
+            return cls.load()._get_init_args() == self._get_init_args()
+        finally:
+            cls._loaded_instance = already_loaded
 
     @cached_property
     def _config_source(self) -> ConfigSource:
