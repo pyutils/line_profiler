@@ -1341,37 +1341,44 @@ class _WarningContext:
     catch_warnings: warnings.catch_warnings = dataclasses.field(
         default_factory=partial(warnings.catch_warnings, record=True)
     )
+    reissue_warnings: bool = False
     checks: list[tuple[_WarningMatcher, bool]] = dataclasses.field(
         default_factory=list,
     )
+    filters: list[_WarningMatcher] = dataclasses.field(default_factory=list)
+    _reissue_filtered_warnings: bool | None = dataclasses.field(
+        init=False, default=None,
+    )
 
-    def forbid_warnings(
-        self,
-        message: str | None = None,
-        category: type[Warning] | None = Warning,
-        module: str | None = None,
-        lineno: int | None = None,
-    ) -> None:
-        matcher = _WarningMatcher(
-            message=message, category=category, module=module, lineno=lineno,
-        )
-        self.checks.append((matcher, False))
+    def forbid_warnings(self, *args, **kwargs) -> None:
+        self.checks.append((self._get_matcher(*args, **kwargs), False))
 
-    def expect_warnings(
-        self,
-        message: str | None = None,
-        category: type[Warning] | None = Warning,
-        module: str | None = None,
-        lineno: int | None = None,
-    ) -> None:
-        matcher = _WarningMatcher(
-            message=message, category=category, module=module, lineno=lineno,
-        )
-        self.checks.append((matcher, True))
+    def expect_warnings(self, *args, **kwargs) -> None:
+        self.checks.append((self._get_matcher(*args, **kwargs), True))
 
-    def check(self, warnings: Sequence[_WarningInfo]) -> None:
+    def suppress_warnings(self, *args, **kwargs) -> None:
+        if self._reissue_filtered_warnings is None:
+            self._reissue_filtered_warnings = False
+        elif self._reissue_filtered_warnings:
+            raise RuntimeError(
+                'Either `.suppress_warnings()` or `.propagate_warnings()` can '
+                'be called within the same context, but not both'
+            )
+        self.filters.append(self._get_matcher(*args, **kwargs))
+
+    def propagate_warnings(self, *args, **kwargs) -> None:
+        if self._reissue_filtered_warnings is None:
+            self._reissue_filtered_warnings = True
+        elif not self._reissue_filtered_warnings:
+            raise RuntimeError(
+                'Either `.suppress_warnings()` or `.propagate_warnings()` can '
+                'be called within the same context, but not both'
+            )
+        self.filters.append(self._get_matcher(*args, **kwargs))
+
+    def check(self, infos: Sequence[_WarningInfo]) -> None:
         for matcher, allowed_or_required in self.checks:
-            matches = [info for info in warnings if matcher.match(info)]
+            matches = [info for info in infos if matcher.match(info)]
             if matches and not allowed_or_required:
                 raise ResultMismatch(
                     expected=f'no warnings matching {matcher!r}',
@@ -1380,13 +1387,59 @@ class _WarningContext:
             if not matches and allowed_or_required:
                 raise ResultMismatch(
                     expected=f'warnings matching {matcher!r}',
-                    actual=f'none out of {len(warnings)} ({warnings!r})',
+                    actual=f'none out of {len(infos)} ({infos!r})',
                 )
 
+    def reissue(self, infos: Sequence[_WarningInfo]) -> None:
+        def reissue_(info: _WarningInfo) -> None:
+            warnings.warn_explicit(
+                message=info.message,
+                category=info.category,
+                filename=info.filename,
+                lineno=info.lineno,
+            )
+
+        # If we haven't called `.suppress_warnings()` or
+        # `.propagate_warnings()`, handle warnings according to the
+        # default behavior
+        if not self.filters:
+            if self.reissue_warnings:
+                for info in infos:
+                    reissue_(info)
+            return
+        # Otherwise we handle the warnings matching any of the filters
+        # one way, and the remaining the other way:
+        # - If we used `.suppress_warnings()`, matching warnings are
+        #   suppressed, and the remainder propagated by default
+        # - If we used `.propagate_warnings()`, matching warnings are
+        #   propagated, and the remainder suppressed by default
+        # Note that we are not supposed to have called both methods
+        reissue_by_default = not self._reissue_filtered_warnings
+        for info in infos:
+            should_reissue = reissue_by_default
+            if any(matcher.match(info) for matcher in self.filters):
+                should_reissue = not should_reissue
+            if should_reissue:
+                reissue_(info)
+
+    @staticmethod
+    def _get_matcher(
+        message: str | None = None,
+        category: type[Warning] | None = Warning,
+        module: str | None = None,
+        lineno: int | None = None,
+    ) -> _WarningMatcher:
+        return _WarningMatcher(
+            message=message, category=category, module=module, lineno=lineno,
+        )
+
     @classmethod
-    def new(cls, **kwargs) -> Self:
+    def new(cls, /, *, reissue_warnings: bool = False, **kwargs) -> Self:
         kwargs['record'] = True
-        return cls(warnings.catch_warnings(**kwargs))
+        return cls(
+            warnings.catch_warnings(**kwargs),
+            reissue_warnings=reissue_warnings,
+        )
 
 
 class _check_warnings(Sequence[_WarningInfo]):
@@ -1426,7 +1479,7 @@ class _check_warnings(Sequence[_WarningInfo]):
         >>> assert len(cw) == 1
         >>> assert str(cw[0].message) == 'foobar'
     """
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, /, **kwargs) -> None:
         self._new_context: Callable[[], _WarningContext] = partial(
             _WarningContext.new, **kwargs,
         )
@@ -1439,7 +1492,7 @@ class _check_warnings(Sequence[_WarningInfo]):
         """
         Equivalent to calling
         ``filterwarnings('error', *args, **kwargs)``;
-        at context exit, if ANY matching warning has been issued, an
+        at context exit, if ANY matching warning has been captured, an
         error will be raised.
         """
         ctx, _ = self._current_context
@@ -1449,11 +1502,41 @@ class _check_warnings(Sequence[_WarningInfo]):
         """
         Equivalent to calling
         ``filterwarnings('always', *args, **kwargs)``;
-        at context exit, if NO matching warnings have been issued, an
+        at context exit, if NO matching warnings have been captured, an
         error will be raised.
         """
         ctx, _ = self._current_context
         ctx.expect_warnings(*args, **kwargs)
+
+    def suppress_warnings(self, *args, **kwargs) -> None:
+        """
+        Equivalent to calling
+        ``filterwarnings('never', *args, **kwargs)``;
+        at context exit, captured warnings are SUPPRESSED if they match
+        the filter(s) and REISSUED otherwise.
+
+        Note:
+            Within each context level, one can call EITHER
+            :py:meth:`.suppress_warnings` or
+            :py:meth:`.propagate_warnings` but not both.
+        """
+        ctx, _ = self._current_context
+        ctx.suppress_warnings(*args, **kwargs)
+
+    def propagate_warnings(self, *args, **kwargs) -> None:
+        """
+        Equivalent to calling
+        ``filterwarnings('always', *args, **kwargs)``;
+        at context exit, captured warnings are REISSUED if they match
+        the filter(s) and SUPPRESSED otherwise.
+
+        Note:
+            Within each context level, one can call EITHER
+            :py:meth:`.suppress_warnings` or
+            :py:meth:`.propagate_warnings` but not both.
+        """
+        ctx, _ = self._current_context
+        ctx.propagate_warnings(*args, **kwargs)
 
     def __enter__(self) -> Self:
         ctx = self._new_context()
@@ -1470,6 +1553,9 @@ class _check_warnings(Sequence[_WarningInfo]):
         finally:
             self._last_captured = infos
             ctx.catch_warnings.__exit__(*args, **kwargs)
+            # Now that the warning filters are reset we can reissue
+            # the warnings without interference
+            ctx.reissue(infos)
 
     @overload
     def __getitem__(self, i: int, /) -> _WarningInfo:
@@ -1582,13 +1668,14 @@ def _run_as_script(
     test_module: _ModuleFixture,
     *,
     subproc: bool = True,
+    check_warnings: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + [str(test_module.path)] + test_args
     if subproc:
         run: Callable[..., subprocess.CompletedProcess] = _run_subproc
     else:
-        run = partial(_run_kernprof_main_in_process, request)
+        run = partial(_run_kernprof_main_in_process, request, check_warnings)
     test_module.install(children=True, local=not subproc, deps_only=True)
     return run(cmd, **kwargs)
 
@@ -1600,13 +1687,14 @@ def _run_as_module(
     test_module: _ModuleFixture,
     *,
     subproc: bool = True,
+    check_warnings: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + ['-m', test_module.name] + test_args
     if subproc:
         run: Callable[..., subprocess.CompletedProcess] = _run_subproc
     else:
-        run = partial(_run_kernprof_main_in_process, request)
+        run = partial(_run_kernprof_main_in_process, request, check_warnings)
     test_module.install(children=True, local=not subproc)
     return run(cmd, **kwargs)
 
@@ -1618,13 +1706,14 @@ def _run_as_literal_code(
     test_module: _ModuleFixture,
     *,
     subproc: bool = True,
+    check_warnings: bool = True,
     **kwargs
 ) -> subprocess.CompletedProcess:
     cmd = runner_args + ['-c', test_module.path.read_text()] + test_args
     if subproc:
         run: Callable[..., subprocess.CompletedProcess] = _run_subproc
     else:
-        run = partial(_run_kernprof_main_in_process, request)
+        run = partial(_run_kernprof_main_in_process, request, check_warnings)
     test_module.install(children=True, local=not subproc, deps_only=True)
     return run(cmd, **kwargs)
 
@@ -1632,7 +1721,7 @@ def _run_as_literal_code(
 @_preserve_pth_files()
 @_preserve_attributes()
 def _run_kernprof_main_in_process(
-    request: pytest.FixtureRequest, cmd: Sequence[str],
+    request: pytest.FixtureRequest, check_warnings: bool, cmd: Sequence[str],
     *,
     text: bool = False,
     capture_output: bool = False,
@@ -1682,9 +1771,18 @@ def _run_kernprof_main_in_process(
         main = kernprof_main
     try:
         try:
-            with Cleanup() as cleanup:
+            with ExitStack() as stack:
+                cleanup = stack.enter_context(Cleanup())
                 if env is not None:
                     cleanup.update_mapping(os.environ, env)
+                if check_warnings:
+                    # See similar indictions against warnings in
+                    # `_test_apply_mp_patches()`
+                    cw = stack.enter_context(_check_warnings())
+                    cw.forbid_warnings(
+                        category=UserWarning, module='line_profiler',
+                    )
+                    cw.forbid_warnings(module='multiprocessing')
                 main(cmd[1:], exit_on_error=False)
         except _TestTimeout:  # `subprocess` uses `SIGKILL`
             returncode, timed_out = -9, True
