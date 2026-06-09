@@ -792,8 +792,13 @@ coverage/control.py
                 if debug_ is None:
                     debug_ = cache.debug
                 if debug_:
-                    call_fmt = cache._format_call(name, *args, **kwargs)
-                    write(f'Wrapped call made: {call_fmt}...')
+                    call_fmt = cache._format_call(
+                        vanilla_name, *args, **kwargs,
+                    )
+                    write(
+                        f'Wrapped call made via `{wrapper_name}`: '
+                        f'{call_fmt}...',
+                    )
                     try:
                         result = call()
                     except BaseException as e:
@@ -809,11 +814,15 @@ coverage/control.py
                         outcome = _CALLBACK_REPR_HELPER.repr(result)
                         return result
                     finally:
-                        write(f'Wrapped call {state}: {call_fmt} -> {outcome}')
+                        write(
+                            f'Wrapped call via `{wrapper_name}` {state}: '
+                            f'{call_fmt} -> {outcome}',
+                        )
                 else:
                     return call()
 
-            name = cls._get_name(vanilla_impl)
+            vanilla_name = cls._get_name(vanilla_impl)
+            wrapper_name = cls._get_name(wrapper)
             return wrapped_impl
 
         for field in 'name', 'qualname', 'doc':
