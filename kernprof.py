@@ -1261,7 +1261,10 @@ def _prepare_profiler(options, module, exit_on_error):
             f'Using default output destination {short_string_path(options.outfile)!r}'
         )
 
-    sys.argv = [options.script] + options.args
+    # Note: we'll restore the content of `sys.argv` with the decorator
+    # on `main()`, so it's simpler to just `setitem()` instead of
+    # replacing the whole list object
+    sys.argv[:] = [options.script] + options.args
     if module:
         # Make sure the current directory is on `sys.path` to emulate
         # `python -m`
