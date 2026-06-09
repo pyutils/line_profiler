@@ -1929,6 +1929,7 @@ def _run_test_module(
     check: bool = True,
     debug_log: str | None = None,
     nhits: Mapping[str, int] | None = None,
+    subproc: bool = True,
     **kwargs
 ) -> tuple[subprocess.CompletedProcess, LineStats | None]:
     """
@@ -1983,6 +1984,7 @@ def _run_test_module(
             proc = run_helper(
                 request, runner_args, test_args, test_module,
                 text=True, capture_output=True, check=(check and not fail),
+                subproc=subproc,
                 **kwargs
             )
             # Checks:
@@ -2015,6 +2017,26 @@ def _run_test_module(
             #   profiling data will be dropped in the written outfile)
             for tag, num in (nhits or {}).items():
                 _check_output(proc.stdout, tag, num)
+        except subprocess.TimeoutExpired as e:
+            # If we're not in running in a subproc, while
+            # `kernprof.main()` shouldn't have gotten around to write
+            # the debug logs, we MIGHT be able to retrieve them from the
+            # active `LineProfilingCache` instance...
+            try:
+                if not subproc:
+                    cache = LineProfilingCache.load()
+                    if debug_log is None:
+                        alt_debug_log = 'debug.log'
+                    else:
+                        alt_debug_log = debug_log + '.alt'
+                    with open(alt_debug_log, mode='w') as fobj:
+                        for entry in cache._gather_debug_log_entries():
+                            print(entry.to_text(), file=fobj)
+                    debug_log = alt_debug_log
+            except Exception:
+                pass
+            finally:
+                raise e
         finally:
             if debug_log is not None and os.path.exists(debug_log):
                 with open(debug_log) as fobj:
@@ -3170,6 +3192,11 @@ _fuzz_prof_mp_markers = (
     # `run_func()`s
     + (_fuzz_prof_mp_run_func
        + _Params.new(('preimports', 'label3'), [(True, 'with-preimports')]))
+    # Just throw in a case where we actually run `kernprof` in a
+    # subprocess, otherwise it is more convenient to do so in-process
+    + _Params.new(('subproc', 'label5'),
+                  [(True, 'subproc'), (False, 'in-proc')],
+                  defaults=(False, 'in-proc'))
 ).sorted().split_on_params('fail')
 
 
@@ -3186,6 +3213,7 @@ def _test_profiling_multiproc_script(
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int,
     nprocs: int,
+    **kwargs
 ) -> None:
     # How many calls do we expect?
     nhits = dict.fromkeys(
@@ -3216,6 +3244,9 @@ def _test_profiling_multiproc_script(
     if not use_local_func:
         # Also make sure to include the external module in `--prof-mod`
         runner.append(f'--prof-mod={ext_module.name}')
+    kwargs.setdefault('timeout', _TEST_TIMEOUT)
+    if prof_child_procs and _DEBUG:
+        kwargs.setdefault('debug_log', 'debug.log')
     run_func(
         request, test_module, tmp_path_factory,
         runner=runner,
@@ -3227,11 +3258,7 @@ def _test_profiling_multiproc_script(
         nhits=nhits,
         nnums=nnums,
         nprocs=nprocs,
-        timeout=_TEST_TIMEOUT,
-        debug_log=(
-            'debug.log' if prof_child_procs and _DEBUG else None
-        ),
-        subproc=False,
+        **kwargs,
     )
 
 
@@ -3253,8 +3280,9 @@ def test_profiling_multiproc_script_success(
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int,
     nprocs: int,
+    subproc: bool,
     # Dummy arguments to make `pytest` output more legible
-    label1: str, label2: str, label3: str, label4: str,
+    label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
     """
     Check that `kernprof` can PROFILE the test module in various
@@ -3314,6 +3342,7 @@ def test_profiling_multiproc_script_success(
         start_method=start_method,
         nnums=nnums,
         nprocs=nprocs,
+        subproc=subproc,
     )
 
 
@@ -3331,8 +3360,9 @@ def test_profiling_multiproc_script_failure(
     start_method: Literal['fork', 'forkserver', 'spawn'] | None,
     nnums: int,
     nprocs: int,
+    subproc: bool,
     # Dummy arguments to make `pytest` output more legible
-    label1: str, label2: str, label3: str, label4: str,
+    label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
     """
     Check that `kernprof` can PROFILE the test module in various
@@ -3355,6 +3385,7 @@ def test_profiling_multiproc_script_failure(
         start_method=start_method,
         nnums=nnums,
         nprocs=nprocs,
+        subproc=subproc,
     )
 
 
