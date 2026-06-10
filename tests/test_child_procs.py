@@ -1450,7 +1450,7 @@ class _check_warnings(Sequence[_WarningInfo]):
     Example:
         >>> import warnings
 
-        >>> cw = _check_warnings()
+        >>> cw = _check_warnings(reissue_warnings=False)
 
         >>> with cw:  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
         ...     cw.forbid_warnings('foo', UserWarning)
@@ -1479,9 +1479,9 @@ class _check_warnings(Sequence[_WarningInfo]):
         >>> assert len(cw) == 1
         >>> assert str(cw[0].message) == 'foobar'
     """
-    def __init__(self, /, **kwargs) -> None:
+    def __init__(self, /, *, reissue_warnings: bool = True, **kwargs) -> None:
         self._new_context: Callable[[], _WarningContext] = partial(
-            _WarningContext.new, **kwargs,
+            _WarningContext.new, reissue_warnings=reissue_warnings, **kwargs,
         )
         self._contexts: list[
             tuple[_WarningContext, Sequence[_WarningInfo]]
@@ -1769,59 +1769,63 @@ def _run_kernprof_main_in_process(
         main = _timeout(kernprof_main, timeout=timeout)
     else:
         main = kernprof_main
-    try:
+    with ExitStack() as stack:
+        if check_warnings:
+            # See similar indictions against warnings in
+            # `_test_apply_mp_patches()`
+            cw = stack.enter_context(_check_warnings())
+            cw.forbid_warnings(
+                category=UserWarning, module='line_profiler',
+            )
+            cw.forbid_warnings(module='multiprocessing')
+            cw.suppress_warnings(
+                r'.*multi-?threaded.*fork\(\)',
+                category=DeprecationWarning,
+            )
         try:
-            with ExitStack() as stack:
+            try:
                 cleanup = stack.enter_context(Cleanup())
                 if env is not None:
                     cleanup.update_mapping(os.environ, env)
-                if check_warnings:
-                    # See similar indictions against warnings in
-                    # `_test_apply_mp_patches()`
-                    cw = stack.enter_context(_check_warnings())
-                    cw.forbid_warnings(
-                        category=UserWarning, module='line_profiler',
-                    )
-                    cw.forbid_warnings(module='multiprocessing')
                 main(cmd[1:], exit_on_error=False)
-        except _TestTimeout:  # `subprocess` uses `SIGKILL`
-            returncode, timed_out = -9, True
-            status = f'error ({returncode})'
-        except Exception as e:
-            # Format and output the tracebacks, otherwise we would've
-            # suppressed them
-            traceback.print_exception(e)
-            returncode = 2 if isinstance(e, ArgumentError) else 1
-            status = f'error ({returncode})'
-        else:
-            status = returncode = 0
-        stdout, stderr = get_streams()
+            except _TestTimeout:  # `subprocess` uses `SIGKILL`
+                returncode, timed_out = -9, True
+                status = f'error ({returncode})'
+            except Exception as e:
+                # Format and output the tracebacks, otherwise we would've
+                # suppressed them
+                traceback.print_exception(e)
+                returncode = 2 if isinstance(e, ArgumentError) else 1
+                status = f'error ({returncode})'
+            else:
+                status = returncode = 0
+            stdout, stderr = get_streams()
 
-        # Turn in-process errors into the corresponding `subprocess`
-        # errors
-        if timed_out:
-            assert timeout is not None  # Assure the typechecker
-            raise subprocess.TimeoutExpired(cmd, timeout, stdout, stderr)
-        if check and returncode:
-            raise subprocess.CalledProcessError(
-                returncode, cmd, stdout, stderr,
+            # Turn in-process errors into the corresponding `subprocess`
+            # errors
+            if timed_out:
+                assert timeout is not None  # Assure the typechecker
+                raise subprocess.TimeoutExpired(cmd, timeout, stdout, stderr)
+            if check and returncode:
+                raise subprocess.CalledProcessError(
+                    returncode, cmd, stdout, stderr,
+                )
+            return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+        finally:
+            time = monotonic() - time
+            captured: str | bytes | None
+            for name, captured, stream in [
+                ('stdout', stdout, sys.stdout), ('stderr', stderr, sys.stderr),
+            ]:
+                if captured is None:
+                    continue
+                if isinstance(captured, bytes):  # `text=False`
+                    captured = captured.decode()
+                print(f'{name}:\n{indent(captured, "  ")}', file=stream)
+            print(
+                f'-- Emulated process end (time elapsed: {time:.2f} s / '
+                f'return status: {status}) --'
             )
-        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
-    finally:
-        time = monotonic() - time
-        captured: str | bytes | None
-        for name, captured, stream in [
-            ('stdout', stdout, sys.stdout), ('stderr', stderr, sys.stderr),
-        ]:
-            if captured is None:
-                continue
-            if isinstance(captured, bytes):  # `text=False`
-                captured = captured.decode()
-            print(f'{name}:\n{indent(captured, "  ")}', file=stream)
-        print(
-            f'-- Emulated process end (time elapsed: {time:.2f} s / '
-            f'return status: {status}) --'
-        )
 
 
 def _print_env_deltas(env: Mapping[str, str] | None = None) -> None:
@@ -2684,11 +2688,15 @@ def test_cache_setup_child(
         ]:
             callback()
             with _check_warnings() as cw:
+                handle_warning: list[Callable[..., None]] = []
                 if has_nonempty_file:
-                    check_warning = cw.forbid_warnings
-                else:
-                    check_warning = cw.expect_warnings
-                check_warning(r'.* file\(s\) .* empty', module='line_profiler')
+                    handle_warning.append(cw.forbid_warnings)
+                else:  # Check for the warning but don't reissue it
+                    handle_warning.extend([
+                        cw.expect_warnings, cw.suppress_warnings,
+                    ])
+                for handle in handle_warning:
+                    handle(r'.* file\(s\) .* empty', module='line_profiler')
                 gathered = cache.gather_stats()
             assert any(gathered.timings.values()) == has_stats, gathered
             if hasattr(os, 'fork'):
@@ -2926,6 +2934,8 @@ def _test_apply_mp_patches(
     patch_process: bool | None = None,
     intercept_logs: bool | None = None,
     trace_pids: bool | None = None,
+    *,
+    start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     **kwargs
 ) -> None:
     patches = cast(dict[str, bool], _DEFAULT_MP_CONFIG.patches.copy())
@@ -2942,7 +2952,18 @@ def _test_apply_mp_patches(
             # child processes which didn't perform any work
             cw.forbid_warnings(category=UserWarning, module='line_profiler')
         cw.forbid_warnings(module='multiprocessing')
-        _test_apply_mp_patches_inner(mp_patches=mp_patches, **kwargs)
+        if start_method == 'fork':
+            # The `@_timeout` decorator spins up a new thread for
+            # executing `_test_apply_mp_patches_inner()`; explicitly
+            # ignore the associated warning when we use
+            # `start_method='fork'`
+            cw.suppress_warnings(
+                r'.*multi-?threaded.*fork\(\)',
+                category=DeprecationWarning,
+            )
+        _test_apply_mp_patches_inner(
+            mp_patches=mp_patches, start_method=start_method, **kwargs,
+        )
 
 
 @(_Params.new('start_method',
