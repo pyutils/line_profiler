@@ -626,6 +626,9 @@ coverage/control.py
                 forked._debug_output(
                     'Superseded cached `.load()`-ed instance in forked process'
                 )
+            # Unregister the `._atexit_hook` of the inherited cache
+            # instance to avoid complications
+            atexit.unregister(self._atexit_hook)
             # Note: we can reuse the profiler instance in the fork, but
             # it needs to go through setup so that the separate
             # profiling results are dumped into another output file
@@ -725,14 +728,18 @@ coverage/control.py
     def _method_wrapper(
         cls,
         wrapper: Callable[Concatenate[Self, Callable[PS, T], PS], T],
+        *,
         debug: bool | None = None,
+        wrapper_name: str | None = None,
     ) -> Callable[[Callable[PS, T]], Callable[PS, T]]:
         ...
 
     @overload
     @classmethod
     def _method_wrapper(
-        cls, wrapper: None = None, debug: bool | None = None,
+        cls, wrapper: None = None, *,
+        debug: bool | None = None,
+        wrapper_name: str | None = None,
     ) -> Callable[
         [Callable[Concatenate[Self, Callable[PS, T], PS], T]],
         Callable[[Callable[PS, T]], Callable[PS, T]]
@@ -746,6 +753,7 @@ coverage/control.py
             Callable[Concatenate[Self, Callable[PS, T], PS], T] | None
         ) = None,
         debug: bool | None = None,
+        wrapper_name: str | None = None,
     ) -> (
         Callable[
             [Callable[Concatenate[Self, Callable[PS, T], PS], T]],
@@ -768,6 +776,9 @@ coverage/control.py
                 after the call to the ``wrapper`` callable;
                 if ``debug`` is not set, it will be taken from the
                 session instance.
+            wrapper_name (str | None)
+                Optional name to identify the source of the wrapper,
+                used in debug messages.
 
         Returns:
             inner_wrapper (Callable[[Callable[PS, T]], Callable[PS, T]])
@@ -822,9 +833,10 @@ coverage/control.py
                     return call()
 
             vanilla_name = cls._get_name(vanilla_impl)
-            wrapper_name = cls._get_name(wrapper)
             return wrapped_impl
 
+        if wrapper_name is None:
+            wrapper_name = cls._get_name(wrapper)
         for field in 'name', 'qualname', 'doc':
             dunder = f'__{field}__'
             value = getattr(wrapper, dunder, None)
