@@ -2881,12 +2881,6 @@ def _test_apply_mp_patches_inner(
         # Counts from the one final sum over the parallel results
         nloops_expected += nprocs
 
-    if start_method not in ('dummy', *START_METHODS):
-        pytest.skip(
-            f'`multiprocessing` start method {start_method!r} '
-            'not available on the platform'
-        )
-
     # Note: manually handle the error here instead of using
     # `pytest.raises()` since we want certain `RuntimeError`s to be
     # propagated and handled by `@pytest.mark.retry`
@@ -2938,6 +2932,12 @@ def _test_apply_mp_patches(
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     **kwargs
 ) -> None:
+    if start_method not in ('dummy', *START_METHODS):
+        pytest.skip(
+            f'`multiprocessing` start method {start_method!r} '
+            'not available on the platform'
+        )
+
     patches = cast(dict[str, bool], _DEFAULT_MP_CONFIG.patches.copy())
     for name, applied in {
         'pool': patch_pool, 'process': patch_process,
@@ -2946,6 +2946,7 @@ def _test_apply_mp_patches(
         if applied is not None:
             patches[name] = applied
     mp_patches = [name for name, applied in patches.items() if applied]
+
     with _check_warnings() as cw:
         if 'child_pids' in mp_patches:
             # With PID bookkeeping we should be able to weed out all the
