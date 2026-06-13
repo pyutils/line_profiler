@@ -23,16 +23,14 @@ import warnings
 from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from functools import partial, wraps
 from importlib import import_module
-from inspect import getattr_static, signature
-from multiprocessing.pool import Pool
+from inspect import getattr_static
 from multiprocessing.process import BaseProcess
 from operator import attrgetter
-from queue import SimpleQueue
 from time import sleep, monotonic
 from types import MappingProxyType as mappingproxy, MethodType, ModuleType
 from typing import (
     TYPE_CHECKING,
-    Any, ClassVar, Generic, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
+    Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, NoReturn,
     cast, final, overload,
 )
 from typing_extensions import Concatenate, ParamSpec, Self
@@ -59,7 +57,6 @@ else:
     _CAN_USE_RESOURCE_TRACKER = True
 
 from .. import _diagnostics as diagnostics
-from ..cleanup import Cleanup
 from ..toml_config import ConfigSource
 from .cache import LineProfilingCache
 from .runpy_patches import create_runpy_wrapper
@@ -86,11 +83,6 @@ _PATCHES: dict[str, '_Patch'] = {}
 
 
 # ------------------------------ Helpers -------------------------------
-
-
-class _Wrapper(Protocol, Generic[PS, T]):
-    def __call__(self, func: Callable[PS, T], /) -> Callable[PS, T]:
-        ...
 
 
 class _Queue(Protocol):
@@ -381,65 +373,32 @@ class MPConfig:
         return result
 
 
-class TaskWrapper(Generic[PS, T]):
+class _QueuePutWrapper:  # nocover
     """
-    Pickle-able wrapper around the supplied task callable, which writes
-    to the session's profiling-stats file on exit.
-
-    Note:
-        Since this produces extra overhead for each invocation of the
-        callable, it is only used when we can't reliably do
-        end-of-process cleanup. This mainly happens on Windows, where
-        we can't catch and handle ``SIGTERM``.
+    Wrap around a queue (the ``outqueue`` argument to
+    :py:func:`multiprocessing.pool.worker`) so that each call to its
+    ``.put()`` is preceded by calling a ``callback()``; its result is
+    optionally attached to the tuple pushed back to the parent if
+    ``push_to_parent`` is true.
     """
-    def __init__(self, func: Callable[PS, T]) -> None:
-        self.func = func
-        try:
-            self.__signature__ = signature(func)
-        except Exception:  # nocover
-            # Can happen with e.g. certain builin/c-based callables
-            pass
-
-    def __call__(self, *args, **kwargs) -> T:
-        callback: Callable[[], None] = _no_op
-        try:
-            cache = LineProfilingCache.load()
-        except Exception:
-            pass
-        else:
-            # Note: this doesn't write debugging output... doing so for
-            # every task would be excessive
-            callback = partial(_dump_stats_quick, cache)
-
-        try:
-            return self.func(*args, **kwargs)
-        finally:
-            callback()
-
-
-class _QueuePIDWrapper:
-    """
-    Wrap around a :py:class:`queue.SimpleQueue` (used by
-    :py:mod:`multiprocessing.dummy`) so that the PID info is attached to
-    the :py:meth:`.SimpleQueue.put` tuple.
-
-    Notes:
-        - Used by the ``child_pids`` patch.
-
-        - While the PID info is useless when using
-          :py:mod:`multiprocessing.dummy`, it is nonetheless necessary
-          because :py:meth:`multiprocessing.pool.Pool._handle_results`
-          has also been patched to expect the queue-item-getter function
-          to return the tuple ``(pid, original_put_value)``.
-    """
-    def __init__(self, queue: _Queue) -> None:
+    def __init__(
+        self,
+        queue: _Queue,
+        callback: Callable[[], Any],
+        push_to_parent: bool = False,
+    ) -> None:
         self._queue = queue
+        self._callback = callback
+        self._push = push_to_parent
 
     def __getattr__(self, attr: str) -> Any:
         return getattr(self._queue, attr)
 
     def put(self, obj: Any) -> None:
-        self._queue.put((os.getpid(), obj))
+        data = self._callback()
+        if self._push:
+            obj = data, obj
+        self._queue.put(obj)
 
     def get(self) -> Any:
         return self._queue.get()
@@ -449,7 +408,7 @@ def _no_op(*_, **__) -> None:
     pass
 
 
-def _setup_in_mp_child(cache: LineProfilingCache) -> None:
+def _setup_in_mp_child(cache: LineProfilingCache) -> None:  # nocover
     """
     Perform :py:mod:`multiprocessing`-specific setup in a child process
     curated by the module. Currently it does the following:
@@ -784,45 +743,50 @@ def _register_patch(name: str, patch: _Patch | None = None) -> _Patch:
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
 
 
-@LineProfilingCache._method_wrapper
-def wrap_get_tasks(
-    _,  # No need to use the cache, but `_method_wrapper` expects it
-    vanilla_impl: Callable[Concatenate[Callable[PS1, T1], PS2], T2],
-    func: Callable[PS1, T1],
-    *args: PS2.args,
-    **kwargs: PS2.kwargs
-) -> T2:
+class _PIDQueueGetWrapper:  # nocover
     """
-    Wrap around :py:meth:`.Pool._get_tasks` so that the writing of
-    profiling stats is handled within the callables sent to the child
-    processes before the parent process assumes control.
+    Wrapper around the ``inqueue`` argument to
+    :py:func:`multiprocessing.pool.worker` to intercept the sentinel
+    value (:py:const:`None`) signifying the end of the queue and perform
+    cleanup.
+    """
+    def __init__(
+        self,
+        queue: _Queue,
+        cache: LineProfilingCache,
+    ) -> None:
+        self._queue = queue
+        self._cache = cache
 
-    Note:
-        :py:meth:`.Pool._get_tasks` is a static method.
-    """
-    return vanilla_impl(TaskWrapper(func), *args, **kwargs)
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._queue, attr)
 
+    def put(self, obj: Any) -> None:
+        self._queue.put(obj)
 
-@LineProfilingCache._method_wrapper
-def wrap_guarded_task_generation(
-    _,  # No need to use the cache, but `_method_wrapper` expects it
-    vanilla_impl: Callable[Concatenate[Pool, int, Callable[PS1, T1], PS2], T2],
-    self: Pool,
-    result_job: int,
-    func: Callable[PS1, T1],
-    *args: PS2.args,
-    **kwargs: PS2.kwargs
-) -> T2:
-    """
-    Wrap around :py:meth:`.Pool._guarded_task_generation` so that the
-    writing of profiling stats is handled within the callables sent to
-    the child processes before the parent process assumes control.
-    """
-    return vanilla_impl(self, result_job, TaskWrapper(func), *args, **kwargs)
+    def get(self) -> Any:
+        result = self._queue.get()
+        cache = self._cache
+        ntasks: dict[int, int]
+        ntasks = cache._additional_data.setdefault('mp_queue_ntasks', {})
+        queue_id = id(self)
+        if result is None:
+            n = ntasks.pop(queue_id, 0)
+            cache._debug_output(
+                '`multiprocessing.pool.worker`: '
+                f'recieved {n} task(s) in total',
+            )
+            # Got sentinel value, process is about to exit
+            reason = 'ran out of tasks in `multiprocessing.process.worker()`'
+            if cache.main_pid != os.getpid():
+                _dump_stats_quick(cache, debug=True, reason=reason)
+        else:
+            ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
+        return result
 
 
 @LineProfilingCache._method_wrapper  # nocover
-def wrap_worker_pool(
+def wrap_worker_pool_write_on_exit(
     cache: LineProfilingCache,
     vanilla_impl: Callable[Concatenate[_Queue, PS], None],
     inqueue: _Queue,
@@ -846,60 +810,44 @@ def wrap_worker_pool(
     # Set a signal handler for SIGTERM to help child processes with
     # consistently cleaning up
     _setup_in_mp_child(cache)
-    # Note: using the `cache` itself as the context manager is prone to
-    # deadlock
-    with Cleanup() as cleanup:
-        if isinstance(inqueue.get, MethodType):
-            get = partial(_wrap_inqueue_get, cache, inqueue.get.__func__)
-            cleanup.patch(
-                inqueue, 'get', MethodType(get, inqueue),
-                name='<current process>._inqueue',
-            )
-        return vanilla_impl(inqueue, *args, **kwargs)
+    return vanilla_impl(_PIDQueueGetWrapper(inqueue, cache), *args, **kwargs)
 
 
-def _wrap_inqueue_get(  # nocover
+@LineProfilingCache._method_wrapper  # nocover
+def wrap_worker_pool_write_per_task(
     cache: LineProfilingCache,
-    vanilla_impl: Callable[Concatenate[_Queue, PS], T],
-    self: _Queue,
-    /,
+    vanilla_impl: Callable[Concatenate[_Queue, _Queue, PS], None],
+    inqueue: _Queue,
+    outqueue: _Queue,
     *args: PS.args,
     **kwargs: PS.kwargs
-) -> T:
+) -> None:
     """
-    Intercept the sentinel value (:py:const:`None`) signifiying the end
-    of the queue and perform cleanup.
+    Wrap around :py:func:`multiprocessing.pool.worker` so that child
+    processes can write profiling output before pushing the result of
+    each task back to the parent.
+
+    Notes:
+        - This is only called in child processes and thus we can't
+          reliably measure coverage thereon; see also
+          :py:func:`wrap_bootstrap`.
+
+        - This is only used on Windows where we can't handle ``SIGTERM``
+          on child processes, thus necessitating the write to happen
+          before control flow is passed backed to the parent.
     """
-    result = vanilla_impl(self, *args, **kwargs)
-    ntasks: dict[int, int]
-    ntasks = cache._additional_data.setdefault('mp_queue_ntasks', {})
-    queue_id = id(self)
-    if result is None:
-        n = ntasks.pop(queue_id, 0)
-        msg = f'`multiprocessing.pool.worker`: recieved {n} task(s) in total'
-        cache._debug_output(msg)
-        # Got sentinel value, process is about to exit
-        reason = 'ran out of tasks in `multiprocessing.process.worker()`'
-        if cache.main_pid != os.getpid():
-            _dump_stats_quick(cache, debug=True, reason=reason)
-    else:
-        ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
-    return result
+    outqueue = _QueuePutWrapper(outqueue, partial(_dump_stats_quick, cache))
+    return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
-_patch_pool = _register_patch('pool', Patch('pool')).add_method
 if _CAN_CATCH_SIGTERM:
-    # Only write profiling output once per process if it can be helped
-    _patch_pool('', 'worker', wrap_worker_pool)
+    wrap_worker_pool: Callable[[Callable[..., None]], Callable[..., None]]
+    wrap_worker_pool = wrap_worker_pool_write_on_exit
 else:
-    # Don't have a choice on platform like Windows, the only reliable
-    # way to ensure that the child survives until profiling output is
-    # written is to write it for every task before control is returned
-    # to the parent
-    _patch_pool('Pool', '_get_tasks', wrap_get_tasks, 'static')
-    _patch_pool(
-        'Pool', '_guarded_task_generation', wrap_guarded_task_generation,
-    )
+    wrap_worker_pool = wrap_worker_pool_write_per_task
+_register_patch('pool', Patch('pool')).add_method(
+    '', 'worker', wrap_worker_pool,
+)
 
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
 
@@ -1027,22 +975,8 @@ def wrap_worker_pid(
         reliably measure coverage thereon; see also
         :py:func:`wrap_bootstrap`.
     """
-    # Note: using the `cache` itself as the context manager is prone to
-    # deadlock
-    with Cleanup() as cleanup:
-        if isinstance(outqueue, SimpleQueue):
-            # `multiprocessing.dummy` instantiates C-based queue
-            # objects, which doesn't permit assigning to the instance
-            # (because it doesn't have an instance dict)...
-            # so just wrap the queue with a helper class
-            outqueue = _QueuePIDWrapper(outqueue)
-        elif isinstance(outqueue.put, MethodType):
-            put = partial(_wrap_outqueue_put, outqueue.put.__func__)
-            cleanup.patch(
-                outqueue, 'put', MethodType(put, outqueue),
-                name='<current process>._outqueue',
-            )
-        return vanilla_impl(inqueue, outqueue, *args, **kwargs)
+    outqueue = _QueuePutWrapper(outqueue, os.getpid, push_to_parent=True)
+    return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
 @LineProfilingCache._method_wrapper
@@ -1068,9 +1002,9 @@ def wrap_process(
     patch = partial(cache.patch, cleanup=False, name=name)
     for method, action in ('join', 'joining'), ('terminate', 'terminating'):
         bound = getattr(proc, method)
-        if isinstance(bound, MethodType):
-            finalize = _wrap_process_finalize(cache, bound.__func__, action)
-            patch(proc, method, MethodType(finalize, proc))
+        assert isinstance(bound, MethodType)
+        finalize = _wrap_process_finalize(cache, bound.__func__, action)
+        patch(proc, method, MethodType(finalize, proc))
     return proc
 
 
@@ -1123,22 +1057,6 @@ def _wrap_process_finalize(
 
     action = action.capitalize()
     return finalize
-
-
-def _wrap_outqueue_put(
-    vanilla_impl: Callable[
-        Concatenate[_Queue, tuple[Any, ...], PS], None
-    ],
-    self: _Queue,
-    obj: tuple[Any, ...],
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> None:
-    """
-    Smuggle in the PID of the child process so that the parent can keep
-    track of which child completed what task.
-    """
-    vanilla_impl(self, (os.getpid(), obj), *args, **kwargs)
 
 
 def _wrap_outqueue_quick_get(
@@ -1202,7 +1120,7 @@ def tee_log(
     **kwargs: PS.kwargs
 ) -> None:
     """
-Wrap around logging functions like
+    Wrap around logging functions like
     :py:func:`multiprocessing.util.debug` so that we can tee log
     messages from the package to our own logs.
     """
