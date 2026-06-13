@@ -1342,6 +1342,7 @@ class _WarningContext:
         default_factory=partial(warnings.catch_warnings, record=True)
     )
     reissue_warnings: bool = False
+    format_warnings: bool = False
     checks: list[tuple[_WarningMatcher, bool]] = dataclasses.field(
         default_factory=list,
     )
@@ -1380,14 +1381,28 @@ class _WarningContext:
         for matcher, allowed_or_required in self.checks:
             matches = [info for info in infos if matcher.match(info)]
             if matches and not allowed_or_required:
+                if self.format_warnings:
+                    matches_repr = (
+                        f'{len(matches)}:\n{self._format_warnings(matches)}'
+                    )
+                else:
+                    matches_repr = f'{len(matches)} ({matches!r})'
                 raise ResultMismatch(
                     expected=f'no warnings matching {matcher!r}',
-                    actual=f'{len(matches)} ({matches!r})',
+                    actual=matches_repr,
                 )
             if not matches and allowed_or_required:
+                warnings_repr = f'none out of {len(infos)}'
+                if infos:
+                    if self.format_warnings:
+                        warnings_repr = (
+                            f'{warnings_repr}:\n{self._format_warnings(infos)}'
+                        )
+                    else:
+                        warnings_repr = f'{warnings_repr} ({infos!r})'
                 raise ResultMismatch(
                     expected=f'warnings matching {matcher!r}',
-                    actual=f'none out of {len(infos)} ({infos!r})',
+                    actual=warnings_repr,
                 )
 
     def reissue(self, infos: Sequence[_WarningInfo]) -> None:
@@ -1423,6 +1438,22 @@ class _WarningContext:
                 reissue_(info)
 
     @staticmethod
+    def _format_warnings(infos: Sequence[_WarningInfo]) -> str:
+        if not infos:
+            return '<no warnings>'
+        chunks: list[str] = []
+        for info in infos:
+            text = strip(warnings.formatwarning(
+                message=info.message,
+                category=info.category,
+                filename=info.filename,
+                lineno=info.lineno,
+            ))
+            chunks.append(f'- {info!r}')
+            chunks.append(indent(text, '  '))
+        return '\n'.join(chunks)
+
+    @staticmethod
     def _get_matcher(
         message: str | None = None,
         category: type[Warning] | None = Warning,
@@ -1434,11 +1465,17 @@ class _WarningContext:
         )
 
     @classmethod
-    def new(cls, /, *, reissue_warnings: bool = False, **kwargs) -> Self:
+    def new(
+        cls, /, *,
+        reissue_warnings: bool = False,
+        format_warnings: bool = False,
+        **kwargs
+    ) -> Self:
         kwargs['record'] = True
         return cls(
             warnings.catch_warnings(**kwargs),
             reissue_warnings=reissue_warnings,
+            format_warnings=format_warnings,
         )
 
 
@@ -1450,7 +1487,9 @@ class _check_warnings(Sequence[_WarningInfo]):
     Example:
         >>> import warnings
 
-        >>> cw = _check_warnings(reissue_warnings=False)
+        >>> cw = _check_warnings(
+        ...     reissue_warnings=False, format_warnings=False,
+        ... )
 
         >>> with cw:  # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
         ...     cw.forbid_warnings('foo', UserWarning)
@@ -1479,9 +1518,22 @@ class _check_warnings(Sequence[_WarningInfo]):
         >>> assert len(cw) == 1
         >>> assert str(cw[0].message) == 'foobar'
     """
-    def __init__(self, /, *, reissue_warnings: bool = True, **kwargs) -> None:
+    def __init__(
+        self, /, *,
+        reissue_warnings: bool = True,
+        format_warnings: bool = True,
+        **kwargs
+    ) -> None:
+        # Note: even with `reissue_warnings=True`, it is not guaranteed
+        # that all the recorded warnings become visible, depending on
+        # the warning filters in place before entering the context; so
+        # we also use `format_warnings=True` by default to include the
+        # warnings in the error message (if any)
         self._new_context: Callable[[], _WarningContext] = partial(
-            _WarningContext.new, reissue_warnings=reissue_warnings, **kwargs,
+            _WarningContext.new,
+            reissue_warnings=reissue_warnings,
+            format_warnings=format_warnings,
+            **kwargs,
         )
         self._contexts: list[
             tuple[_WarningContext, Sequence[_WarningInfo]]
@@ -1774,14 +1826,17 @@ def _run_kernprof_main_in_process(
             # See similar indictions against warnings in
             # `_test_apply_mp_patches()`
             cw = stack.enter_context(_check_warnings())
-            cw.forbid_warnings(
-                category=UserWarning, module='line_profiler',
-            )
-            cw.forbid_warnings(module='multiprocessing')
-            cw.suppress_warnings(
-                r'.*multi-?threaded.*fork\(\)',
-                category=DeprecationWarning,
-            )
+            cw.forbid_warnings('.*resource_tracker', module='multiprocessing')
+            if _DEFAULT_MP_CONFIG.patches['child_pids']:
+                cw.forbid_warnings(
+                    r'.* file\(s\) .* empty',
+                    category=UserWarning, module='line_profiler',
+                )
+            if timeout:
+                cw.suppress_warnings(
+                    r'.*multi-?threaded.*fork\(\)',
+                    category=DeprecationWarning,
+                )
         try:
             try:
                 cleanup = stack.enter_context(Cleanup())
@@ -2948,11 +3003,14 @@ def _test_apply_mp_patches(
     mp_patches = [name for name, applied in patches.items() if applied]
 
     with _check_warnings() as cw:
+        cw.forbid_warnings('.*resource_tracker', module='multiprocessing')
         if 'child_pids' in mp_patches:
             # With PID bookkeeping we should be able to weed out all the
             # child processes which didn't perform any work
-            cw.forbid_warnings(category=UserWarning, module='line_profiler')
-        cw.forbid_warnings(module='multiprocessing')
+            cw.forbid_warnings(
+                r'.* file\(s\) .* empty',
+                category=UserWarning, module='line_profiler',
+            )
         if start_method == 'fork':
             # The `@_timeout` decorator spins up a new thread for
             # executing `_test_apply_mp_patches_inner()`; explicitly

@@ -461,6 +461,8 @@ def _setup_in_mp_child(cache: LineProfilingCache) -> None:
       avoid possible clashes with the profiling-file writing managed by
       this module.
     """
+    if cache.main_pid == os.getpid():  # Not in a child process
+        return
     xc: Exception | None = None
     for setup in [_add_sigterm_handler_in_child, _unregister_atexit_hook]:
         try:
@@ -478,8 +480,6 @@ def _setup_in_mp_child(cache: LineProfilingCache) -> None:
 def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
     key = 'mp_added_sigterm_handler'
     if not MPConfig.from_cache(cache).catch_sigterm:
-        return
-    if cache.main_pid == os.getpid():  # Not in a child process
         return
     if cache._additional_data.get(key, False):
         # Already added (e.g. by another plugin)
