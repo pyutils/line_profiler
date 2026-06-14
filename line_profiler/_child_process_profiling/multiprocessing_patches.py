@@ -20,7 +20,9 @@ import multiprocessing
 import os
 import sys
 import warnings
-from collections.abc import Callable, Collection, Mapping, Sequence, Set
+from collections.abc import (
+    Callable, Collection, Generator, Mapping, Sequence, Set,
+)
 from functools import partial, wraps
 from importlib import import_module
 from inspect import getattr_static
@@ -66,21 +68,15 @@ __all__ = ('apply',)
 
 
 T = TypeVar('T')
-T1 = TypeVar('T1')
-T2 = TypeVar('T2')
 P = TypeVar('P', bound=BaseProcess)
 Pt = TypeVar('Pt', bound='_Patch')
 PS = ParamSpec('PS')
-PS1 = ParamSpec('PS1')
-PS2 = ParamSpec('PS2')
 _OnTimeout = Literal['ignore', 'warn', 'error']
 PublicPatch = Literal['pool', 'process', 'logging', 'child_pids']
 
 _CAN_CATCH_SIGTERM = sys.platform != 'win32'
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
 _LOGGERS = ['sub_debug', 'debug', 'info', 'sub_warning', 'warn']
-_PATCHES: dict[str, '_Patch'] = {}
-
 
 # ------------------------------ Helpers -------------------------------
 
@@ -438,6 +434,8 @@ def _setup_in_mp_child(cache: LineProfilingCache) -> None:  # nocover
 
 def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
     key = 'mp_added_sigterm_handler'
+    if not _CAN_CATCH_SIGTERM:
+        return
     if not MPConfig.from_cache(cache).catch_sigterm:
         return
     if cache._additional_data.get(key, False):
@@ -710,35 +708,128 @@ Literal['class', 'static'] | None):
         })
 
 
-@overload
-def _register_patch(name: str, patch: Pt) -> Pt:
-    ...
-
-
-@overload
-def _register_patch(name: str, patch: None = None) -> _Patch:
-    ...
-
-
-def _register_patch(name: str, patch: _Patch | None = None) -> _Patch:
+class _PatchRegistry(Mapping[str, _Patch]):
     """
-    Register the ``patch`` under ``name`` and return it as-is. If
-    ``patch`` isn't provided, look for the existing patch registered
-    under the name.
-
-    Note:
-        Patches named with leading double underscores are applied no
-        matter the user input (e.g. via ``apply(..., patches=...)`` or
-        the config file).
+    Mapping subclass for managing patches.
     """
-    if patch is not None:
-        if _PATCHES.setdefault(name, patch) is not patch:
-            raise ValueError(
-                f'name = {name!r}, patch = {patch!r}: '
-                'name already in use by {_PATCHES[name]}'
+    def __init__(self) -> None:
+        self._patches: dict[str, tuple[int, _Patch]] = {}
+
+    def __repr__(self) -> str:
+        if self._patches:
+            patches = ', '.join(
+                f'{name!r} (priority {priority})' if priority else repr(name)
+                for name, (priority, _) in self._patches.items()
             )
-    return _PATCHES[name]
+            patches = f'({len(self)} patch(es)): {patches}'
+        else:
+            patches = '(0 patches)'
+        return f'<{type(self).__name__} @ {id(self):#x} {patches}>'
 
+    def __getitem__(self, key: str) -> _Patch:
+        return self._patches[key][1]
+
+    def __iter__(self) -> Generator[str, None, None]:
+        for name, _ in self._iter_patches():
+            yield name
+
+    def __len__(self) -> int:
+        return len(self._patches)
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._patches
+
+    @overload
+    def register(self, name: str, patch: Pt, *, priority: int = 0) -> Pt:
+        ...
+
+    @overload
+    def register(
+        self, name: str, patch: None = None, *, priority: int = 0,
+    ) -> _Patch:
+        ...
+
+    def register(
+        self, name: str, patch: _Patch | None = None, *, priority: int = 0,
+    ) -> _Patch:
+        """
+        Register the ``patch`` under ``name`` with the specified
+        ``priority`` and return it as-is. If ``patch`` isn't provided,
+        look for the existing patch registered under the name.
+
+        Note:
+            Patches named with leading double underscores are applied no
+            matter the user input (e.g. via ``apply(..., patches=...)``
+            or the config file).
+        """
+        if patch is not None:
+            old_pri, stored = self._patches.setdefault(name, (priority, patch))
+            if stored is not patch:
+                raise ValueError(
+                    f'name = {name!r}, patch = {patch!r}: '
+                    f'name already in use by {stored!r}'
+                )
+            if old_pri != priority:  # Update priority
+                self._patches[name] = priority, patch
+        return self[name]
+
+    def select(self, patches: Collection[str]) -> Self:
+        """
+        Returns:
+            New instance with the selected patches
+
+        Note:
+            Patches whose names are prefixed with double underscores are
+            considered mandatory and are always selected.
+        """
+        new = type(self)()
+        new._patches.update(
+            (name, patch_info) for name, patch_info in self._patches.items()
+            if name.startswith('__') or name in patches
+        )
+        return new
+
+    def _iter_patches(
+        self, reverse: bool = False,
+    ) -> Generator[tuple[str, _Patch], None, None]:
+        """
+        Iterate over the available patches.
+
+        Note:
+            Since patches typically consists of function wrappers, and
+            outer wrappers are both called first and responsible for
+            calling inner wrappers, patches with a HIGHER priority are
+            yielded LATER (or earlier if ``reverse=True``.
+        """
+        for _, patches in sorted(self._prioritized.items(), reverse=reverse):
+            yield from patches.items()
+
+    @property
+    def summary(self) -> dict[str, frozenset[str]]:
+        """
+        Mapping from the names of the entities affected by the patches
+        to sets of attributes patched thereon.
+        """
+        summaries = [patch.summary for patch in self.values()]
+        return {
+            target: frozenset().union(*(s.get(target, ()) for s in summaries))
+            for target in frozenset().union(*summaries)
+        }
+
+    @property
+    def _prioritized(self) -> dict[int, dict[str, _Patch]]:
+        # This could've been a static attribute maintained by the
+        # `.register()` method, but we don't call this a bunch so it
+        # isn't like we incur a lot of overhead by calculating it
+        # on-the-fly, and it's less error-prone this way.
+        result: dict[int, dict[str, _Patch]] = {}
+        for name, (priority, patch) in self._patches.items():
+            result.setdefault(priority, {})[name] = patch
+        return result
+
+
+_PATCHES = _PatchRegistry()
+_register_patch = _PATCHES.register
 
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
 
@@ -807,8 +898,6 @@ def wrap_worker_pool_write_on_exit(
           ``SIGTERM`` on child processes and ensure that they aren't
           prematurely terminated.
     """
-    # Set a signal handler for SIGTERM to help child processes with
-    # consistently cleaning up
     _setup_in_mp_child(cache)
     return vanilla_impl(_PIDQueueGetWrapper(inqueue, cache), *args, **kwargs)
 
@@ -836,6 +925,7 @@ def wrap_worker_pool_write_per_task(
           on child processes, thus necessitating the write to happen
           before control flow is passed backed to the parent.
     """
+    _setup_in_mp_child(cache)
     outqueue = _QueuePutWrapper(outqueue, partial(_dump_stats_quick, cache))
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
@@ -905,8 +995,6 @@ def wrap_bootstrap(
           there. Hence :py:func:`wrap_terminate` remains necessary for
           mitigating unclean exits.
     """
-    # Set a signal handler for SIGTERM to help child processes with
-    # consistently cleaning up
     _setup_in_mp_child(cache)
     try:
         return vanilla_impl(self, *args, **kwargs)
@@ -1378,17 +1466,12 @@ def apply(
         patches_: set[str] = {p for p, use in patches_dict.items() if use}
     else:
         patches_ = {p.lower() for p in patches}
-    for name, patch in _PATCHES.items():
-        if name in patches_:
-            should_apply = True
-        elif name.startswith('__'):
-            should_apply = (name != '__reboot_forkserver' or reboot_forkserver)
-        else:
-            should_apply = False
-        if should_apply:
-            msg = f'applying `multiprocessing` patch {name!r}'
-            cache._debug_output(msg.capitalize() + '...')
-            patch.apply(cache)
-            cache._debug_output('Done with ' + msg)
+    for name, patch in _PATCHES.select(patches_).items():
+        if name == '__reboot_forkserver' and not reboot_forkserver:
+            continue
+        msg = f'applying `multiprocessing` patch {name!r}'
+        cache._debug_output(msg.capitalize() + '...')
+        patch.apply(cache)
+        cache._debug_output('Done with ' + msg)
     # Mark `multiprocessing` as having been patched
     cache.patch(multiprocessing, _PATCHED_MARKER, True)
