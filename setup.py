@@ -303,6 +303,38 @@ if __name__ == '__main__':
         'console_scripts': [
             'kernprof=kernprof:main',
         ],
+        'line_profiler._multiproc_patches': [
+            '__reboot_forkserver'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':RebootForkserverPatch',
+            '__resource_tracker'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':ResourceTrackerPatch',
+            '__spawn_runpy'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':RunpyPatch',
+
+            'child_pids'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._optional_patches'
+            ':CHILD_PIDS_PATCH',
+            'logging'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._optional_patches'
+            ':LOGGING_PATCH',
+
+            'pool'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._profiling_patches'
+            ':POOL_PATCH',
+            'process'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._profiling_patches'
+            ':PROCESS_PATCH',
+        ],
     }
     setupkw['name'] = NAME
     setupkw['version'] = VERSION

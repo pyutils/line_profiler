@@ -53,7 +53,7 @@ from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
 from line_profiler._child_process_profiling.multiprocessing_patches import (
-    _Poller, MPConfig, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
+    MPConfig, Timeout as MPTimeout, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
 )
 from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler.cleanup import Cleanup
@@ -3097,7 +3097,7 @@ def test_apply_mp_patches_success(
 @pytest.mark.retry(
     retries=2,
     condition='_WINDOWS and not patch_pool',
-    exceptions=(ResultMismatch, _Poller.Timeout),
+    exceptions=(ResultMismatch, MPTimeout),
 )
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
