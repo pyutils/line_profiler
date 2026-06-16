@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import os
 import sys
 from collections.abc import Callable
@@ -27,51 +26,6 @@ PS = ParamSpec('PS')
 _CAN_CATCH_SIGTERM = sys.platform != 'win32'
 
 # ------------------------------ Helpers -------------------------------
-
-
-def setup_mp_child(cache: LineProfilingCache) -> None:  # nocover
-    """
-    Perform :py:mod:`multiprocessing`-specific setup in a child process
-    curated by the module. Currently it does the following:
-
-    - Set up ``cache`` to handle ``SIGTERM`` on POSIX if not already
-      set.
-
-    - Unregister the :py:mod:`atexit` hook associated with ``cache`` to
-      avoid possible clashes with the profiling-file writing managed by
-      this module.
-    """
-    if cache.main_pid == os.getpid():  # Not in a child process
-        return
-    xc: Exception | None = None
-    for callback in [_add_sigterm_handler_in_child, _unregister_atexit_hook]:
-        try:
-            callback(cache)
-        except Exception as e:
-            xc = e
-    if xc is not None:
-        xc_str = type(xc).__name__
-        if str(xc):
-            xc_str = f'{xc_str}: {xc}'
-        cache._debug_output(f'Setup failed in process {os.getpid()}: {xc_str}')
-        raise xc
-
-
-def _add_sigterm_handler_in_child(cache: LineProfilingCache) -> None:
-    key = 'mp_added_sigterm_handler'
-    if not _CAN_CATCH_SIGTERM:
-        return
-    if not MPConfig.from_cache(cache).catch_sigterm:
-        return
-    if cache._additional_data.get(key, False):
-        # Already added (e.g. by another plugin)
-        return
-    cache._add_signal_handler()
-    cache._additional_data[key] = True
-
-
-def _unregister_atexit_hook(cache: LineProfilingCache) -> None:
-    atexit.unregister(cache._atexit_hook)
 
 
 def dump_stats_quick(
@@ -165,7 +119,6 @@ def wrap_worker_write_on_exit(
           ``SIGTERM`` on child processes and ensure that they aren't
           prematurely terminated.
     """
-    setup_mp_child(cache)
     return vanilla_impl(_PIDQueueGetWrapper(inqueue, cache), *args, **kwargs)
 
 
@@ -192,7 +145,6 @@ def wrap_worker_write_per_task(
           on child processes, thus necessitating the write to happen
           before control flow is passed backed to the parent.
     """
-    setup_mp_child(cache)
     outqueue = PutWrapper(outqueue, partial(dump_stats_quick, cache))
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
@@ -261,7 +213,6 @@ def wrap_bootstrap(
           there. Hence :py:func:`wrap_terminate` remains necessary for
           mitigating unclean exits.
     """
-    setup_mp_child(cache)
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import atexit
+import os
 import multiprocessing
+import sys
 from collections.abc import Callable
 from functools import partial
+from multiprocessing.process import BaseProcess
+from pathlib import Path
 from types import MappingProxyType as mappingproxy, MethodType
-from typing import ClassVar, cast
+from typing import Any, ClassVar, TypeVar, cast
+from typing_extensions import Concatenate, ParamSpec
 
 try:
     from multiprocessing import spawn
@@ -29,9 +35,226 @@ else:
 
 from ..cache import LineProfilingCache
 from ..runpy_patches import create_runpy_wrapper
+from ._infrastructure import SingleModulePatch
+from .mp_config import MPConfig
+from .poller import Poller, OnTimeout
 
 
-__all__ = ('RebootForkserverPatch', 'ResourceTrackerPatch', 'RunpyPatch')
+__all__ = (
+    'PROCESS_TERMINATION_PATCH',
+    'RebootForkserverPatch', 'ResourceTrackerPatch', 'RunpyPatch',
+    'wrap_terminate', 'wrap_start', 'wrap_bootstrap',
+)
+
+_LOCK_FILE_LOC = '__line_profiler_multiprocessing_process_lock_file__'
+
+T = TypeVar('T')
+PS = ParamSpec('PS')
+
+# ------------------------------ Helpers -------------------------------
+
+
+def setup_mp_child(  # nocover
+    cache: LineProfilingCache, proc: BaseProcess,
+) -> None:
+    """
+    Perform :py:mod:`multiprocessing`-specific setup in a child process
+    curated by the module. Currently it does the following:
+
+    - Set up ``cache`` to handle ``SIGTERM`` on POSIX if not already
+      set.
+
+    - Unregister the :py:mod:`atexit` hook associated with ``cache`` to
+      avoid possible clashes with the profiling-file writing managed by
+      this module.
+
+    - Remove the per-child-process lock file which prevents the parent
+      from :py:meth:`.BaseProcess.terminate`-ing it before it can be
+      properly set up and causing a hang.
+    """
+    if cache.main_pid == os.getpid():  # Not in a child process
+        return
+    xc: Exception | None = None
+    msg = 'Performing setup for `multiprocessing` child processes...'
+    cache._debug_output(msg)
+    setup: Callable[[LineProfilingCache, BaseProcess], Any]
+    for setup in [
+        _add_sigterm_handler_in_child,
+        _unregister_atexit_hook,
+        _remove_lock_file,
+    ]:
+        try:
+            setup(cache, proc)
+        except Exception as e:
+            xc = e
+    if xc is None:
+        msg = 'Setup for `multiprocessing` child process succeeded'
+        cache._debug_output(msg)
+    else:
+        xc_str = type(xc).__name__
+        if str(xc):
+            xc_str = f'{xc_str}: {xc}'
+        cache._debug_output(f'Setup failed: {xc_str}')
+        raise xc
+
+
+def _add_sigterm_handler_in_child(  # nocover
+    cache: LineProfilingCache, _,
+) -> None:
+    key = 'mp_added_sigterm_handler'
+    if sys.platform == 'win32':  # Can't handle `SIGTERM` on Windows
+        return
+    if not MPConfig.from_cache(cache).catch_sigterm:
+        return
+    if cache._additional_data.get(key, False):
+        # Already added (e.g. by another plugin)
+        return
+    cache._add_signal_handler()
+    cache._additional_data[key] = True
+
+
+def _unregister_atexit_hook(  # nocover
+    cache: LineProfilingCache, _,
+) -> None:
+    atexit.unregister(cache._atexit_hook)
+
+
+def _remove_lock_file(  # nocover
+    cache: LineProfilingCache, proc: BaseProcess,
+) -> None:
+    lock_file = _get_lock_file(proc)
+    if lock_file is None:
+        return
+    lock_file.unlink(missing_ok=True)
+    cache._debug_output(f'Removed lock file {lock_file.name!r}')
+
+
+def _get_lock_file(proc: BaseProcess) -> Path | None:
+    return getattr(proc, _LOCK_FILE_LOC, None)
+
+
+def _set_lock_file(proc: BaseProcess, lock_file: Path) -> None:
+    setattr(proc, _LOCK_FILE_LOC, lock_file)
+
+
+# ----------- `multiprocessing.process.BaseProcess` patches ------------
+
+
+@LineProfilingCache._method_wrapper
+def wrap_terminate(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[[BaseProcess], None],
+    self: BaseProcess,
+) -> None:
+    """
+    Wrap around :py:meth:`.BaseProcess.terminate` to make sure that we
+    don't attempt to kill the child (OS-level) process before it has
+    been set up, by polling for when the child process has completed
+    setup and deleted its lock file.
+
+    See also:
+        :py:func:`line_profiler._child_process_profiling.\
+multiprocessing_patches._profiling_patches.wrap_terminate`
+    """
+    lock_file = _get_lock_file(self)
+    if lock_file is None:
+        cache._debug_output(f'no lock file associated with {self!r}')
+        vanilla_impl(self)
+        return
+    try:
+        with _get_terminate_poller(cache, self, lock_file):
+            pass
+    except Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
+        cache._debug_output(f'{type(e).__qualname__}: {e}')
+        raise
+    finally:  # Always call `Process.terminate()` to avoid orphans
+        vanilla_impl(self)
+
+
+@LineProfilingCache._method_wrapper
+def wrap_start(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[[BaseProcess], None],
+    self: BaseProcess,
+) -> None:
+    """
+    Wrap around :py:meth:`.BaseProcess.start` to make sure that we
+    don't attempt to kill the child (OS-level) process before it has
+    been set up, by setting up a lock file which the child process
+    should delete upon completing setup.
+    """
+    prefix = f'process-termination-lock-{os.getpid()}-{id(self):#x}-'
+    # This assigns the tempfile to the instance dict, which should be
+    # pickled along with the rest of the instance and sent to the child
+    # process
+    _set_lock_file(self, cache.make_tempfile(prefix=prefix, suffix='.lock'))
+    vanilla_impl(self)
+
+
+@LineProfilingCache._method_wrapper  # nocover
+def wrap_bootstrap(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[Concatenate[BaseProcess, PS], T],
+    self: BaseProcess,
+    /,
+    *args: PS.args, **kwargs: PS.kwargs
+) -> T:
+    """
+    Wrap around :py:meth:`.BaseProcess._bootstrap` to perform setups
+    and signal to the parent process thereafter.
+
+    Notes:
+        This is only invoked in child processes, and
+        :py:mod:`coverage` seems to be having trouble with them in the
+        current setup, probably due to issues with .pth file
+        precendence causing :py:mod:`line_profiler` to be loaded
+        before it. Hence the ``# nocover``.
+    """
+    setup_mp_child(cache, self)
+    return vanilla_impl(self, *args, **kwargs)
+
+
+def _get_terminate_poller(
+    cache: LineProfilingCache, process: BaseProcess, lock_file: Path,
+) -> Poller:
+    config = MPConfig.from_cache(cache)
+    cd, timeout, on_timeout = config.polling
+    if on_timeout not in ('ignore', 'warn', 'error'):
+        on_timeout = config.get_defaults().polling.on_timeout
+    return (
+        Poller.poll_until(_lock_file_removed, cache, process, lock_file)
+        .with_cooldown(cd)
+        .with_timeout(timeout, cast(OnTimeout, on_timeout))
+    )
+
+
+def _lock_file_removed(
+    cache: LineProfilingCache, proc: BaseProcess, path: Path,
+) -> bool:
+    exists = path.exists()
+    if exists:
+        msg = (
+            f'Waiting for process {proc.ident} to set up and '
+            f'delete the lock file {path.name!r}...'
+        )
+    else:
+        msg = f'Process {proc.ident} has been set up'
+    cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
+    return not exists
+
+
+PROCESS_TERMINATION_PATCH = SingleModulePatch(
+    'process', priority=1,
+).add_target(
+    'BaseProcess',
+    {
+        'terminate': wrap_terminate,
+        'start': wrap_start,
+        '_bootstrap': wrap_bootstrap,
+    },
+)
+
+# --------------------------- Misc. patches ----------------------------
 
 
 class RebootForkserverPatch:
