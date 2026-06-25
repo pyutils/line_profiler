@@ -626,9 +626,12 @@ coverage/control.py
                 forked._debug_output(
                     'Superseded cached `.load()`-ed instance in forked process'
                 )
-            # Unregister the `._atexit_hook` of the inherited cache
-            # instance to avoid complications
+            # To avoid complications with the inherited cache instance
+            # `self`:
+            # - Unregister its `._atexit_hook`
+            # - Discard its cleanup callbacks
             atexit.unregister(self._atexit_hook)
+            self._contexts.clear()
             # Note: we can reuse the profiler instance in the fork, but
             # it needs to go through setup so that the separate
             # profiling results are dumped into another output file

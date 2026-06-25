@@ -234,14 +234,9 @@ catch_sigterm = true
 [tool.line_profiler.child_processes.multiprocessing.patches]
 
 # - `multiprocessing.patches.pool` (bool):
-#   Whether to patch `multiprocessing.pool`:
-#   - POSIX:
-#     Patch `multiprocessing.pool.worker()` so that each child process
-#     write profiling output as it runs out of tasks
-#   - Windows:
-#     Patch `multiprocessing.pool.Pool` so that each task writes
-#     profiling output before pushing the result back to the parent
-#     process
+#   Whether to patch `multiprocessing.pool.worker()` so that each child
+#   process write profiling output when it runs out of tasks (POSIX) or
+#   as each task is completed (Windows)
 pool = true
 # - `multiprocessing.patches.process` (bool):
 #   Whether to patch `multiprocessing.process.BaseProcess`, so that each
@@ -271,8 +266,9 @@ child_pids = true
 cooldown = 0.03125  # 1/32-nd of a second
 # - `multiprocessing.polling.timeout` (float):
 #   Time (seconds) before the main process disregards the alive-ness of
-#   child processes, and unblocks calls to `.terminate()` a (most
-#   probably errored-out) child anyway (set to <= 0 to disable timeouts)
+#   child processes/existence of lock files, and unblocks calls to
+#   `.terminate()` a (most probably errored-out) child anyway (set to
+#   <= 0 to disable timeouts)
 timeout = 0.25
 # - `multiprocessing.polling.on_timeout`
 #   (Literal['error', 'warn', 'ignore']):
