@@ -3,7 +3,6 @@ from __future__ import annotations
 import atexit
 import os
 import multiprocessing
-import sys
 from collections.abc import Callable
 from functools import partial
 from multiprocessing.process import BaseProcess
@@ -61,9 +60,6 @@ def setup_mp_child(  # nocover
     Perform :py:mod:`multiprocessing`-specific setup in a child process
     curated by the module. Currently it does the following:
 
-    - Set up ``cache`` to handle ``SIGTERM`` on POSIX if not already
-      set.
-
     - Unregister the :py:mod:`atexit` hook associated with ``cache`` to
       avoid possible clashes with the profiling-file writing managed by
       this module.
@@ -78,11 +74,7 @@ def setup_mp_child(  # nocover
     msg = 'Performing setup for `multiprocessing` child processes...'
     cache._debug_output(msg)
     setup: Callable[[LineProfilingCache, BaseProcess], Any]
-    for setup in [
-        _add_sigterm_handler_in_child,
-        _unregister_atexit_hook,
-        _remove_lock_file,
-    ]:
+    for setup in [_unregister_atexit_hook, _remove_lock_file]:
         try:
             setup(cache, proc)
         except Exception as e:
@@ -96,21 +88,6 @@ def setup_mp_child(  # nocover
             xc_str = f'{xc_str}: {xc}'
         cache._debug_output(f'Setup failed: {xc_str}')
         raise xc
-
-
-def _add_sigterm_handler_in_child(  # nocover
-    cache: LineProfilingCache, _,
-) -> None:
-    key = 'mp_added_sigterm_handler'
-    if sys.platform == 'win32':  # Can't handle `SIGTERM` on Windows
-        return
-    if not MPConfig.from_cache(cache).catch_sigterm:
-        return
-    if cache._additional_data.get(key, False):
-        # Already added (e.g. by another plugin)
-        return
-    cache._add_signal_handler()
-    cache._additional_data[key] = True
 
 
 def _unregister_atexit_hook(  # nocover

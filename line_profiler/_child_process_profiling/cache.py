@@ -7,8 +7,6 @@ from __future__ import annotations
 import atexit
 import dataclasses
 import os
-import signal
-import sys
 import sysconfig
 try:
     import _pickle as pickle
@@ -22,8 +20,7 @@ from importlib import import_module
 from pathlib import Path
 from pickle import HIGHEST_PROTOCOL
 from textwrap import indent
-from threading import current_thread, main_thread
-from types import FrameType, ModuleType
+from types import ModuleType
 from typing import Any, ClassVar, Literal, TypeVar, cast, final, overload
 from typing_extensions import Concatenate, ParamSpec, Self
 
@@ -43,7 +40,6 @@ T = TypeVar('T')
 PS = ParamSpec('PS')
 # Note: `typing.AnyStr` deprecated since 3.13
 AnyStr = TypeVar('AnyStr', str, bytes)
-_SignalHandler = Callable[[int, FrameType | None], Any]
 
 _THIS_SUBPACKAGE, *_ = (lambda: None).__module__.rpartition('.')
 INHERITED_CACHE_ENV_VARNAME_PREFIX = (
@@ -110,9 +106,6 @@ class LineProfilingCache(Cleanup):
     debug: bool = diagnostics.DEBUG
 
     profiler: LineProfiler | None = _private_field(default=None)
-    _sighandlers: dict[int, _SignalHandler | int | None] = (
-        _private_field(default_factory=dict)
-    )
     _stats_dumper: _DumpStatsHelper | None = _private_field(default=None)
     # These are unstructured fields; other components can decide on what
     # to put in them. They are also pickled by `.dump()`, and are thus
@@ -490,7 +483,7 @@ class LineProfilingCache(Cleanup):
         # - Set the profiler up to write thereto when the process
         #   terminates (with high priority)
         #   (Also keep a separate reference to the callback for e.g.
-        #   dumping stats ASAP when a signal is caught)
+        #   dumping stats ASAP at process exit)
         prof_outfile = self.make_tempfile(
             prefix=_PROFILING_OUTPUT_PREFIX_PATTERN.format(
                 main_pid=self.main_pid,
@@ -503,8 +496,9 @@ class LineProfilingCache(Cleanup):
         self._stats_dumper = dumper = _DumpStatsHelper(prof, prof_outfile)
         self.patch(
             # If we call `dumper.cleanup()` instead of `dumper` (e.g.
-            # in `._handle_signal()`), the subsequent debug-log messages
-            # are attributed to and handled by this cache instance
+            # in some `multiprocessing` patches), the subsequent
+            # debug-log messages are attributed to and handled by this
+            # cache instance
             dumper, '_debug_output', self._debug_output,
             cleanup=False, name='<this cache object>._stats_dumper',
         )
@@ -530,70 +524,6 @@ class LineProfilingCache(Cleanup):
         _import_sibling('multiprocessing_patches').apply(
             self, **(mp_apply_kwargs or {}),
         )
-
-    def _handle_signal(self, signum: int, *_) -> None:  # nocover
-        """
-        See also:
-            :py:meth:`coverage.control.Converage._on_sigterm`
-        """
-        name = self._get_signal_name(signum)
-        # Shouldn't happen, but all kinds of weird things happen at the
-        # interpreter's EoL...
-        state = 'not initiated?!'
-        try:
-            # Just use the `._stats_dumper` to dump the stats ASAP
-            # without running this cache's `.cleanup()` to avoid
-            # deadlocks
-            if self._stats_dumper is None:
-                state = 'unavailable'
-            else:
-                reason = f'caught `{name}` ({signum})'
-                self._stats_dumper.cleanup(force=True, reason=reason)
-        except BaseException as e:
-            state = f'failed ({self._format_exception(e)})'
-            raise e
-        else:
-            state = 'succeeded'
-        finally:
-            handler = self._sighandlers.pop(signum, None)
-            msg = f'Stat-dumping {state}, passing `{name}` onto {handler!r}...'
-            self._debug_output(msg)
-            if handler is None:
-                msg = 'original handler set from outside of Python'
-                raise RuntimeError(msg)
-            else:
-                signal.signal(signum, handler)
-                signal.raise_signal(signum)
-
-    def _add_signal_handler(
-        self, signum: int = signal.SIGTERM,
-    ) -> None:  # nocover
-        """
-        Side effects:
-            If on the main thread and not on Windows:
-
-            - :py:func:`signal.signal` called to set
-              :py:meth:`~._handle_signal` as the ``SIGTERM`` handler
-
-            - :py:meth:`~.cleanup` callback registered undoing that
-
-        Note:
-            ``SIGTERM`` handling is known to be faulty on Windows; see
-            previous discussions at (examples `1`_, `2`_).
-
-        .. _1: https://github.com/coveragepy/coveragepy/blob/main/\
-coverage/control.py
-        .. _2: https://stackoverflow.com/questions/35772001/
-        """
-        if current_thread() != main_thread() or sys.platform == 'win32':
-            return
-        name = self._get_signal_name(signum)
-        self._debug_output(f'Adding `{name}` handler...')
-        self._sighandlers[signum] = signal.signal(signum, self._handle_signal)
-
-    @staticmethod
-    def _get_signal_name(signum: int) -> str:
-        return signal.Signals(signum).name
 
     def _wrap_os_fork(self) -> None:
         """

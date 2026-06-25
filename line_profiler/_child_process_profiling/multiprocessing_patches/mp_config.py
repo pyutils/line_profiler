@@ -40,7 +40,6 @@ class MPConfig:
     """
     Consolidate the config options into a structured object.
     """
-    catch_sigterm: bool
     patches: dict[str, bool]
     polling: _PollerArgs
 
@@ -52,11 +51,7 @@ class MPConfig:
             .conf_dict
         )
         polling = _PollerArgs.new(**loaded['polling'])
-        return cls(
-            catch_sigterm=loaded['catch_sigterm'],
-            patches=dict(loaded['patches']),
-            polling=polling,
-        )
+        return cls(patches=dict(loaded['patches']), polling=polling)
 
     @classmethod
     def from_cache(cls, cache: LineProfilingCache) -> Self:

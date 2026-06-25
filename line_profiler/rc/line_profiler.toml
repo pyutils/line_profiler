@@ -222,13 +222,6 @@ percent = 8
 prefix = '_line_profiler-profiling-hook-'
 suffix = ''
 
-[tool.line_profiler.child_processes.multiprocessing]
-
-# - `multiprocessing.catch_sigterm` (bool):
-#   Whether to set a hook for the child-process session caches to
-#   `.cleanup()` on SIGTERM
-catch_sigterm = true
-
 # List of individual patches to apply to `multiprocessing`
 
 [tool.line_profiler.child_processes.multiprocessing.patches]

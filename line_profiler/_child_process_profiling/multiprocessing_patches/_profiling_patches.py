@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Callable
 from functools import partial
 from multiprocessing.process import BaseProcess
@@ -23,16 +22,11 @@ __all__ = (
 T = TypeVar('T')
 PS = ParamSpec('PS')
 
-_CAN_CATCH_SIGTERM = sys.platform != 'win32'
-
 # ------------------------------ Helpers -------------------------------
 
 
 def dump_stats_quick(
-    cache: LineProfilingCache,
-    *,
-    reason: str | None = None,
-    debug: bool = False,
+    cache: LineProfilingCache, *, reason: str | None = None,
 ) -> None:
     """
     Note:
@@ -46,7 +40,7 @@ def dump_stats_quick(
     stats_dumper = cache._stats_dumper
     if stats_dumper is None:
         return
-    if debug:
+    if cache.debug:
         stats_dumper.cleanup(force=True, reason=reason)
     else:
         stats_dumper()
@@ -91,7 +85,7 @@ class _PIDQueueGetWrapper:  # nocover
             # Got sentinel value, process is about to exit
             reason = 'ran out of tasks in `multiprocessing.process.worker()`'
             if cache.main_pid != os.getpid():
-                dump_stats_quick(cache, debug=True, reason=reason)
+                dump_stats_quick(cache, reason=reason)
         else:
             ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
         return result
@@ -110,14 +104,10 @@ def wrap_worker_write_on_exit(
     processes can write profiling output as soon as the pool runs out of
     tasks.
 
-    Notes:
-        - This is only called in child processes and thus we can't
-          reliably measure coverage thereon; see also
-          :py:func:`wrap_bootstrap`.
-
-        - This only works reliably for POSIX because we can handle
-          ``SIGTERM`` on child processes and ensure that they aren't
-          prematurely terminated.
+    Note:
+        This is only called in child processes and thus we can't
+        reliably measure coverage thereon; see also
+        :py:func:`wrap_bootstrap`.
     """
     return vanilla_impl(_PIDQueueGetWrapper(inqueue, cache), *args, **kwargs)
 
@@ -136,20 +126,17 @@ def wrap_worker_write_per_task(
     processes can write profiling output before pushing the result of
     each task back to the parent.
 
-    Notes:
-        - This is only called in child processes and thus we can't
-          reliably measure coverage thereon; see also
-          :py:func:`wrap_bootstrap`.
-
-        - This is only used on Windows where we can't handle ``SIGTERM``
-          on child processes, thus necessitating the write to happen
-          before control flow is passed backed to the parent.
+    Note:
+        This is only called in child processes and thus we can't
+        reliably measure coverage thereon; see also
+        :py:func:`wrap_bootstrap`.
     """
-    outqueue = PutWrapper(outqueue, partial(dump_stats_quick, cache))
+    dump = partial(dump_stats_quick, cache, reason='processed task')
+    outqueue = PutWrapper(outqueue, dump)
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
-if _CAN_CATCH_SIGTERM:
+if True:  # FIXME
     wrap_worker: Callable[[Callable[..., None]], Callable[..., None]]
     wrap_worker = wrap_worker_write_on_exit
 else:
@@ -200,24 +187,18 @@ def wrap_bootstrap(
     Wrap around :py:meth:`.BaseProcess._bootstrap` so that profiling
     stats are written at the end.
 
-    Notes:
-
-        - This is only invoked in child processes, and
-          :py:mod:`coverage` seems to be having trouble with them in the
-          current setup, probably due to issues with .pth file
-          precendence causing :py:mod:`line_profiler` to be loaded
-          before it. Hence the ``# nocover``.
-
-        - ``SIGTERM`` handling is not consistent on Windows, so we made
-          :py:meth:`.LineProfilingCache._add_signal_handler` a no-op
-          there. Hence :py:func:`wrap_terminate` remains necessary for
-          mitigating unclean exits.
+    Note:
+        This is only invoked in child processes, and :py:mod:`coverage`
+        seems to be having trouble with them in the current setup,
+        probably due to issues with .pth file precendence causing
+        :py:mod:`line_profiler` to be loaded before it. Hence the
+        ``# nocover``.
     """
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
         reason = 'exiting `multiprocessing.process.BaseProcess._bootstrap`'
-        dump_stats_quick(cache, debug=True, reason=reason)
+        dump_stats_quick(cache, reason=reason)
 
 
 def _get_terminate_poller(
@@ -253,7 +234,4 @@ def _process_has_returned(
 PROCESS_PATCH = SingleModulePatch('process').add_method(
     'BaseProcess', '_bootstrap', wrap_bootstrap,
 )
-# We only need to patch `Process.terminate()` if we can't do SIGTERM
-# handling, i.e. on Windows
-if not _CAN_CATCH_SIGTERM:
-    PROCESS_PATCH.add_method('BaseProcess', 'terminate', wrap_terminate)
+PROCESS_PATCH.add_method('BaseProcess', 'terminate', wrap_terminate)
