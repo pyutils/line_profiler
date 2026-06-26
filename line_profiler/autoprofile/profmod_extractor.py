@@ -157,7 +157,8 @@ class ProfmodExtractor:
                     tree_index (int):
                         the index of the import as found in the tree
         """
-        module_dict_list = []
+        module_dict_list: list[dict[str, str | int | None]] = []
+        module_dict: dict[str, str | int | None]
         modname_list = []
         for idx, node in enumerate(tree.body):
             if isinstance(node, ast.Import):
