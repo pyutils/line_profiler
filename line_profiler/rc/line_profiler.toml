@@ -228,8 +228,7 @@ suffix = ''
 
 # - `multiprocessing.patches.pool` (bool):
 #   Whether to patch `multiprocessing.pool.worker()` so that each child
-#   process write profiling output when it runs out of tasks (POSIX) or
-#   as each task is completed (Windows)
+#   process write profiling output as each task is completed
 pool = true
 # - `multiprocessing.patches.process` (bool):
 #   Whether to patch `multiprocessing.process.BaseProcess`, so that each
@@ -242,12 +241,6 @@ process = true
 #   that the internal logs of `multiprocessing` are teed to the session
 #   cache's debug logs
 logging = false
-# - `multiprocessing.patches.child_pids` (bool):
-#   Whether to patch `multiprocessing.pool.worker()` and
-#   `multiprocessing.pool.Pool` so that the the parent process keeps
-#   track of the workload sent to each child, suppressing stray warnings
-#   about empty output files where appropriate
-child_pids = true
 
 # Polling controls, used for the `pool` patch
 

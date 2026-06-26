@@ -53,7 +53,7 @@ from line_profiler._child_process_profiling.runpy_patches import (
     create_runpy_wrapper,
 )
 from line_profiler._child_process_profiling.multiprocessing_patches import (
-    MPConfig, Timeout as MPTimeout, _PATCHED_MARKER, _PATCHES as MP_PATCHES,
+    MPConfig, _PATCHED_MARKER as MP_PATCHED_MARKER, _PATCHES as MP_PATCHES,
 )
 from line_profiler.autoprofile.util_static import modpath_to_modname
 from line_profiler.cleanup import Cleanup
@@ -1827,11 +1827,10 @@ def _run_kernprof_main_in_process(
             # `_test_apply_mp_patches()`
             cw = stack.enter_context(_check_warnings())
             cw.forbid_warnings('.*resource_tracker', module='multiprocessing')
-            if _DEFAULT_MP_CONFIG.patches['child_pids']:
-                cw.forbid_warnings(
-                    r'.* file\(s\) .* empty',
-                    category=UserWarning, module='line_profiler',
-                )
+            cw.forbid_warnings(
+                r'.* file\(s\) .* empty',
+                category=UserWarning, module='line_profiler',
+            )
             if timeout:
                 cw.suppress_warnings(
                     r'.*multi-?threaded.*fork\(\)',
@@ -2394,7 +2393,7 @@ def _filter_patches(summary: _PatchSummary) -> dict[str, set[str]]:
 
 
 _GLOBAL_MINIMAL_PATCHES = {
-    'multiprocessing': frozenset({_PATCHED_MARKER}),
+    'multiprocessing': frozenset({MP_PATCHED_MARKER}),
 }
 # Get patches that are dynamically resolved: while these patches are
 # always applied, some of the patch targets are
@@ -2936,9 +2935,6 @@ def _test_apply_mp_patches_inner(
         # Counts from the one final sum over the parallel results
         nloops_expected += nprocs
 
-    # Note: manually handle the error here instead of using
-    # `pytest.raises()` since we want certain `RuntimeError`s to be
-    # propagated and handled by `@pytest.mark.retry`
     fail_msg = 'forced failure'
     try:
         result = called_func(n)
@@ -2982,7 +2978,6 @@ def _test_apply_mp_patches(
     patch_pool: bool | None = None,
     patch_process: bool | None = None,
     intercept_logs: bool | None = None,
-    trace_pids: bool | None = None,
     *,
     start_method: Literal['fork', 'forkserver', 'spawn', 'dummy'],
     **kwargs
@@ -2996,7 +2991,7 @@ def _test_apply_mp_patches(
     patches = cast(dict[str, bool], _DEFAULT_MP_CONFIG.patches.copy())
     for name, applied in {
         'pool': patch_pool, 'process': patch_process,
-        'logging': intercept_logs, 'child_pids': trace_pids,
+        'logging': intercept_logs,
     }.items():
         if applied is not None:
             patches[name] = applied
@@ -3004,13 +2999,10 @@ def _test_apply_mp_patches(
 
     with _check_warnings() as cw:
         cw.forbid_warnings('.*resource_tracker', module='multiprocessing')
-        if 'child_pids' in mp_patches:
-            # With PID bookkeeping we should be able to weed out all the
-            # child processes which didn't perform any work
-            cw.forbid_warnings(
-                r'.* file\(s\) .* empty',
-                category=UserWarning, module='line_profiler',
-            )
+        cw.forbid_warnings(
+            r'.* file\(s\) .* empty',
+            category=UserWarning, module='line_profiler',
+        )
         if start_method == 'fork':
             # The `@_timeout` decorator spins up a new thread for
             # executing `_test_apply_mp_patches_inner()`; explicitly
@@ -3032,12 +3024,8 @@ def _test_apply_mp_patches(
   # parametrizations don't matter
   + _Params.new(('intercept_logs', 'label1'),
                 [(True, 'with-logging'), (False, 'no-logging')],
-                defaults=(None, 'default-logging'))
-  # Same deal with `trace_pids = child_pids`
-  + _Params.new(('trace_pids', 'label2'),
-                [(True, 'with-child_pids'), (False, 'no-child-pids')],
-                defaults=(None, 'default-child-pids'))).sorted()
-@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label3'),
+                defaults=(None, 'default-logging'))).sorted()
+@pytest.mark.parametrize(('patch_pool', 'patch_process', 'label2'),
                          [(True, True, 'pool-and-process'),
                           (True, False, 'pool-only'),
                           (False, True, 'process-only')])
@@ -3051,12 +3039,10 @@ def test_apply_mp_patches_success(
     patch_pool: bool,
     patch_process: bool,
     intercept_logs: bool | None,
-    trace_pids: bool | None,
     n: int,
     nprocs: int,
     label1: str,
     label2: str,
-    label3: str,
 ) -> None:
     """
     Test that :py:func:`line_profiler._child_process_profiling\
@@ -3070,7 +3056,6 @@ def test_apply_mp_patches_success(
         patch_pool,
         patch_process,
         intercept_logs,
-        trace_pids,
         tmp_path_factory=tmp_path_factory,
         create_cache=create_cache,
         ext_module_object=ext_module_object,

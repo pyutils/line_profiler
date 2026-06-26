@@ -320,11 +320,11 @@ if __name__ == '__main__':
             '=line_profiler._child_process_profiling'
             '.multiprocessing_patches._mandatory_patches'
             ':RunpyPatch',
-
-            'child_pids'
+            '__pool_worker_pid'
             '=line_profiler._child_process_profiling'
-            '.multiprocessing_patches._optional_patches'
-            ':CHILD_PIDS_PATCH',
+            '.multiprocessing_patches._mandatory_patches'
+            ':POOL_WORKER_PID_PATCH',
+
             'logging'
             '=line_profiler._child_process_profiling'
             '.multiprocessing_patches._optional_patches'

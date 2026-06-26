@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from functools import partial
 from multiprocessing.process import BaseProcess
 from typing import Any, TypeVar, cast
@@ -9,6 +9,7 @@ from typing_extensions import Concatenate, ParamSpec
 
 from ..cache import LineProfilingCache
 from ._infrastructure import SingleModulePatch
+from ._mandatory_patches import _get_ntasks_finalized
 from ._queue import Queue, PutWrapper
 from .mp_config import MPConfig
 from .poller import Poller, OnTimeout
@@ -46,74 +47,19 @@ def dump_stats_quick(
         stats_dumper()
 
 
+def _get_worker_ntasks(cache: LineProfilingCache, worker: BaseProcess) -> int:
+    ntasks = _get_ntasks_finalized(cache)
+    pid: int | None = getattr(worker, 'pid', None)
+    if pid is None:
+        return 0
+    return ntasks.get((id(worker), pid), 0)
+
+
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
 
 
-class _PIDQueueGetWrapper:  # nocover
-    """
-    Wrapper around the ``inqueue`` argument to
-    :py:func:`multiprocessing.pool.worker` to intercept the sentinel
-    value (:py:const:`None`) signifying the end of the queue and perform
-    cleanup.
-    """
-    def __init__(
-        self,
-        queue: Queue,
-        cache: LineProfilingCache,
-    ) -> None:
-        self._queue = queue
-        self._cache = cache
-
-    def __getattr__(self, attr: str) -> Any:
-        return getattr(self._queue, attr)
-
-    def put(self, obj: Any) -> None:
-        self._queue.put(obj)
-
-    def get(self) -> Any:
-        result = self._queue.get()
-        cache = self._cache
-        ntasks: dict[int, int]
-        ntasks = cache._additional_data.setdefault('mp_queue_ntasks', {})
-        queue_id = id(self)
-        if result is None:
-            n = ntasks.pop(queue_id, 0)
-            cache._debug_output(
-                '`multiprocessing.pool.worker`: '
-                f'recieved {n} task(s) in total',
-            )
-            # Got sentinel value, process is about to exit
-            reason = 'ran out of tasks in `multiprocessing.process.worker()`'
-            if cache.main_pid != os.getpid():
-                dump_stats_quick(cache, reason=reason)
-        else:
-            ntasks[queue_id] = ntasks.get(queue_id, 0) + 1
-        return result
-
-
 @LineProfilingCache._method_wrapper  # nocover
-def wrap_worker_write_on_exit(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[Concatenate[Queue, PS], None],
-    inqueue: Queue,
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> None:
-    """
-    Wrap around :py:func:`multiprocessing.pool.worker` so that child
-    processes can write profiling output as soon as the pool runs out of
-    tasks.
-
-    Note:
-        This is only called in child processes and thus we can't
-        reliably measure coverage thereon; see also
-        :py:func:`wrap_bootstrap`.
-    """
-    return vanilla_impl(_PIDQueueGetWrapper(inqueue, cache), *args, **kwargs)
-
-
-@LineProfilingCache._method_wrapper  # nocover
-def wrap_worker_write_per_task(
+def wrap_worker(
     cache: LineProfilingCache,
     vanilla_impl: Callable[Concatenate[Queue, Queue, PS], None],
     inqueue: Queue,
@@ -126,21 +72,38 @@ def wrap_worker_write_per_task(
     processes can write profiling output before pushing the result of
     each task back to the parent.
 
-    Note:
-        This is only called in child processes and thus we can't
-        reliably measure coverage thereon; see also
-        :py:func:`wrap_bootstrap`.
+    Notes:
+
+        - This is only called in child processes and thus we can't
+          reliably measure coverage thereon; see also
+          :py:func:`wrap_bootstrap`.
+
+        - In an ideal world, we would have just written profiling output
+          once as :py:func:`multiprocessing.pool.worker` returns. But:
+
+          - Worker sometimes end up in "dirty" states and deadlock, and
+            thus has to be terminated.
+
+          - However, terminating a Python process bypasses the
+            interpreter control flow, meaning that :py:mod:`atexit`
+            hooks and ``try``-``finally`` blocks aren't executed.
+
+          - On POSIX, this can be mitigated by setting signal handlers,
+            but signal handling is infamously unreliable on
+            :py:mod:`multiprocessing` child processes (examples:
+            `1`_, `2`_, `3`_), causing hangs that are hard to remedy.
+
+          So this is about as good as we can do.
+
+    .. _1: https://github.com/python/cpython/issues/73945
+    .. _2: https://github.com/python/cpython/issues/82408
+    .. _3: https://github.com/coveragepy/coveragepy/issues/1310
     """
     dump = partial(dump_stats_quick, cache, reason='processed task')
     outqueue = PutWrapper(outqueue, dump)
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
-if True:  # FIXME
-    wrap_worker: Callable[[Callable[..., None]], Callable[..., None]]
-    wrap_worker = wrap_worker_write_on_exit
-else:
-    wrap_worker = wrap_worker_write_per_task
 POOL_PATCH = SingleModulePatch('pool').add_method(
     '', 'worker', wrap_worker,
 )
@@ -159,14 +122,26 @@ def wrap_terminate(
     don't actually kill the child (OS-level) process before it has the
     chance to properly clean up.
 
-    Note:
-        We're technically polling in a loop, but it isn't actually
-        *that* bad: typically ``.terminate()`` is only called when we're
-        on the bad path (e.g. the parallel workload errored out), and
-        after the performance-critical part of the code (said workload).
+    Notes:
+
+        - We're technically polling in a loop, but it isn't actually
+          *that* bad: typically ``.terminate()`` is only called when
+          we're on the bad path (e.g. the parallel workload errored
+          out), and after the performance-critical part of the code
+          (said workload).
+
+        - For currently unclear reasons, worker processes created by a
+          pool seem to sometimes deadlock, and thus we can't and don't
+          wait for their clean exit. This doesn't affect the profiling
+          results since they haven't run any task anyways,
     """
+    block: AbstractContextManager[Any]
+    if _get_worker_ntasks(cache, self):
+        block = _get_terminate_poller(cache, self)
+    else:  # Don't block if we don't have to
+        block = nullcontext()
     try:
-        with _get_terminate_poller(cache, self):
+        with block:
             pass
     except Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
         cache._debug_output(f'{type(e).__qualname__}: {e}')
@@ -231,7 +206,6 @@ def _process_has_returned(
     return result
 
 
-PROCESS_PATCH = SingleModulePatch('process').add_method(
-    'BaseProcess', '_bootstrap', wrap_bootstrap,
-)
+PROCESS_PATCH = SingleModulePatch('process')
+PROCESS_PATCH.add_method('BaseProcess', '_bootstrap', wrap_bootstrap)
 PROCESS_PATCH.add_method('BaseProcess', 'terminate', wrap_terminate)

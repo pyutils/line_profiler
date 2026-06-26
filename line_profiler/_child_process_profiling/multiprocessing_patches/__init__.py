@@ -26,7 +26,7 @@ from .poller import Poller
 
 __all__ = ('MPConfig', 'Poller', 'Registry', 'Timeout', 'apply')
 
-PublicPatch = Literal['pool', 'process', 'logging', 'child_pids']
+PublicPatch = Literal['pool', 'process', 'logging']
 
 _PATCHED_MARKER = '__line_profiler_patched_multiprocessing__'
 _PATCHES = Registry.from_entry_point()
@@ -52,8 +52,7 @@ def apply(
             so as to ensure that profiling happens on processes forked
             therefrom (see Note).
         patches \
-(Collection[Literal['pool', 'process', 'logging', 'child_pids'] \
-| None]):
+(Collection[Literal['pool', 'process', 'logging'] | None]):
             Patches to apply to :py:mod:`multiprocessing`; see the
             following section for a description of each;
             the default is taken from the TOML config file.
@@ -77,18 +76,6 @@ def apply(
             Patch :py:mod:`multiprocessing.util`'s logging methods (e.g.
             ``debug()`` and ``info()``) so that their messages are teed
             to the cache's debug log.
-        ``'child_pids'``:
-            Patch the following components of
-            :py:mod:`multiprocess.pool` so that the parent process keeps
-            track of the workload executed by each child process,
-            reducing stray warnings about the lack of profiling stats
-            reported thereby:
-
-            - :py:func:`multiprocessing.pool.worker`
-
-            - :py:meth:`multiprocessing.pool.Pool._handle_results`
-
-            - :py:meth:`multiprocessing.pool.Pool.Process`
 
     Side effects:
         - The aforementioned patches applied

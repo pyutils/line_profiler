@@ -447,7 +447,6 @@ class Registry(Mapping[str, Patch]):
             >>> assert 'pool' in reg
             >>> assert 'process' in reg
             >>> assert 'logging' in reg
-            >>> assert 'child_pids' in reg
 
             >>> assert (
             ...     'multiprocessing.process.BaseProcess' in reg.summary
