@@ -3067,23 +3067,6 @@ def test_apply_mp_patches_success(
     )
 
 
-# XXX: on POSIX child processes can hang around for long enough for
-# profiling-stats collection to occur somewhat robustly, thanks to
-# signal handling. But unfortunately on Windows:
-# - When `patch_pool` is true, we wrap the task callables so that they
-#   always write profiling stats before returning/erroring out. This
-#   incurs extra overhead, but effectively prevents the reliquishing of
-#   control back to the parent process before the stats are ready.
-# - However, when `patch_pool` is false, we can only try to block/delay
-#   child-process termination. A timeout is used to prevent indefinite
-#   waits for them to finish, and there's always the off chance that the
-#   end-of-process cleanup still haven't finished at the end.
-# Hence the conditional need for retries...
-@pytest.mark.retry(
-    retries=2,
-    condition='_WINDOWS and not patch_pool',
-    exceptions=(ResultMismatch, MPTimeout),
-)
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
 @pytest.mark.parametrize(('patch_pool', 'patch_process', 'label'),
