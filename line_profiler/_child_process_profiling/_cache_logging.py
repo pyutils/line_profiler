@@ -74,7 +74,9 @@ def parse_timestamp(ts: str) -> datetime:
     Turn a formatted string timestamp back to a
     :py:class:`datetime.datetime` object.
     """
-    assert TIMESTAMP_MICROSECOND_SEP in ts
+    assert TIMESTAMP_MICROSECOND_SEP in ts, (
+        f'{ts=!r}, {TIMESTAMP_MICROSECOND_SEP=!r}'
+    )
     base, _, fractional = ts.rpartition(TIMESTAMP_MICROSECOND_SEP)
     # The microsecond field %f must be 6 digits long
     if len(fractional) < 6:
@@ -181,7 +183,7 @@ def fmt_to_regex(
         if field is None:
             break  # Suffix -> we're done
         if field:  # Named fields
-            assert field.isidentifier()
+            assert field.isidentifier(), f'{field=!r}'
             if field in seen_fields:
                 chunks.append(f'(?P={field})')
             else:
@@ -263,7 +265,7 @@ multiple lines
         except TypeError:  # File object
             # If we're here, `file` is a file object
             if TYPE_CHECKING:
-                assert isinstance(file, TextIO)
+                assert isinstance(file, TextIO), f'{file=!r}'
             content = file.read()
         else:
             content = path.read_text()
@@ -293,27 +295,28 @@ multiple lines
             # Handle all the entries up till the 2nd-to-last one
             for this_match, next_match in pairwise(timestamps):
                 ts = parse_timestamp(this_match.group('timestamp'))
-                # The -1 is for stripping the trailing newline
-                text_block = text[this_match.start():next_match.start() - 1]
-                yield (ts, this_match, text_block)
+                text_block = text[this_match.start():next_match.start()]
+                yield (ts, this_match, text_block.rstrip('\n'))
             # Handle the last entry
             last_match = timestamps[-1]
             yield (
                 parse_timestamp(last_match.group('timestamp')),
                 last_match,
-                text[last_match.start():],
+                text[last_match.start():].rstrip('\n'),
             )
 
         def get_entries(text: str) -> Generator[Self, None, None]:
             for timestamp, ts_match, text_block in gen_message_blocks(text):
                 # Strip the block indent
                 ts_text = ts_match.group(0)
-                assert text_block.startswith(ts_text)
+                assert text_block.startswith(ts_text), (
+                    f'{text_block=!r}, {ts_text=!r}'
+                )
                 ts_width = len(ts_text)
                 text_block = dedent(' ' * ts_width + text_block[ts_width:])
                 # Strip the header and parse the relevant info from it
                 header_match = header_regex.match(text_block)
-                assert header_match
+                assert header_match, f'{header_regex=!r}, {text_block=!r}'
                 current_pid = int(header_match.group('current_pid'))
                 main_pid_ = header_match.group('main_pid')
                 if main_pid_ == HEADER_MAIN_INDICATOR:
