@@ -4,7 +4,8 @@ import atexit
 import os
 import multiprocessing
 from collections.abc import Callable
-from functools import partial, wraps
+from functools import partial
+from multiprocessing.pool import Pool
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from types import MappingProxyType as mappingproxy, MethodType
@@ -44,7 +45,7 @@ __all__ = (
     'POOL_WORKER_PID_PATCH', 'PROCESS_TERMINATION_PATCH',
     'RebootForkserverPatch', 'ResourceTrackerPatch', 'RunpyPatch',
     'wrap_terminate', 'wrap_start', 'wrap_bootstrap',
-    'wrap_handle_results', 'wrap_process', 'wrap_worker',
+    'wrap_handle_results', 'wrap_terminate_pool', 'wrap_worker',
 )
 
 _LOCK_FILE_LOC = '__line_profiler_multiprocessing_process_lock_file__'
@@ -252,9 +253,9 @@ def wrap_handle_results(
     **kwargs: PS.kwargs
 ) -> None:
     """
-    Wrap around :py:meth:`multiprocessing.pool.Pool._handle_results` so
-    that it handles the extra info (PID of child process handling the
-    task) included by :py:func:`.wrap_worker`.
+    Wrap around :py:meth:`.Pool._handle_results` so that it handles the
+    extra info (PID of child process handling the task) included by
+    :py:func:`.wrap_worker`.
 
     Note:
         :py:meth:`.Pool._handle_results` is a static method.
@@ -264,6 +265,39 @@ def wrap_handle_results(
     # (see `ty` issue #3467)
     wrapped_get = partial(_wrap_outqueue_quick_get, cache, get)
     vanilla_impl(outqueue, wrapped_get, *args, **kwargs)
+
+
+@LineProfilingCache._method_wrapper
+def wrap_terminate_pool(
+    cache: LineProfilingCache,
+    vanilla_impl: Callable[
+        Concatenate[type[Pool], Queue, Queue, Queue, list[P], PS], None
+    ],
+    cls: type[Pool],
+    taskqueue: Queue,
+    inqueue: Queue,
+    outqueue: Queue,
+    pool: list[P],
+    *args: PS.args,
+    **kwargs: PS.kwargs
+) -> None:
+    """
+    Wrap around :py:meth:`.Pool._terminate_pool` so that we recover task
+    info from the worker processes. If a worker was idle and hasn't
+    processed any task, it is reported to the cache.
+
+    Note:
+        :py:meth:`.Pool._terminate_pool` is a class method.
+    """
+    try:
+        vanilla_impl(cls, taskqueue, inqueue, outqueue, pool, *args, **kwargs)
+    finally:
+        # Guard against dummy ppol; see similar code in
+        # `multiprocessing.pool`
+        if pool and hasattr(pool[0], 'terminate'):
+            for worker in pool:
+                assert not worker.is_alive()
+                _get_worker_ntasks(worker, cache)
 
 
 @LineProfilingCache._method_wrapper  # nocover
@@ -289,84 +323,26 @@ def wrap_worker(
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
-@LineProfilingCache._method_wrapper
-def wrap_process(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[PS, P],
-    *args: PS.args,
-    **kwargs: PS.kwargs
-) -> P:
+def _get_worker_ntasks(worker: BaseProcess, cache: LineProfilingCache) -> int:
     """
-    Wrap around :py:func:`multiprocessing.pool.Pool.Process` so that the
-    processes created can report on usage when
-    :py:meth:`.BaseProcess.join`-ed or
-    :py:meth:`.BaseProcess.terminate`-ed.
+    Check if the process has run any tasks; if not, report to the cache.
 
-    Note:
-        :py:meth:`.Pool.Process` is a static method.
+    Returns:
+        Number of tasks run by ``worker``
     """
-    proc = vanilla_impl(*args, **kwargs)
-    # Note: since we don't clean up here, there's no need to instantiate
-    # another `Cleanup` helper
-    name = f'<{type(proc).__name__} @ {hex(id(proc))}>'
-    patch = partial(cache.patch, cleanup=False, name=name)
-    for method, action in ('join', 'joining'), ('terminate', 'terminating'):
-        bound = getattr(proc, method)
-        assert isinstance(bound, MethodType)
-        finalize = _wrap_process_finalize(cache, bound.__func__, action)
-        patch(proc, method, MethodType(finalize, proc))
-    return proc
-
-
-def _wrap_process_finalize(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[Concatenate[P, PS], None],
-    action: str,
-) -> Callable[Concatenate[P, PS], None]:
-    """
-    Check if the process has run any tasks;
-    if not, report to the cache.
-
-    Note:
-        Since the process object is pickled, this method has to directly
-        return a function object instead of merely being
-        :py:func:`partial`-ed and wrapped in a
-        :py:class:`types.MethodType`.
-    """
-    @wraps(vanilla_impl)
-    def finalize(self: P, *args: PS.args, **kwargs: PS.kwargs) -> None:
-        log = cache._debug_output
-        call = cache._format_call(vanilla_impl, self, *args, **kwargs)
-        try:
-            log(f'Wrapped call made: {call}')
-            pid: int | None = getattr(self, 'pid', None)
-            ntasks_finalized = _get_ntasks_finalized(cache)
-            identifier = id(self), pid
-            if not (pid is None or identifier in ntasks_finalized):
-                ntasks = _get_ntasks(cache).pop(pid, 0)
-                if not ntasks:
-                    cache._warn_possible_lack_of_stats(pid)
-                log(f'{action} process {pid} which ran {ntasks} task(s)...')
-                ntasks_finalized[cast(tuple[int, int], identifier)] = ntasks
-        except BaseException as e:
-            log(
-                f'Error in bookkeeping ({cache._format_exception(e)}), '
-                'invoking base implementation nonetheless...'
-            )
-            raise e
-        finally:
-            try:
-                vanilla_impl(self, *args, **kwargs)
-            except BaseException as e:
-                state = f'failed ({cache._format_exception(e)})'
-                raise e
-            else:
-                state = 'succeeded'
-            finally:
-                log(f'Wrapped call {call} {state}')
-
-    action = action.capitalize()
-    return finalize
+    pid: int | None = getattr(worker, 'pid', None)
+    ntasks_finalized = _get_ntasks_finalized(cache)
+    if pid is None:  # Dummy process
+        return 0
+    key = id(worker), pid
+    try:
+        return ntasks_finalized[key]
+    except KeyError:
+        pass
+    ntasks = _get_ntasks(cache).pop(pid, 0)
+    if not ntasks:
+        cache._warn_possible_lack_of_stats(pid)
+    return ntasks_finalized.setdefault(key, ntasks)
 
 
 def _wrap_outqueue_quick_get(
@@ -405,7 +381,7 @@ POOL_WORKER_PID_PATCH = (
     SingleModulePatch('pool')
     .add_method('', 'worker', wrap_worker)
     .add_method('Pool', '_handle_results', wrap_handle_results, 'static')
-    .add_method('Pool', 'Process', wrap_process, 'static')
+    .add_method('Pool', '_terminate_pool', wrap_terminate_pool, 'class')
 )
 
 # --------------------------- Misc. patches ----------------------------
