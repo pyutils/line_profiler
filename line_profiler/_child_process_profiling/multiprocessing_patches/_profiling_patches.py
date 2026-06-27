@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
 from functools import partial
 from multiprocessing.process import BaseProcess
-from typing import Any, TypeVar, cast
+from typing import TypeVar, cast
 from typing_extensions import Concatenate, ParamSpec
 
 from ..cache import LineProfilingCache
 from ._infrastructure import SingleModulePatch
-from ._mandatory_patches import _get_ntasks_finalized
 from ._queue import Queue, PutWrapper
 from .mp_config import MPConfig
 from .poller import Poller, OnTimeout
 
 
 __all__ = (
-    'POOL_PATCH', 'PROCESS_PATCH',
-    'wrap_bootstrap', 'wrap_terminate', 'wrap_worker',
+    'POOL_PATCH', 'PROCESS_PATCH', 'wrap_bootstrap', 'wrap_worker',
 )
 
 T = TypeVar('T')
@@ -45,14 +42,6 @@ def dump_stats_quick(
         stats_dumper.cleanup(force=True, reason=reason)
     else:
         stats_dumper()
-
-
-def _get_worker_ntasks(cache: LineProfilingCache, worker: BaseProcess) -> int:
-    ntasks = _get_ntasks_finalized(cache)
-    pid: int | None = getattr(worker, 'pid', None)
-    if pid is None:
-        return 0
-    return ntasks.get((id(worker), pid), 0)
 
 
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
@@ -104,50 +93,10 @@ def wrap_worker(
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
-POOL_PATCH = SingleModulePatch('pool').add_method(
-    '', 'worker', wrap_worker,
-)
+POOL_PATCH = SingleModulePatch('pool')
+POOL_PATCH.add_method('', 'worker', wrap_worker)
 
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
-
-
-@LineProfilingCache._method_wrapper
-def wrap_terminate(
-    cache: LineProfilingCache,
-    vanilla_impl: Callable[[BaseProcess], None],
-    self: BaseProcess,
-) -> None:
-    """
-    Wrap around :py:meth:`.BaseProcess.terminate` to make sure that we
-    don't actually kill the child (OS-level) process before it has the
-    chance to properly clean up.
-
-    Notes:
-
-        - We're technically polling in a loop, but it isn't actually
-          *that* bad: typically ``.terminate()`` is only called when
-          we're on the bad path (e.g. the parallel workload errored
-          out), and after the performance-critical part of the code
-          (said workload).
-
-        - For currently unclear reasons, worker processes created by a
-          pool seem to sometimes deadlock, and thus we can't and don't
-          wait for their clean exit. This doesn't affect the profiling
-          results since they haven't run any task anyways,
-    """
-    block: AbstractContextManager[Any]
-    if _get_worker_ntasks(cache, self):
-        block = _get_terminate_poller(cache, self)
-    else:  # Don't block if we don't have to
-        block = nullcontext()
-    try:
-        with block:
-            pass
-    except Poller.Timeout as e:  # Also handles `~.TimeoutWarning`
-        cache._debug_output(f'{type(e).__qualname__}: {e}')
-        raise
-    finally:  # Always call `Process.terminate()` to avoid orphans
-        vanilla_impl(self)
 
 
 @LineProfilingCache._method_wrapper  # nocover
@@ -162,12 +111,19 @@ def wrap_bootstrap(
     Wrap around :py:meth:`.BaseProcess._bootstrap` so that profiling
     stats are written at the end.
 
-    Note:
-        This is only invoked in child processes, and :py:mod:`coverage`
-        seems to be having trouble with them in the current setup,
-        probably due to issues with .pth file precendence causing
-        :py:mod:`line_profiler` to be loaded before it. Hence the
-        ``# nocover``.
+    Notes:
+
+        - This is only invoked in child processes, and
+          :py:mod:`coverage` seems to be having trouble with them in the
+          current setup, probably due to issues with .pth file
+          precendence causing :py:mod:`line_profiler` to be loaded
+          before it. Hence the ``# nocover``.
+
+        - Since process termination bypasses the Python interpreter (see
+          notes in :py:func:`wrap_worker`), if a child process is
+          terminated prematurely (e.g. via
+          :py:meth:`.BaseProcess.terminate`), profiling data may be
+          missing.
     """
     try:
         return vanilla_impl(self, *args, **kwargs)
@@ -208,4 +164,3 @@ def _process_has_returned(
 
 PROCESS_PATCH = SingleModulePatch('process')
 PROCESS_PATCH.add_method('BaseProcess', '_bootstrap', wrap_bootstrap)
-PROCESS_PATCH.add_method('BaseProcess', 'terminate', wrap_terminate)
