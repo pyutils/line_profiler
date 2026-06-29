@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import List, cast, Any, Union
+from typing import cast
 from .util_static import (
     modname_to_modpath,
     modpath_to_modname,
@@ -30,7 +30,7 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (List[str]):
+            prof_mod (list[str]):
                 list of imports to profile in script.
                 passing the path to script will profile the whole script.
                 the objects can be specified using its dotted path or full path (if applicable).
@@ -77,13 +77,13 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (List[str]):
+            prof_mod (list[str]):
                 list of imports to profile in script.
                 passing the path to script will profile the whole script.
                 the objects can be specified using its dotted path or full path (if applicable).
 
         Returns:
-            modnames_to_profile (List[str]):
+            modnames_to_profile (list[str]):
                 list of dotted paths to profile.
         """
         script_directory = os.path.realpath(os.path.dirname(script_file))
@@ -105,7 +105,7 @@ class ProfmodExtractor:
             so we check if the item is path and whether that path exists, else skip the item.
             """
             modpath = modname_to_modpath(
-                mod, sys_path=cast(List[Union[str, os.PathLike]], new_sys_path)
+                mod, sys_path=cast('list[str | os.PathLike]', new_sys_path)
             )
             if modpath is None:
                 """if cannot convert to modpath, check if already path and if invalid"""
@@ -148,7 +148,7 @@ class ProfmodExtractor:
                 abstract syntax tree to fetch imports from.
 
         Returns:
-            module_dict_list (List[Dict[str,Union[str,int]]]):
+            module_dict_list (list[Dict[str, str | int]]):
                 list of dicts of all imports in the tree, containing:
                     name (str):
                         the real name of the import. e.g. foo from "import foo as bar"
@@ -193,7 +193,7 @@ class ProfmodExtractor:
     def _find_modnames_in_tree_imports(
         modnames_to_profile: list[str],
         module_dict_list: list[dict[str, str | int | None]],
-    ) -> dict[int, str]:
+    ) -> dict[int, list[str]]:
         """Map modnames to imports from an abstract sytax tree.
 
         Find imports in modue_dict_list, created from an abstract syntax tree, that match
@@ -205,21 +205,22 @@ class ProfmodExtractor:
         The import's alias is stored in the output dict.
 
         Args:
-            modnames_to_profile (List[str]):
+            modnames_to_profile (list[str]):
                 list of dotted paths to profile.
 
-            module_dict_list (List[Dict[str,Union[str,int]]]):
+            module_dict_list (list[Dict[str, str | int]]):
                 list of dicts of all imports in the tree.
 
         Returns:
-            modnames_found_in_tree (Dict[int,str]):
+            modnames_found_in_tree (dict[int, list[str]]):
                 dict of imports found
                     key (int):
-                        index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                        index of the (from-)import statement in AST
+                    value (list[str]):
+                        list of aliases (or names if no alias used) to
+                        import
         """
-        modnames_found_in_tree: dict[int, str] = {}
+        modnames_found_in_tree: dict[int, list[str]] = {}
         modname_added_list = []
         for i, module_dict in enumerate(module_dict_list):
             modname = module_dict['name']
@@ -240,22 +241,23 @@ class ProfmodExtractor:
             tree_index = module_dict['tree_index']
             if not isinstance(tree_index, int):
                 raise TypeError('should have gotten an int')
-            modnames_found_in_tree[tree_index] = name
+            modnames_found_in_tree.setdefault(tree_index, []).append(name)
         return modnames_found_in_tree
 
-    def run(self) -> dict[int, str]:
+    def run(self) -> dict[int, list[str]]:
         """Map prof_mod to imports in an abstract syntax tree.
 
         Takes the paths and dotted paths in prod_mod and finds their respective imports in an
         abstract syntax tree, returning their alias and the index they appear in the AST.
 
         Returns:
-            (Dict[int,str]): tree_imports_to_profile_dict
+            tree_imports_to_profile_dict (dict[int, list[str]]);
                 dict of imports to profile
                     key (int):
                         index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                    value (list[str]):
+                        list of aliases (or names if no alias used) to
+                        import
         """
         modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(
             self._script_file, self._prof_mod
@@ -263,7 +265,6 @@ class ProfmodExtractor:
 
         module_dict_list = self._ast_get_imports_from_tree(self._tree)
 
-        tree_imports_to_profile_dict = self._find_modnames_in_tree_imports(
+        return self._find_modnames_in_tree_imports(
             modnames_to_profile, module_dict_list
         )
-        return tree_imports_to_profile_dict

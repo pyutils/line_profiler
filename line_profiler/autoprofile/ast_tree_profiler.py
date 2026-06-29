@@ -106,7 +106,7 @@ class AstTreeProfiler:
     def _profile_ast_tree(
         self,
         tree: ast.Module,
-        tree_imports_to_profile_dict: dict[int, str],
+        tree_imports_to_profile_dict: dict[int, list[str]],
         profile_full_script: bool = False,
         profile_imports: bool = False,
     ) -> ast.Module:
@@ -122,12 +122,13 @@ class AstTreeProfiler:
             tree (_ast.Module):
                 abstract syntax tree to be profiled.
 
-            tree_imports_to_profile_dict (Dict[int,str]):
+            tree_imports_to_profile_dict (dict[int, list[str]]):
                 dict of imports to profile
                     key (int):
                         index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                    value (list[str]):
+                        list of aliases (or names if no alias used) to
+                        import
 
             profile_full_script (bool):
                 if True, profile whole script.
@@ -144,10 +145,13 @@ class AstTreeProfiler:
             list(tree_imports_to_profile_dict), reverse=True
         )
         for tree_index in argsort_tree_indexes:
-            name = tree_imports_to_profile_dict[tree_index]
-            expr = ast_create_profile_node(name)
-            tree.body.insert(tree_index + 1, expr)
-            profiled_imports.append(name)
+            names = tree_imports_to_profile_dict[tree_index]
+            for name in reversed(names):
+                # Reversing keeps the order of the inserted nodes
+                # consistent with the imports
+                expr = ast_create_profile_node(name)
+                tree.body.insert(tree_index + 1, expr)
+                profiled_imports.append(name)
         if profile_full_script:
             tree = self._ast_transformer_class_handler(
                 profile_imports=profile_imports,
