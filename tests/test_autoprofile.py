@@ -5,9 +5,11 @@ import subprocess
 import sys
 import shlex
 import tempfile
+from ast import unparse
 
 import pytest
 import ubelt as ub
+from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
 
 
 def test_single_function_autoprofile():
@@ -1197,3 +1199,57 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
             f'^Function: {prefix}{func}', raw_output, re.MULTILINE
         )
         assert bool(in_output) == (func in profiled_funcs)
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'prof_os', 'prof_minidom', 'prof_pulldom',
+     'prof_elem', 'prof_etree', 'prof_parser'),
+    # Trivial cases
+    [([], False, False, False, False, False, False),
+     (['os', 'foo.bar'], True, False, False, False, False, False),
+     (['xml.etree.ElementTree'], False, False, False, True, True, True),
+     (['xml.etree.ElementTree.Element', 'xml.etree.ElementTree.XMLParser',
+       'xml.dom.minidom'],
+      False, True, False, True, False, True)])
+def test_multitarget_import_resolution(
+    prof_mod: list[str],
+    prof_os: bool,
+    prof_minidom: bool, prof_pulldom: bool,
+    prof_elem: bool, prof_etree: bool, prof_parser: bool,
+) -> None:
+    """
+    Test that (from-)import statements with multiple targets are
+    correctly transformed, resolving to the correct entities being
+    profiled.
+
+    See also:
+        Issue #433
+    """
+    input_module = ub.codeblock(
+        """
+        import os
+        from xml.dom import minidom, pulldom
+        from xml.etree.ElementTree import (
+            Element, ElementTree, XMLParser,
+        )
+
+
+        if __name__ == '__main__':
+            pass
+        """
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        fpath = ub.Path(tmp) / 'script.py'
+        fpath.write_text(input_module)
+        module_ast = AstTreeProfiler(str(fpath), prof_mod, False).profile()
+    output_module = unparse(module_ast)
+
+    for target, profiled in {
+        'os': prof_os,
+        'minidom': prof_minidom, 'pulldom': prof_pulldom,
+        'Element': prof_elem, 'ElementTree': prof_etree,
+        'XMLParser': prof_parser,
+    }.items():
+        pattern = rf'add_imported_function_or_module\({target}\)'
+        assert bool(re.search(pattern, output_module)) == profiled
+        
