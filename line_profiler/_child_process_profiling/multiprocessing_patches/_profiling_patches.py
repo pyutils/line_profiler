@@ -3,22 +3,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 from multiprocessing.process import BaseProcess
-from typing import TypeVar, cast
+from typing import TypeVar
 from typing_extensions import Concatenate, ParamSpec
 
 from ..cache import LineProfilingCache
 from ._infrastructure import SingleModulePatch
 from ._queue import Queue, PutWrapper
-from .mp_config import MPConfig
-from .poller import Poller, OnTimeout
 
 
 __all__ = (
-    'POOL_PATCH', 'PROCESS_PATCH', 'wrap_bootstrap', 'wrap_worker',
+    'POOL_PATCH', 'PROCESS_PATCH',
+    'wrap_bootstrap', 'wrap_process', 'wrap_worker',
 )
 
 T = TypeVar('T')
+P = TypeVar('P', bound=BaseProcess)
 PS = ParamSpec('PS')
+
+_POOL_WORKER_MARKER = '__line_profiler_multiprocessing_is_pool_worker__'
 
 # ------------------------------ Helpers -------------------------------
 
@@ -42,6 +44,15 @@ def dump_stats_quick(
         stats_dumper.cleanup(force=True, reason=reason)
     else:
         stats_dumper()
+
+
+def _mark_worker(worker: P) -> P:
+    setattr(worker, _POOL_WORKER_MARKER, True)
+    return worker
+
+
+def _is_marked_worker(proc: BaseProcess) -> bool:
+    return getattr(proc, _POOL_WORKER_MARKER, False)
 
 
 # ---------------- `multiprocessing.pool.Pool` patches -----------------
@@ -93,8 +104,31 @@ def wrap_worker(
     return vanilla_impl(inqueue, outqueue, *args, **kwargs)
 
 
+@LineProfilingCache._method_wrapper
+def wrap_process(
+    _, vanilla_impl: Callable[PS, P], *args: PS.args, **kwargs: PS.kwargs
+) -> P:
+    """
+    Wrap around :py:meth:`multiprocessing.pool.Pool.Process` so that the
+    worker processes created by the pool are marked and can be
+    distinguished from processes otherwise managed.
+
+    Notes:
+
+        - :py:meth:`multiprocessing.pool.Pool.Process` is a static
+          method.
+
+        - Technically one can inspect the :py:attr:`.BaseProcess.name`
+          of the process to see that it is a ``PoolWorker``, but since
+          said attribute is writable it may be more robust to set up a
+          separate marker.
+    """
+    return _mark_worker(vanilla_impl(*args, **kwargs))
+
+
 POOL_PATCH = SingleModulePatch('pool')
 POOL_PATCH.add_method('', 'worker', wrap_worker)
+POOL_PATCH.add_method('Pool', 'Process', wrap_process, 'static')
 
 # ----------- `multiprocessing.process.BaseProcess` patches ------------
 
@@ -124,42 +158,19 @@ def wrap_bootstrap(
           terminated prematurely (e.g. via
           :py:meth:`.BaseProcess.terminate`), profiling data may be
           missing.
+
+        - To prevent data corruption/loss, the end-of-function write to
+          the temporary profiling-stat file only happens for
+          non-pool-managed :py:class:`BaseProcess` objects, because they
+          are regularly :py:meth:`.BaseProcess.terminate`-ed by their
+          managing pool.
     """
     try:
         return vanilla_impl(self, *args, **kwargs)
     finally:
         reason = 'exiting `multiprocessing.process.BaseProcess._bootstrap`'
-        dump_stats_quick(cache, reason=reason)
-
-
-def _get_terminate_poller(
-    cache: LineProfilingCache, process: BaseProcess,
-) -> Poller:
-    config = MPConfig.from_cache(cache)
-    cd, timeout, on_timeout = config.polling
-    if on_timeout not in ('ignore', 'warn', 'error'):
-        on_timeout = config.get_defaults().polling.on_timeout
-    # `_process_has_returned()` takes a `timeout` which it passes to
-    # `popen.wait()`; said timeout is essentially a limit as to how
-    # often the function is called, hence our cooldown
-    poller = Poller.poll_until(_process_has_returned, process, cache, cd)
-    return poller.with_timeout(timeout, cast(OnTimeout, on_timeout))
-
-
-def _process_has_returned(
-    proc: BaseProcess, cache: LineProfilingCache, timeout: float,
-) -> bool:
-    popen = getattr(proc, '_popen', None)
-    if popen is None:
-        msg, result = 'No associated process', True
-    else:
-        result = popen.wait(timeout) is not None
-        if result:
-            msg = f'Process {popen.pid} has returned'
-        else:
-            msg = f'Waiting for process {popen.pid} to return...'
-    cache._debug_output(f'  {type(proc).__name__} @ {id(proc):#x}: {msg}')
-    return result
+        if not _is_marked_worker(self):
+            dump_stats_quick(cache, reason=reason)
 
 
 PROCESS_PATCH = SingleModulePatch('process')
