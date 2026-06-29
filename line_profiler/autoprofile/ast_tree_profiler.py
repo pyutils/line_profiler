@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import os
-from typing import Type
 
 from .ast_profile_transformer import (
     AstProfileTransformer,
@@ -29,8 +28,12 @@ class AstTreeProfiler:
         script_file: str,
         prof_mod: list[str],
         profile_imports: bool,
-        ast_transformer_class_handler: Type = AstProfileTransformer,
-        profmod_extractor_class_handler: Type = ProfmodExtractor,
+        ast_transformer_class_handler: (
+            type[AstProfileTransformer]
+        ) = AstProfileTransformer,
+        profmod_extractor_class_handler: (
+            type[ProfmodExtractor]
+        ) = ProfmodExtractor,
     ) -> None:
         """Initializes the AST tree profiler instance with the script file path
 
@@ -46,10 +49,10 @@ class AstTreeProfiler:
             profile_imports (bool):
                 if True, when auto-profiling whole script, profile all imports aswell.
 
-            ast_transformer_class_handler (Type):
+            ast_transformer_class_handler (type[AstProfileTransformer]):
                 the AstProfileTransformer class that handles profiling the whole script.
 
-            profmod_extractor_class_handler (Type):
+            profmod_extractor_class_handler (type[ProfmodExtractor]):
                 the ProfmodExtractor class that handles mapping prof_mod to objects in the script.
         """
         self._script_file = script_file
@@ -106,7 +109,7 @@ class AstTreeProfiler:
     def _profile_ast_tree(
         self,
         tree: ast.Module,
-        tree_imports_to_profile_dict: dict[int, str],
+        tree_imports_to_profile_dict: dict[int, list[str]],
         profile_full_script: bool = False,
         profile_imports: bool = False,
     ) -> ast.Module:
@@ -122,12 +125,13 @@ class AstTreeProfiler:
             tree (_ast.Module):
                 abstract syntax tree to be profiled.
 
-            tree_imports_to_profile_dict (Dict[int,str]):
+            tree_imports_to_profile_dict (dict[int, list[str]]):
                 dict of imports to profile
                     key (int):
                         index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                    value (list[str]):
+                        list of aliases (or names if no alias used) to
+                        import
 
             profile_full_script (bool):
                 if True, profile whole script.
@@ -144,10 +148,13 @@ class AstTreeProfiler:
             list(tree_imports_to_profile_dict), reverse=True
         )
         for tree_index in argsort_tree_indexes:
-            name = tree_imports_to_profile_dict[tree_index]
-            expr = ast_create_profile_node(name)
-            tree.body.insert(tree_index + 1, expr)
-            profiled_imports.append(name)
+            names = tree_imports_to_profile_dict[tree_index]
+            for name in reversed(names):
+                # Reversing keeps the order of the inserted nodes
+                # consistent with the imports
+                expr = ast_create_profile_node(name)
+                tree.body.insert(tree_index + 1, expr)
+                profiled_imports.append(name)
         if profile_full_script:
             tree = self._ast_transformer_class_handler(
                 profile_imports=profile_imports,
@@ -179,7 +186,7 @@ class AstTreeProfiler:
 
         tree_imports_to_profile_dict = self._profmod_extractor_class_handler(
             tree, self._script_file, self._prof_mod
-        ).run()
+        ).run(assume_single_target_imports=False)
         tree_profiled = self._profile_ast_tree(
             tree,
             tree_imports_to_profile_dict,
