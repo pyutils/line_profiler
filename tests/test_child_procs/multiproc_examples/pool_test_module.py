@@ -5,7 +5,8 @@ from collections.abc import Callable
 from multiprocessing import dummy, get_context, Pool
 from typing import Literal
 
-from external_module import my_external_sum, split_workload
+from external_module import my_external_sum
+from external_module import split_workload  # See issue #433
 
 
 NUM_NUMBERS = 100

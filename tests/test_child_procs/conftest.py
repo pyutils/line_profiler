@@ -27,9 +27,13 @@ from ._test_child_procs_utils import (
 
 __all__ = (
     'ext_module', 'pool_test_module', 'pool_test_module_clone',
+    'process_test_module',
     'ext_module_object', 'pool_test_module_object',
+    'process_test_module_object',
     'create_cache', 'curated_profiler', 'another_pid',
 )
+
+# ========================== Module fixtures ===========================
 
 # Only write the files once per test session
 
@@ -49,8 +53,23 @@ def _ext_module() -> Generator[Path, None, None]:
 
 @pytest.fixture(scope='session')
 def _pool_test_module(_ext_module: Path) -> Generator[Path, None, None]:
-    name = next(ModuleFixture.propose_name('my_pool_test_module'))
-    body = (_EXAMPLES_PATH / 'pool_test_module.py').read_text()
+    yield from _dependent_module_path(
+        _ext_module, 'pool_test_module.py', 'my_pool_test_module',
+    )
+
+
+@pytest.fixture(scope='session')
+def _process_test_module(_ext_module: Path) -> Generator[Path, None, None]:
+    yield from _dependent_module_path(
+        _ext_module, 'process_test_module.py', 'my_process_test_module',
+    )
+
+
+def _dependent_module_path(
+    _ext_module: Path, basename: str, module_name: str,
+) -> Generator[Path, None, None]:
+    name = next(ModuleFixture.propose_name(module_name))
+    body = (_EXAMPLES_PATH / basename).read_text()
     body = body.replace('external_module', _ext_module.stem)
     with TemporaryDirectory() as mydir_str:
         my_dir = Path(mydir_str)
@@ -58,6 +77,35 @@ def _pool_test_module(_ext_module: Path) -> Generator[Path, None, None]:
         my_module = my_dir / f'{name}.py'
         my_module.write_text(body)
         yield my_module
+
+
+def _build_command_line(
+    fail: bool, start_method: StartMethod | None, *,
+    use_local_func: bool = False,
+    nnums: int | None = None,
+    nprocs: int | None = None,
+) -> list[str]:
+    args: list[str] = []
+    if fail:
+        args.append('--force-failure')
+    if start_method:
+        args.extend(['-s', start_method])
+    if use_local_func:
+        args.append('--local')
+    if nnums:
+        args.extend(['-l', str(nnums)])
+    if nprocs:
+        args.extend(['-n', str(nprocs)])
+    return args
+
+
+def _get_output(nnums_: int, /) -> Callable[..., int]:
+    def get_output(nnums: int | None = None, **_) -> int:
+        if nnums is None:
+            nnums = nnums_
+        return nnums * (nnums + 1) // 2
+
+    return get_output
 
 
 @pytest.fixture
@@ -83,36 +131,7 @@ def pool_test_module(
         :py:class:`ModuleFixture` helper object containing the code at
         ``./multiproc_examples/pool_test_module.py``
     """
-    def build_command_line(
-        fail: bool, start_method: StartMethod | None, *,
-        use_local_func: bool = False,
-        nnums: int | None = None,
-        nprocs: int | None = None,
-    ) -> list[str]:
-        args: list[str] = []
-        if fail:
-            args.append('--force-failure')
-        if start_method:
-            args.extend(['-s', start_method])
-        if use_local_func:
-            args.append('--local')
-        if nnums:
-            args.extend(['-l', str(nnums)])
-        if nprocs:
-            args.extend(['-n', str(nprocs)])
-        return args
-
-    def get_output(*, nnums: int | None = None, **_) -> int:
-        if nnums is None:
-            nnums = default_nnums
-        return nnums * (nnums + 1) // 2
-
-    default_nnums = _static_parse('NUM_NUMBERS', _pool_test_module)
-
-    yield ModuleFixture(
-        _pool_test_module, monkeypatch, [ext_module],
-        build_command_line, get_output,
-    )
+    yield from _yield_test_module(_pool_test_module, ext_module, monkeypatch)
 
 
 @pytest.fixture
@@ -138,14 +157,43 @@ def pool_test_module_clone(
 
 
 @pytest.fixture
+def process_test_module(
+    _process_test_module: Path,
+    ext_module: ModuleFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[ModuleFixture, None, None]:
+    """
+    Yields:
+        :py:class:`ModuleFixture` helper object containing the code at
+        ``./multiproc_examples/process_test_module.py``
+    """
+    yield from _yield_test_module(
+        _process_test_module, ext_module, monkeypatch,
+    )
+
+
+def _yield_test_module(
+    test_module: Path,
+    ext_module: ModuleFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[ModuleFixture, None, None]:
+    default_nnums = _static_parse('NUM_NUMBERS', test_module)
+    assert isinstance(default_nnums, int)
+    yield ModuleFixture(
+        test_module, monkeypatch, [ext_module],
+        _build_command_line, _get_output(default_nnums),
+    )
+
+
+@pytest.fixture
 def ext_module_object(
     ext_module: ModuleFixture,
 ) -> Generator[ModuleType, None, None]:
     """
     Yields:
         :py:class:`ModuleType` object containing the code at
-        :py:data:`EXTERNAL_MODULE_BODY`, and is torn down at the end of
-        the test
+        ``./multiproc_examples/external_module.py``, and is torn down at
+        the end of the test
     """
     yield from ext_module._import_module_helper()
 
@@ -157,10 +205,26 @@ def pool_test_module_object(
     """
     Yields:
         :py:class:`ModuleType` object containing the code at
-        :py:data:`TEST_MODULE_TEMPLATE`, and is torn down at the end of
-        the test
+        ``./multiproc_examples/pool_test_module.py``, and is torn down
+        at the end of the test
     """
     yield from pool_test_module._import_module_helper()
+
+
+@pytest.fixture
+def process_test_module_object(
+    process_test_module: ModuleFixture, ext_module_object: ModuleType,
+) -> Generator[ModuleType, None, None]:
+    """
+    Yields:
+        :py:class:`ModuleType` object containing the code at
+        ``./multiproc_examples/process_test_module.py``, and is torn
+        down at the end of the test
+    """
+    yield from process_test_module._import_module_helper()
+
+
+# =========================== Misc. fixtures ===========================
 
 
 @pytest.fixture

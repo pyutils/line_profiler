@@ -18,7 +18,8 @@ from time import sleep
 from typing import Any, ClassVar, Generic, Literal, TypeVar, cast, final
 from typing_extensions import ParamSpec, Self
 
-from external_module import my_external_sum, split_workload
+from external_module import my_external_sum
+from external_module import split_workload  # See issue #433
 
 
 NUM_NUMBERS = 100
@@ -153,22 +154,35 @@ class Worker(Generic[T]):
             rmdir = partial(shutil.rmtree, tmpdir, ignore_errors=True)
             atexit.register(rmdir)
         get_process: Callable[..., BaseProcess]
-        if start_method == 'dummy':
+        daemon: bool | None = None
+        use_threads = start_method == 'dummy'
+        if use_threads:
             # Type-checkers don't seem to like a subclass as a
             # base-class constructor...
             get_process = cast(Callable[..., BaseProcess], dummy.Process)
+            # Note: `DummyProcess` somehow doesn't take the `daemon`
+            # parameter, despite `threading.Thread` doing so...
+            # (see cpython issue GH-#85716, PR GH-#21869)
+            daemon = kw.pop('daemon', None)
         else:
-            get_process = get_context(start_method).Process
+            mp_context = get_context(start_method)
+            assert hasattr(mp_context, 'Process')  # Assure `mypy`
+            get_process = mp_context.Process
         handle, fname = mkstemp(suffix='.pkl', dir=tmpdir)
         outfile = Path(fname)
         os.close(handle)
         proc = get_process(
             target=cls._write_result,
-            args=(outfile, target, *(args or ())),
+            # Suppress (i.e. don't reraise) errors on threads, or
+            # `pytest` will complain
+            args=(outfile, target, use_threads, *(args or ())),
             kwargs=(kwargs or {}),
             name=f'MyWorker-{cls._get_count()}',
             **kw,
         )
+        if daemon is not None:
+            # Should've been set except for `DummyProcess`
+            proc.daemon = daemon
         result_callback = cast(
             Callable[[], T], partial(cls._read_result, outfile),
         )
@@ -190,14 +204,15 @@ class Worker(Generic[T]):
 
     @staticmethod
     def _write_result(
-        out: Path, func: Callable[PS, Any], /,
+        out: Path, func: Callable[PS, Any], suppress_errors: bool, /,
         *args: PS.args, **kwargs: PS.kwargs
     ) -> None:
         try:
             result = True, func(*args, **kwargs)
         except BaseException as e:
             result = False, type(e)(*e.args)  # Truncate traceback
-            raise
+            if not suppress_errors:
+                raise
         finally:
             with out.open(mode='wb') as fobj:
                 pickle.dump(result, fobj)

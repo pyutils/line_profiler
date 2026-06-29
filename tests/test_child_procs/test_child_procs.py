@@ -99,11 +99,11 @@ def test_runpy_patches(
     if run_profiled_code:
         module = pool_test_module
         num_invocations, num_loops = 1, nprocs
-        expected_funcs: list[str] = ['my_external_sum']
+        expected_funcs: set[str] = {'my_external_sum', 'split_workload'}
     else:
         module = pool_test_module_clone
         num_invocations, num_loops = 0, 0
-        expected_funcs = []
+        expected_funcs = set()
     if as_module:
         first_arg = module.name
         runner = partial(runpy.run_module, alter_sys=True)
@@ -122,7 +122,7 @@ def test_runpy_patches(
     assert stdout.rstrip('\n') == str(nnums * (nnums + 1) // 2)
 
     # Check that profiler has received the appropriate targets
-    funcs = [func.__name__ for func in getattr(cache.profiler, 'functions')]
+    funcs = {func.__name__ for func in getattr(cache.profiler, 'functions')}
     assert funcs == expected_funcs
 
     # Check that calls in the current process are profiled iif the
@@ -473,11 +473,11 @@ def test_load_pth_hook(
 @cleanup_extra_pth_files()
 @preserve_targets()
 @add_timeout
-def _test_apply_mp_patches_pool_inner(
+def _test_apply_mp_patches_inner(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
-    pool_test_module_object: ModuleType,
+    test_module_object: ModuleType,
     start_method: StartMethod,
     mp_patches: Collection[str],
     fail: bool,
@@ -516,7 +516,7 @@ def _test_apply_mp_patches_pool_inner(
     # to the profiler, so the code paths are the same
     profiled_func = ext_module_object.my_external_sum
     called_func = partial(
-        pool_test_module_object.sum_in_child_procs,
+        test_module_object.sum_in_child_procs,
         n=nprocs,
         my_sum=profiled_func,
         start_method=start_method,
@@ -587,12 +587,17 @@ def _test_apply_mp_patches_pool_inner(
     patterns.update({
         pat.format(re.escape(path.name)): True for path in iter_stats
     })
-    patterns[re.escape('`multiprocessing` logging (debug)')] = intercept_logs
+    logger_pat = '{} {}'.format(
+        re.escape('`multiprocessing` logging'),
+        r'\((sub_)?debug|info|sub_warning|warn\)',
+    )
+    patterns[logger_pat] = intercept_logs
     search_cache_logs(cache, True, patterns)
 
 
-def _test_apply_mp_patches_pool(
+def _test_apply_mp_patches(
     patch_process: bool | None = None,
+    patch_pool: bool | None = None,
     intercept_logs: bool | None = None,
     *,
     start_method: StartMethod,
@@ -606,7 +611,8 @@ def _test_apply_mp_patches_pool(
 
     patches = cast(dict[str, bool], _DEFAULT_MP_CONFIG.patches.copy())
     for name, applied in {
-        'pool': True, 'process': patch_process, 'logging': intercept_logs,
+        'pool': patch_pool, 'process': patch_process,
+        'logging': intercept_logs,
     }.items():
         if applied is not None:
             patches[name] = applied
@@ -626,7 +632,7 @@ def _test_apply_mp_patches_pool(
             cw.suppress_warnings(
                 r'.*multi-?threaded.*fork\(\)', category=DeprecationWarning,
             )
-        _test_apply_mp_patches_pool_inner(
+        _test_apply_mp_patches_inner(
             mp_patches=mp_patches, start_method=start_method, **kwargs,
         )
 
@@ -638,17 +644,22 @@ def _test_apply_mp_patches_pool(
   + Params.new(('intercept_logs', 'label1'),
                [(True, 'with-logging'), (False, 'no-logging')],
                defaults=(None, 'default-logging'))).sorted()
-@pytest.mark.parametrize(('patch_process', 'label2'),
-                         [(True, 'with-process-patch'),
-                          (False, 'no-process-patch')])
+@pytest.mark.parametrize(
+    ('test_module', 'patch_process', 'patch_pool', 'label2'),
+    [('pool_test_module', True, True, 'patch-pool-and-process'),
+     ('pool_test_module', False, True, 'patch-pool-only'),
+     ('process_test_module', True, True, 'patch-pool-and-process'),
+     ('process_test_module', True, False, 'patch-process-only')])
 @pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
-def test_apply_mp_patches_pool_success(
+def test_apply_mp_patches_success(
+    request: pytest.FixtureRequest,
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
-    pool_test_module_object: ModuleType,
+    test_module: str,
     start_method: StartMethod,
     patch_process: bool,
+    patch_pool: bool,
     intercept_logs: bool | None,
     n: int,
     nprocs: int,
@@ -659,19 +670,23 @@ def test_apply_mp_patches_pool_success(
     Test that :py:func:`line_profiler._child_process_profiling\
 .multiprocessing_patches.apply`
     works as expected for Python code using parallelism based on
-    :py:class:`multiprocessing.pool.Pool`, when the parallel workload
-    DOES NOT error out.
+    :py:class:`multiprocessing.pool.Pool` and
+    :py:class:`multiprocessing.process.BaseProcess`, when the parallel
+    workload DOES NOT error out.
 
     See also:
         :py:func:`test_apply_mp_patches_failure`
     """
-    _test_apply_mp_patches_pool(
+    test_module_object = request.getfixturevalue(test_module + '_object')
+    assert isinstance(test_module_object, ModuleType)
+    _test_apply_mp_patches(
         patch_process,
+        patch_pool,
         intercept_logs,
         tmp_path_factory=tmp_path_factory,
         create_cache=create_cache,
         ext_module_object=ext_module_object,
-        pool_test_module_object=pool_test_module_object,
+        test_module_object=test_module_object,
         start_method=start_method,
         fail=False,
         n=n,
@@ -681,17 +696,22 @@ def test_apply_mp_patches_pool_success(
 
 @pytest.mark.parametrize('start_method',
                          ['fork', 'forkserver', 'spawn', 'dummy'])
-@pytest.mark.parametrize(('patch_process', 'label'),
-                         [(True, 'with-process-patch'),
-                          (False, 'no-process-patch')])
+@pytest.mark.parametrize(
+    ('test_module', 'patch_process', 'patch_pool', 'label'),
+    [('pool_test_module', True, True, 'patch-pool-and-process'),
+     ('pool_test_module', False, True, 'patch-pool-only'),
+     ('process_test_module', True, True, 'patch-pool-and-process'),
+     ('process_test_module', True, False, 'patch-process-only')])
 @pytest.mark.parametrize(('n', 'nprocs'), [(100, 2)])
-def test_apply_mp_patches_pool_failure(
+def test_apply_mp_patches_failure(
+    request: pytest.FixtureRequest,
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
     ext_module_object: ModuleType,
-    pool_test_module_object: ModuleType,
+    test_module: str,
     start_method: StartMethod,
     patch_process: bool,
+    patch_pool: bool,
     n: int,
     nprocs: int,
     label: str,
@@ -700,18 +720,22 @@ def test_apply_mp_patches_pool_failure(
     Test that :py:func:`line_profiler._child_process_profiling\
 .multiprocessing_patches.apply`
     works as expected for Python code using parallelism based on
-    :py:class:`multiprocessing.pool.Pool`, when the parallel workload
-    DOES error out.
+    :py:class:`multiprocessing.pool.Pool` and
+    :py:class:`multiprocessing.process.BaseProcess`, when the parallel
+    workload DOES error out.
 
     See also:
         :py:func:`test_apply_mp_patches_success`
     """
-    _test_apply_mp_patches_pool(
+    test_module_object = request.getfixturevalue(test_module + '_object')
+    assert isinstance(test_module_object, ModuleType)
+    _test_apply_mp_patches(
         patch_process,
+        patch_pool,
         tmp_path_factory=tmp_path_factory,
         create_cache=create_cache,
         ext_module_object=ext_module_object,
-        pool_test_module_object=pool_test_module_object,
+        test_module_object=test_module_object,
         start_method=start_method,
         fail=True,
         n=n,
@@ -745,23 +769,27 @@ def _get_mp_start_method_fuzzer(label_name: str | None) -> Params:
     return fuzz_fail * fuzz_start
 
 
-@(Params.new(('run_func', 'label1'),
-             [(run_module, 'module'), (run_script, 'script')])
+@(Params.new('test_module', ['pool_test_module', 'process_test_module'])
+  * Params.new(('run_func', 'label1'),
+               [(run_module, 'module'), (run_script, 'script')])
   * Params.new(('use_local_func', 'label2'),
                [(True, 'local'), (False, 'ext')])
   # Python can't pickle things unless they resided in a retrievable
-  # location (so not the script supplied by `python -c`)
-  + Params.new(('run_func', 'label1', 'use_local_func', 'label2'),
-               [(run_literal_code, 'literal-code', False, 'ext')])
+  # location (so not the script supplied by `python -c`); this also
+  # means that `process_test_module` cannot be `python -c`-ed at all,
+  # because `Worker` is locally-defined
+  + Params.new(
+      ('test_module', 'run_func', 'label1', 'use_local_func', 'label2'),
+      [('pool_test_module', run_literal_code, 'literal-code', False, 'ext')])
   # Also fuzz the parallelization-related stuff, esp. check what
   # happens if an exception is raised inside the parallelly-run func
   + _get_mp_start_method_fuzzer('label3')
   + Params.new(('nnums', 'nprocs'), [(200, None), (None, 3)],
                defaults=(None, None))).sorted()
-def test_pool_multiproc_script_sanity_check(
+def test_multiproc_script_sanity_check(
     run_func: Callable[..., CompletedProcess],
     request: pytest.FixtureRequest,
-    pool_test_module: ModuleFixture,
+    test_module: str,
     tmp_path_factory: pytest.TempPathFactory,
     use_local_func: bool,
     fail: bool,
@@ -772,11 +800,13 @@ def test_pool_multiproc_script_sanity_check(
     label1: str, label2: str, label3: str,
 ) -> None:
     """
-    Sanity check that the test module functions as expected when run
+    Sanity check that the test modules function as expected when run
     with vanilla Python.
     """
+    module_fixture = request.getfixturevalue(test_module)
+    assert isinstance(module_fixture, ModuleFixture)
     run_func(
-        request, pool_test_module, tmp_path_factory,
+        request, module_fixture, tmp_path_factory,
         runner=sys.executable, profile=False,
         fail=fail,
         start_method=start_method,
@@ -804,7 +834,7 @@ def test_pool_multiproc_script_sanity_check(
        (['kernprof', '-q', '-l'], 'out.lprof', True,
         'line_profiler-active')],
 )
-def test_running_pool_multiproc_script(
+def test_running_multiproc_script(
     run_func: Callable[..., CompletedProcess],
     request: pytest.FixtureRequest,
     pool_test_module: ModuleFixture,
@@ -816,7 +846,7 @@ def test_running_pool_multiproc_script(
     label1: str, label2: str,
 ) -> None:
     """
-    Check that `kernprof` can RUN the test module in various contexts
+    Check that `kernprof` can RUN a test module in various contexts
     (`kernprof [...] <path>`, `kernprof [...] -m <module>`, and
     `kernprof [...] -c "code"`).
 
@@ -826,6 +856,9 @@ def test_running_pool_multiproc_script(
         - This test does not test the actual profiling, just the
           execution of the code and presence of profiling data
           thereafter.
+
+        - Because this is mostly a sanity check, we only run one of the
+          test modules.
     """
     run_func(
         request, pool_test_module, tmp_path_factory, runner, outfile, profile,
@@ -848,6 +881,8 @@ _fuzz_prof_mp_markers = (
        + Params.new(('use_local_func', 'label4'),
                     [(True, 'local'), (False, 'external')],
                     defaults=(False, 'external')))
+    # Test all of the above with both test modules
+    * Params.new('test_module', ['pool_test_module', 'process_test_module'])
     # The 'with-preimports' case is already tested rather thoroughly in
     # `test_apply_mp_patches()`, so exclude these from the above "main"
     # param matrix and just test the different `kernprof` modes via the
@@ -862,10 +897,10 @@ _fuzz_prof_mp_markers = (
 ).sorted().split_on_params('fail')
 
 
-def _test_profiling_pool_multiproc_script(
+def _test_profiling_multiproc_script(
     run_func: Callable[..., CompletedProcess],
     request: pytest.FixtureRequest,
-    pool_test_module: ModuleFixture,
+    test_module: ModuleFixture,
     ext_module: ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     prof_child_procs: bool,
@@ -888,7 +923,7 @@ def _test_profiling_pool_multiproc_script(
     if not fail:
         # The final sum in the parent process should always be profiled
         # unless the child processes failed and we never returned from
-        # `Pool.starmap()`
+        # `Pool.starmap()` (or `gather_results()`)
         nhits[tag_call] += 1
         nhits[tag_loop] += nprocs
     if prof_child_procs:
@@ -910,7 +945,7 @@ def _test_profiling_pool_multiproc_script(
     if prof_child_procs and DEBUG:
         kwargs.setdefault('debug_log', 'debug.log')
     run_func(
-        request, pool_test_module, tmp_path_factory,
+        request, test_module, tmp_path_factory,
         runner=runner,
         outfile='out.lprof',
         profile=True,
@@ -932,10 +967,10 @@ def _test_profiling_pool_multiproc_script(
     # have quite a lot of subtests tho...
     ('nnums', 'nprocs'), [(2000, 3)],
 )
-def test_profiling_pool_multiproc_script_success(
+def test_profiling_multiproc_script_success(
     run_func: Callable[..., CompletedProcess],
     request: pytest.FixtureRequest,
-    pool_test_module: ModuleFixture,
+    test_module: str,
     ext_module: ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     prof_child_procs: bool,
@@ -949,7 +984,7 @@ def test_profiling_pool_multiproc_script_success(
     label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
     """
-    Check that `kernprof` can PROFILE the test module in various
+    Check that `kernprof` can PROFILE the test modules in various
     contexts when the parallel workload runs without errors, optionally
     extending profiling into child processes.
 
@@ -959,6 +994,10 @@ def test_profiling_pool_multiproc_script_success(
 
         - ``run_func`` tests the different :cmd:`kernprof` modes (see
           :py:func:`~.test_running_multiproc_script`).
+
+        - ``test_module`` chooses what kind of parallelism the test
+          module should use (:py:class:`multiprocessing.pool.Pool` vs
+          :py:class:`multiprocessing.process.BaseProcess`).
 
         - ``preimports`` tests that both mechanisms for setting up
           profiling targets work:
@@ -993,10 +1032,12 @@ def test_profiling_pool_multiproc_script_success(
     See also:
         :py:func:`test_profiling_multiproc_script_failure`
     """
-    _test_profiling_pool_multiproc_script(
+    module_fixture = request.getfixturevalue(test_module)
+    assert isinstance(module_fixture, ModuleFixture)
+    _test_profiling_multiproc_script(
         run_func=run_func,
         request=request,
-        pool_test_module=pool_test_module,
+        test_module=module_fixture,
         ext_module=ext_module,
         tmp_path_factory=tmp_path_factory,
         prof_child_procs=prof_child_procs,
@@ -1012,10 +1053,10 @@ def test_profiling_pool_multiproc_script_success(
 
 @(_fuzz_prof_mp_markers[True])
 @pytest.mark.parametrize(('nnums', 'nprocs'), [(2000, 3)])
-def test_profiling_pool_multiproc_script_failure(
+def test_profiling_multiproc_script_failure(
     run_func: Callable[..., CompletedProcess],
     request: pytest.FixtureRequest,
-    pool_test_module: ModuleFixture,
+    test_module: str,
     ext_module: ModuleFixture,
     tmp_path_factory: pytest.TempPathFactory,
     prof_child_procs: bool,
@@ -1029,17 +1070,19 @@ def test_profiling_pool_multiproc_script_failure(
     label1: str, label2: str, label3: str, label4: str, label5: str,
 ) -> None:
     """
-    Check that `kernprof` can PROFILE the test module in various
+    Check that `kernprof` can PROFILE the test modules in various
     contexts when the parallel workload errors out, optionally
     extending profiling into child processes.
 
     See also:
         :py:func:`test_profiling_multiproc_script_success`
     """
-    _test_profiling_pool_multiproc_script(
+    module_fixture = request.getfixturevalue(test_module)
+    assert isinstance(module_fixture, ModuleFixture)
+    _test_profiling_multiproc_script(
         run_func=run_func,
         request=request,
-        pool_test_module=pool_test_module,
+        test_module=module_fixture,
         ext_module=ext_module,
         tmp_path_factory=tmp_path_factory,
         prof_child_procs=prof_child_procs,
