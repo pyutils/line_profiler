@@ -5,7 +5,7 @@ from collections.abc import Callable
 from multiprocessing import dummy, get_context, Pool
 from typing import Literal
 
-from external_module import my_external_sum
+from external_module import my_external_sum, split_workload
 
 
 NUM_NUMBERS = 100
@@ -14,9 +14,7 @@ NUM_PROCS = 4
 
 def my_local_sum(x: list[int], fail: bool = False) -> int:
     result: int = 0  # GREP_MARKER[LOCAL-INVOCATION]
-    # The reversing is to prevent bytecode aliasing with
-    # `my_external_sum()` (see issue #424, PR #425)
-    for item in reversed(x):
+    for item in x:
         result += item  # GREP_MARKER[LOCAL-LOOP]
     if fail:
         raise RuntimeError('forced failure')
@@ -30,15 +28,7 @@ def sum_in_child_procs(
     ] | None = None,
     fail: bool = False,
 ) -> int:
-    my_list: list[int] = list(range(1, length + 1))
-    sublists: list[list[int]] = []
-    subsums: list[int]
-    sublength = length // n
-    if sublength * n < length:
-        sublength += 1
-    while my_list:
-        sublist, my_list = my_list[:sublength], my_list[sublength:]
-        sublists.append(sublist)
+    sublists = split_workload(length, n)
     if start_method == 'dummy':
         pool = dummy.Pool(n)
     elif start_method:
@@ -58,7 +48,7 @@ def main(args: list[str] | None = None) -> None:
     parser.add_argument('-n', type=int, default=NUM_PROCS)
     parser.add_argument(
         '-s', '--start-method',
-        choices=['fork', 'forkserver', 'spawn'], default=None,
+        choices=['fork', 'forkserver', 'spawn', 'dummy'], default=None,
     )
     parser.add_argument('-f', '--force-failure', action='store_true')
     parser.add_argument(
