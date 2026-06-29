@@ -1,15 +1,22 @@
 from __future__ import annotations
+
+import ast
+import contextlib
 import os
 import re
 import subprocess
 import sys
 import shlex
 import tempfile
-from ast import unparse
+from collections.abc import Callable, Sequence
+from functools import partial
+from typing import Literal, cast
+from warnings import catch_warnings, WarningMessage
 
 import pytest
 import ubelt as ub
 from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
+from line_profiler.autoprofile.profmod_extractor import ProfmodExtractor
 
 
 def test_single_function_autoprofile():
@@ -1219,8 +1226,8 @@ def test_multitarget_import_resolution(
 ) -> None:
     """
     Test that (from-)import statements with multiple targets are
-    correctly transformed, resolving to the correct entities being
-    profiled.
+    correctly transformed by :py:class:`.AstTreeProfiler`, resolving to
+    the correct entities being profiled.
 
     See also:
         Issue #433
@@ -1236,13 +1243,13 @@ def test_multitarget_import_resolution(
 
         if __name__ == '__main__':
             pass
-        """
+        """,
     )
     with tempfile.TemporaryDirectory() as tmp:
         fpath = ub.Path(tmp) / 'script.py'
         fpath.write_text(input_module)
         module_ast = AstTreeProfiler(str(fpath), prof_mod, False).profile()
-    output_module = unparse(module_ast)
+    output_module = ast.unparse(module_ast)
 
     for target, profiled in {
         'os': prof_os,
@@ -1252,4 +1259,133 @@ def test_multitarget_import_resolution(
     }.items():
         pattern = rf'add_imported_function_or_module\({target}\)'
         assert bool(re.search(pattern, output_module)) == profiled
-        
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'expected',
+     'assume_single_target_imports', 'expect_dropped_target_warning'),
+    [(['foo', 'foobar.ham'], {0: ['foo'], 2: ['ham']}, False, None),
+     # This doesn't result in a `UserWarning` for dropped targets,
+     # because there is only one selected target on the multi-target
+     # import line
+     (['foo', 'foobar.ham'], {0: 'foo', 2: 'ham'}, True, None),
+     # Also test not passing `assume_single_target_imports` (defaults to
+     # true)
+     (['foo', 'foobar.ham'], {0: 'foo', 2: 'ham'}, True, None),
+     (['baz', 'foobar'], {1: ['baz'], 2: ['spam', 'ham', 'jam']}, False, None),
+     # This however results in the warning that `spam` and `ham` are
+     # supposed to be profiled, but are dropped
+     (['baz', 'foobar'], {1: 'baz', 2: 'jam'}, True,
+      r"2 .* target.* dropped .* \['ham', 'spam'\]")])
+def test_profmod_extractor_multitarget_behavior(
+    prof_mod: list[str],
+    expected: dict[str, int] | dict[str, list[int]],
+    assume_single_target_imports: bool | None,
+    expect_dropped_target_warning: str | None,
+) -> None:
+    """
+    Test that :py:meth:`.ProfmodExtractor.run` behaves as expected:
+
+    ``assume_single_target_imports=True``
+
+        - Return ``dict[int, str]``, in accordance with legacy behavior
+
+        - Warn against bare calls not specifying otherwise
+
+        - Warn against dropped profiling targets (if any)
+
+    ``assume_single_target_imports=True``
+
+        - Return ``dict[int, list[str]]``
+
+        - Does not result in the above warnings
+    """
+    def forbid_warnings(
+        msgs: Sequence[WarningMessage],
+        pattern: str,
+        category: type[Warning] = Warning,
+    ) -> None:
+        regex = re.compile(pattern)
+        for msg in msgs:
+            if not issubclass(msg.category, category):
+                continue
+            if not regex.search(str(msg.message)):
+                continue
+            raise ValueError(
+                f'{pattern=!r}, {category=!r}: matched warning: {msg}',
+            )
+
+    def expect_warnings(
+        msgs: Sequence[WarningMessage],
+        pattern: str,
+        category: type[Warning] = Warning,
+    ) -> None:
+        regex = re.compile(pattern)
+        if any(
+            issubclass(msg.category, category)
+            and regex.search(str(msg.message))
+            for msg in msgs
+        ):
+            return
+        raise ValueError(
+            f'{pattern=!r}, {category=!r}: '
+            f'no matches among {len(msgs)} warnings: '
+            f'{[str(m) for m in msgs]!r}',
+        )
+
+    code = ub.codeblock(
+        """
+        import foo, bar
+        import baz
+        from foobar import spam, ham, eggs as jam
+
+
+        def func() -> None:
+            pass
+        """,
+    )
+    depr_warning_pattern = 'assume_single_target_imports'
+    targets_warning_pattern = 'profiling target.* dropped.* multi-target'
+    checks: list[Callable[[Sequence[WarningMessage]], None]] = []
+    with contextlib.ExitStack() as stack:
+        tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
+        fname = ub.Path(tmpdir) / 'script.py'
+        fname.write_text(code)
+
+        warnings = stack.enter_context(catch_warnings(record=True))
+        if assume_single_target_imports in (True, None):
+            checks.append(partial(
+                expect_warnings,
+                pattern=depr_warning_pattern, category=DeprecationWarning,
+            ))
+        else:
+            checks.append(partial(
+                forbid_warnings,
+                pattern=depr_warning_pattern, category=DeprecationWarning,
+            ))
+        if expect_dropped_target_warning:
+            checks.append(partial(
+                expect_warnings,
+                pattern=expect_dropped_target_warning,
+                category=UserWarning,
+            ))
+        else:
+            checks.append(partial(
+                forbid_warnings,
+                pattern=targets_warning_pattern, category=UserWarning,
+            ))
+
+        extractor = ProfmodExtractor(ast.parse(code), str(fname), prof_mod)
+        if assume_single_target_imports is None:  # Default
+            result: dict[int, str] | dict[int, list[str]] = extractor.run()
+        else:
+            result = extractor.run(  # `mypy` needs a bit of help here
+                assume_single_target_imports=cast(
+                    Literal[True, False],
+                    assume_single_target_imports,
+                ),
+            )
+
+    assert result == expected
+    for check in checks:
+        check(warnings)

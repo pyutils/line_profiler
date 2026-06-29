@@ -3,12 +3,14 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import cast
+from typing import Literal, cast, overload
+from warnings import warn
 from .util_static import (
     modname_to_modpath,
     modpath_to_modname,
     package_modpaths,
 )
+from .. import _diagnostics as diagnostics
 
 
 class ProfmodExtractor:
@@ -244,27 +246,92 @@ class ProfmodExtractor:
             modnames_found_in_tree.setdefault(tree_index, []).append(name)
         return modnames_found_in_tree
 
-    def run(self) -> dict[int, list[str]]:
+    @overload
+    def run(
+        self, *, assume_single_target_imports: Literal[True] = True,
+    ) -> dict[int, str]:
+        ...
+
+    @overload
+    def run(
+        self, *, assume_single_target_imports: Literal[False],
+    ) -> dict[int, list[str]]:
+        ...
+
+    def run(
+        self, *, assume_single_target_imports: bool = True,
+    ) -> dict[int, str] | dict[int, list[str]]:
         """Map prof_mod to imports in an abstract syntax tree.
 
-        Takes the paths and dotted paths in prod_mod and finds their respective imports in an
+        Takes the paths and dotted paths in prof_mod and finds their respective imports in an
         abstract syntax tree, returning their alias and the index they appear in the AST.
 
+        Args:
+            assume_single_target_imports (bool):
+                If true, return ``dict[int, str]``, consistent to legacy
+                behavior where only the last import target in a
+                multi-target (from-)import statement will be profiled;
+                otherwise, return ``dict[int, list[str]]``
+
         Returns:
-            tree_imports_to_profile_dict (dict[int, list[str]]);
+            tree_imports_to_profile_dict (dict[int, str] | dict[int, list[str]]);
                 dict of imports to profile
                     key (int):
                         index of import in AST
-                    value (list[str]):
+                    value (str | list[str]):
                         list of aliases (or names if no alias used) to
-                        import
+                        import;
+                        if ``assume_single_target_imports=True``, only
+                        the last name in an import statement is reported
+
+        Warning:
+            ``assume_single_target_imports=True`` results in a
+            :py:class:`DeprecationWarning`, and an additional
+            warning if any potential ``prof_mod`` target is dropped from
+            being profiled.
         """
+        def issue_warning(
+            msg: str, category: type[Warning] | None = None, *args, **kwargs,
+        ) -> None:
+            if category is None:
+                log_msg = msg
+            else:
+                log_msg = f'{category.__name__}: {msg}'
+            diagnostics.log.warning(log_msg)
+            warn(msg, category, *args, **kwargs)
+
         modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(
             self._script_file, self._prof_mod
         )
 
         module_dict_list = self._ast_get_imports_from_tree(self._tree)
 
-        return self._find_modnames_in_tree_imports(
+        tree_imports_to_profile_dict = self._find_modnames_in_tree_imports(
             modnames_to_profile, module_dict_list
         )
+        if not assume_single_target_imports:
+            return tree_imports_to_profile_dict
+        msg = (
+            'Invoking `ProfmodExtractor.run()` directly is now deprecated, '
+            'because it returns a `dict[int, str]` and cannot handle '
+            'multi-target import statements; '
+            'pass `assume_single_target_imports=False` to return a '
+            '`dict[int, list[str]]` and avoid this warning'
+        )
+        issue_warning(msg, DeprecationWarning, stacklevel=2)
+        conflated_result: dict[int, str] = {}
+        dropped_names: set[str] = set()
+        for i, names in tree_imports_to_profile_dict.items():
+            *remainder, last = names
+            dropped_names.update(remainder)
+            conflated_result[i] = last
+        dropped_names -= set(conflated_result.values())
+        if dropped_names:
+            msg = (
+                '{}: {} would-be profiling target(s) dropped because the '
+                'import statement(s) are multi-target: {!r}'
+            ).format(
+                self._script_file, len(dropped_names), sorted(dropped_names),
+            )
+            issue_warning(msg, stacklevel=2)
+        return conflated_result
