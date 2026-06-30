@@ -73,6 +73,8 @@ class Timeout(RuntimeError):
 class Worker(Generic[T]):
     """
     Example:
+        >>> # xdoctest: +SKIP
+
         >>> import os
         >>> from time import sleep
 
@@ -84,6 +86,11 @@ class Worker(Generic[T]):
         Traceback (most recent call last):
           ...
         process_test_module.Timeout: timed out in 0.12 s (...)
+
+    Note:
+        For currently unknown reasons, the above doctest results in
+        pickling errors when run with :py:mod:`xdoctest` but not vanilla
+        :py:mod:`doctest`; hence the ``SKIP`` directive.
     """
     process: BaseProcess
     tmpdir: Path

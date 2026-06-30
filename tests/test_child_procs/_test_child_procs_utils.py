@@ -267,12 +267,17 @@ def search_cache_logs(
         to_match = dict.fromkeys(patterns, True)
     for pat, should_match in to_match.items():
         pattern = re.compile(pat, flags)
-        if any(pattern.search(chunk) for chunk in text_chunks) == should_match:
+        matches = [pattern.search(chunk) for chunk in text_chunks]
+        if any(matches) == should_match:
             continue
-        raise ResultMismatch(
+        error_msg = (
             f'pattern {pattern!r} to {"" if should_match else "not "}match '
             f'{cache!r}\'s logs: {text_chunks!r}'
         )
+        if should_match:
+            raise ResultMismatch(error_msg, 'no matches')
+        else:
+            raise ResultMismatch(error_msg, [m for m in matches if m])
 
 
 # ================ `pytest` stuff: fixtures and markers ================
@@ -1068,7 +1073,7 @@ def add_timeout(
         >>> my_func(4, delay=5)  # doctest: +NORMALIZE_WHITESPACE
         Traceback (most recent call last):
           ...
-        test_child_procs.TestTimeout:
+        test_child_procs._test_child_procs_utils.TestTimeout:
         my_func(4, delay=5): timed out after 0.5 s
     """
     if func is None:
@@ -1384,7 +1389,8 @@ class CheckWarnings(Sequence[_WarningInfo]):
         This is printed before the error
         Traceback (most recent call last):
           ...
-        test_child_procs.ResultMismatch: expected no warnings matching
+        test_child_procs._test_child_procs_utils.ResultMismatch: \
+expected no warnings matching
         _WarningMatcher(message='foo',
                         category=<class 'UserWarning'>),
         got 1 ([...])
@@ -1397,7 +1403,8 @@ class CheckWarnings(Sequence[_WarningInfo]):
         This is printed before the error
         Traceback (most recent call last):
           ...
-        test_child_procs.ResultMismatch: expected warnings matching
+        test_child_procs._test_child_procs_utils.ResultMismatch: \
+expected warnings matching
         _WarningMatcher(category=<class 'UserWarning'>),
         got none out of 1 ([...])
         >>> assert len(cw) == 1
