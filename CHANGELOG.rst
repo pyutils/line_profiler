@@ -12,6 +12,8 @@ Changes
   is available (#427)
 * FIX: Bytecodes of profiled functions now always labeled to prevent
   confusion with non-profiled "twins" (#425)
+* FEAT: Experimental support for profiling child processes with
+  ``kernprof --prof-child-procs`` (#431)
 
 
 5.0.2

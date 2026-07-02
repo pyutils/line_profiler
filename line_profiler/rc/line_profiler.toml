@@ -94,6 +94,9 @@ preimports = true
 #   - `prof-imports` (bool):
 #     `--prof-imports` (true) or `--no-prof-imports` (false)
 prof-imports = false
+#   - `prof-child-procs` (bool):
+#     `--prof-child-procs` (true) or `--no-prof-child-procs` (false)
+prof-child-procs = false
 
 # - Misc flags
 #   - `verbose` (count):
@@ -206,3 +209,60 @@ hits = 9
 time = 12
 perhit = 8
 percent = 8
+
+# XXX: --- Start of implementation details ---
+# `line_profiler._child_process_profiling` settings
+
+[tool.line_profiler.child_processes.pth_files]
+
+# - `pth_files.prefix`, `.suffix` (str):
+#   Affixes to use for the stem of the name of the .pth file created
+#   Note: may be useful to tweak this in case of issues with .pth file
+#   precedence.
+prefix = '_line_profiler-profiling-hook-'
+suffix = ''
+
+# List of individual patches to apply to `multiprocessing`
+
+[tool.line_profiler.child_processes.multiprocessing.patches]
+
+# - `multiprocessing.patches.pool` (bool):
+#   Whether to patch `multiprocessing.pool.worker()` so that each child
+#   process write profiling output as each task is completed
+pool = true
+# - `multiprocessing.patches.process` (bool):
+#   Whether to patch `multiprocessing.process.BaseProcess`, so that each
+#   child process write profiling output before exiting
+process = true
+# NOTE: for the best result, stick to the default and have both applied
+
+# - `multiprocessing.patches.logging` (bool):
+#   Whether to patch logging functions in `multiprocessing.util`, so
+#   that the internal logs of `multiprocessing` are teed to the session
+#   cache's debug logs
+logging = false
+
+# Polling controls, used for the `pool` patch
+
+[tool.line_profiler.child_processes.multiprocessing.polling]
+
+# - `multiprocessing.polling.cooldown` (float):
+#   Cooldown time (seconds) before successive polls on child processes
+#   (set to <= 0 to disable cooldowns)
+cooldown = 0.03125  # 1/32-nd of a second
+# - `multiprocessing.polling.timeout` (float):
+#   Time (seconds) before the main process disregards the alive-ness of
+#   child processes/existence of lock files, and unblocks calls to
+#   `.terminate()` a (most probably errored-out) child anyway (set to
+#   <= 0 to disable timeouts)
+timeout = 0.25
+# - `multiprocessing.polling.on_timeout`
+#   (Literal['error', 'warn', 'ignore']):
+#   What to do when the above timeout is exhausted, before actually
+#   `.terminate()`-ing the child process:
+#   - 'error': raise an error
+#   - `warn`: issue a warning
+#   - `ignore`: nothing
+on_timeout = 'warn'
+
+# XXX: --- End of implementation details ---

@@ -303,6 +303,42 @@ if __name__ == '__main__':
         'console_scripts': [
             'kernprof=kernprof:main',
         ],
+        'line_profiler._multiproc_patches': [
+            '__process_termination'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':PROCESS_TERMINATION_PATCH',
+            '__reboot_forkserver'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':RebootForkserverPatch',
+            '__resource_tracker'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':ResourceTrackerPatch',
+            '__spawn_runpy'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':RunpyPatch',
+            '__pool_worker_pid'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._mandatory_patches'
+            ':POOL_WORKER_PID_PATCH',
+
+            'logging'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._optional_patches'
+            ':LOGGING_PATCH',
+
+            'pool'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._profiling_patches'
+            ':POOL_PATCH',
+            'process'
+            '=line_profiler._child_process_profiling'
+            '.multiprocessing_patches._profiling_patches'
+            ':PROCESS_PATCH',
+        ],
     }
     setupkw['name'] = NAME
     setupkw['version'] = VERSION
@@ -314,7 +350,9 @@ if __name__ == '__main__':
     setupkw['long_description_content_type'] = 'text/x-rst'
     setupkw['license'] = 'BSD'
     setupkw['packages'] = list(setuptools.find_packages())
-    setupkw['py_modules'] = ['kernprof', 'line_profiler']
+    setupkw['py_modules'] = [
+        'kernprof', 'line_profiler', '_line_profiler_hooks',
+    ]
     setupkw['python_requires'] = '>=3.10'
     setupkw['license_files'] = ['LICENSE.txt', 'LICENSE_Python.txt']
     setupkw['package_data'] = {'line_profiler': ['py.typed', '*.pyi', '*.toml']}

@@ -126,3 +126,6 @@ docstring-code-format = false
 unused-ignore-comment = "ignore"
 unused-type-ignore-comment = "ignore"
 unresolved-import = "ignore"
+
+[tool.ty.terminal]
+error-on-warning = false  # No longer the default since 0.0.52

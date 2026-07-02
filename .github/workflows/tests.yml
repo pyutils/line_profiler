@@ -91,6 +91,7 @@ jobs:
     - name: Test full loose sdist
       env:
         COVERAGE_CORE: ctrace
+      timeout-minutes: 10
       run: |-
         pwd
         ls -al
@@ -154,6 +155,7 @@ jobs:
         CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         PYTHONUTF8: '1'
         VSCMD_ARG_TGT_ARCH: ''
+      timeout-minutes: 60
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
@@ -426,6 +428,7 @@ jobs:
       env:
         CI_PYTHON_VERSION: py${{ matrix.python-version }}
         COVERAGE_CORE: ctrace
+      timeout-minutes: 10
       run: |-
         echo "Creating test sandbox directory"
         export WORKSPACE_DNAME="testdir_${CI_PYTHON_VERSION}_${GITHUB_RUN_ID}_${RUNNER_OS}"
