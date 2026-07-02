@@ -1912,13 +1912,17 @@ def _run_kernprof_main_in_process(
     with ExitStack() as stack:
         if check_warnings:
             # See similar indictions against warnings in
-            # `_test_apply_mp_patches()`
+            # `test_child_procs.py::_test_apply_mp_patches()`
             cw = stack.enter_context(CheckWarnings())
             cw.forbid_warnings('.*resource_tracker', module='multiprocessing')
             cw.forbid_warnings(
                 r'.* file\(s\) .* empty',
                 category=UserWarning, module='line_profiler',
             )
+            # The `@add_timeout` decorator spins up a new thread for
+            # executing `kernprof.main()`;
+            # explicitly ignore the associated warning when we use
+            # `start_method='fork'`
             if timeout:
                 cw.suppress_warnings(
                     r'.*multi-?threaded.*fork\(\)',

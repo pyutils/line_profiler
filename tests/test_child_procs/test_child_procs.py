@@ -34,7 +34,7 @@ from ._test_child_procs_utils import (
     DEBUG, DEFAULT_TIMEOUT, NOT_SUPPLIED, START_METHODS, PATCH_SUMMARIES,
     ModuleFixture, Params, ResultMismatch, StartMethod,
     preserve_object_attrs, preserve_targets,
-    cleanup_extra_pth_files, add_timeout,
+    cleanup_extra_pth_files,
     CheckWarnings,
     mp_patch_is_internal, get_mp_patches_toml_text,
     summarize_mp_patches, filter_mp_patch_summary,
@@ -472,7 +472,6 @@ def test_load_pth_hook(
 
 @cleanup_extra_pth_files()
 @preserve_targets()
-@add_timeout
 def _test_apply_mp_patches_inner(
     tmp_path_factory: pytest.TempPathFactory,
     create_cache: Callable[..., LineProfilingCache],
@@ -624,14 +623,6 @@ def _test_apply_mp_patches(
             r'.* file\(s\) .* empty',
             category=UserWarning, module='line_profiler',
         )
-        if start_method == 'fork':
-            # The `@add_timeout` decorator spins up a new thread for
-            # executing `_test_apply_mp_patches_pool_inner()`;
-            # explicitly ignore the associated warning when we use
-            # `start_method='fork'`
-            cw.suppress_warnings(
-                r'.*multi-?threaded.*fork\(\)', category=DeprecationWarning,
-            )
         _test_apply_mp_patches_inner(
             mp_patches=mp_patches, start_method=start_method, **kwargs,
         )
