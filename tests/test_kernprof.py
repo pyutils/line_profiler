@@ -26,6 +26,41 @@ def g(x):
     yield y + 20
 
 
+class chdir_temp:
+    """
+    Helper context for ``chdir``-ing to a tempdir.
+
+    Example:
+        >>> from pathlib import Path
+
+        >>> get_cwd = lambda: Path.cwd().resolve()
+        >>> cwd = get_cwd()
+        >>> ctx = chdir_temp()
+        >>> with ctx as new_cwd:
+        ...     assert new_cwd.samefile(get_cwd())
+        ...     assert not new_cwd.samefile(cwd)
+        ...     with ctx as newer_cwd:  # Reentrance
+        ...         assert newer_cwd.samefile(get_cwd())
+        ...         assert not newer_cwd.samefile(new_cwd)
+        ...         assert not newer_cwd.samefile(cwd)
+        ...     assert new_cwd.samefile(get_cwd())
+        ...
+        >>> assert cwd.samefile(get_cwd())
+    """
+    def __init__(self) -> None:
+        self._stacks: list[contextlib.ExitStack] = []
+
+    def __enter__(self) -> ub.Path:
+        stack = contextlib.ExitStack()
+        self._stacks.append(stack)
+        tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(ub.ChDir(tmpdir))
+        return ub.Path(tmpdir)
+
+    def __exit__(self, *_, **__) -> None:
+        self._stacks.pop().close()
+
+
 @pytest.mark.parametrize(
     'use_kernprof_exec, args, expected_output, expect_error',
     [
@@ -68,8 +103,7 @@ def test_kernprof_m_parsing(
     an argument and cuts off everything after it, passing that along
     to the module to be executed.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_dpath = ub.Path(tmpdir)
+    with chdir_temp() as temp_dpath:
         mod = (temp_dpath / 'mymod.py').resolve()
         mod.write_text(
             ub.codeblock(
@@ -86,7 +120,7 @@ def test_kernprof_m_parsing(
             cmd = ['kernprof']
         else:
             cmd = [sys.executable, '-m', 'kernprof']
-        proc = ub.cmd(cmd + args, cwd=temp_dpath, verbose=2)
+        proc = ub.cmd(cmd + args, verbose=2)
     if expect_error:
         assert proc.returncode
         return
@@ -116,8 +150,7 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
     Test that `kernprof -m` is amenable to modules relying on the global
     `sys` state (e.g. those using `@enum.global_enum`).
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_dpath = ub.Path(tmpdir)
+    with chdir_temp() as temp_dpath:
         (temp_dpath / 'mymod.py').write_text(
             ub.codeblock(
                 """
@@ -152,7 +185,7 @@ def test_kernprof_m_sys_modules(flags, profiled_main):
             '-m',
             'mymod',
         ]
-        proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2)
+        proc = ub.cmd(cmd, verbose=2)
     proc.check_returncode()
     assert proc.stdout.startswith('3\n')
     assert ('Function: main' in proc.stdout) == profiled_main
@@ -188,14 +221,13 @@ def test_kernprof_m_import_resolution(static, autoprof):
             line for line in code.splitlines() if '@profile' not in line
         )
         cmd += ['-p', 'my_namesapce_pkg.mysubmod']
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_dpath = ub.Path(tmpdir)
+    with chdir_temp() as temp_dpath:
         namespace_mod_path = temp_dpath / 'my_namesapce_pkg' / 'mysubmod.py'
         namespace_mod_path.parent.mkdir()
         namespace_mod_path.write_text(code)
-        python_path = tmpdir
+        python_path = str(temp_dpath)
         if 'PYTHONPATH' in os.environ:
-            python_path += ':' + os.environ['PYTHONPATH']
+            python_path += os.pathsep + os.environ['PYTHONPATH']
         env = {
             **os.environ,
             # Toggle use of static analysis
@@ -204,7 +236,7 @@ def test_kernprof_m_import_resolution(static, autoprof):
             'PYTHONPATH': python_path,
         }
         cmd += ['-m', 'my_namesapce_pkg.mysubmod']
-        proc = ub.cmd(cmd, cwd=temp_dpath, verbose=2, env=env)
+        proc = ub.cmd(cmd, verbose=2, env=env)
     if static:
         assert proc.returncode
         assert proc.stderr.startswith('Could not find module')
@@ -230,11 +262,9 @@ def test_kernprof_sys_restoration(capsys, error, args):
     -----
     The test is run in-process.
     """
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        tmpdir = enter(tempfile.TemporaryDirectory())
+    with chdir_temp() as temp_dpath:
+        tmpdir = str(temp_dpath)
         assert tmpdir not in sys.path
-        temp_dpath = ub.Path(tmpdir)
         (temp_dpath / 'mymod.py').write_text(
             ub.codeblock(
                 f"""
@@ -256,7 +286,6 @@ def test_kernprof_sys_restoration(capsys, error, args):
             """
             )
         )
-        enter(ub.ChDir(tmpdir))
         if error:
             ctx = pytest.raises(BaseException)
         else:
@@ -345,10 +374,7 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
     """
     Test the various verbosity levels of `kernprof`.
     """
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        tmpdir = enter(tempfile.TemporaryDirectory())
-        temp_dpath = ub.Path(tmpdir)
+    with chdir_temp() as temp_dpath:
         (temp_dpath / 'script.py').write_text(
             ub.codeblock(
                 """
@@ -365,7 +391,6 @@ def test_kernprof_verbosity(flags, expected_stdout, expected_stderr):
             """
             )
         )
-        enter(ub.ChDir(tmpdir))
         proc = ub.cmd(
             [
                 'kernprof',
@@ -408,17 +433,13 @@ def test_kernprof_eager_preimport_bad_module():
     in an auto-generated pre-import module.
     """
     bad_module = """raise Exception('Boo')"""
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        tmpdir = enter(tempfile.TemporaryDirectory())
-        temp_dpath = ub.Path(tmpdir)
+    with chdir_temp() as temp_dpath:
         (temp_dpath / 'my_bad_module.py').write_text(bad_module)
-        enter(ub.ChDir(tmpdir))
         python_path = os.environ.get('PYTHONPATH', '')
         if python_path:
-            python_path = f'{python_path}:{tmpdir}'
+            python_path = f'{python_path}{os.pathsep}{temp_dpath}'
         else:
-            python_path = tmpdir
+            python_path = str(temp_dpath)
         proc = ub.cmd(
             [
                 'kernprof',
@@ -454,9 +475,7 @@ def test_kernprof_bad_temp_script(stdin):
     in a temporary script supplied via `kernprof -c` or `kernprof -`.
     """
     bad_script = """1 / 0"""
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+    with chdir_temp():
         if stdin:
             proc = subprocess.run(
                 ['kernprof', '-'],
@@ -490,9 +509,7 @@ def test_bad_prof_mod_target(debug):
     """
     Test the handling of bad paths in `--prof-mod` targets.
     """
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+    with chdir_temp():
         proc = ub.cmd(
             [
                 'kernprof',
@@ -519,9 +536,7 @@ def test_call_with_diagnostics(module, builtin):
     Test the output of call signatures in debug messages.
     """
     to_run = ['-m', 'calendar'] if module else ['-c', 'print("Output: foo")']
-    with contextlib.ExitStack() as stack:
-        enter = stack.enter_context
-        enter(ub.ChDir(enter(tempfile.TemporaryDirectory())))
+    with chdir_temp():
         cmd = ['kernprof']
         if builtin:
             cmd += ['-b']
@@ -540,6 +555,85 @@ def test_call_with_diagnostics(module, builtin):
     )
     assert bool(has_runctx_call) == (not builtin)
     assert bool(has_execfile_call) == (not module)
+
+
+@pytest.mark.parametrize('preimport_ppe', [True, False])
+@pytest.mark.parametrize('n', [1, 2])
+def test_ppe_pickling(n: int, preimport_ppe: bool):
+    """
+    Test that code using
+    :py:class:`concurrent.futures.ProcessPoolExecutor` doesn't cause
+    :py:func:`kernprof.main` to fail when called more than once.
+
+    See also:
+        Issue #436
+    """
+    if preimport_ppe:
+        preimport = 'from concurrent.futures import ProcessPoolExecutor'
+    else:  # Something irrelevant
+        preimport = 'from sys import modules  # noqa'
+
+    inner_script = ub.codeblock("""
+    from __future__ import annotations
+
+    from multiprocessing import get_context
+    from concurrent.futures import ProcessPoolExecutor
+
+
+    def my_sum(x: list[int]) -> int:
+        result = 0
+        for n in x:
+            result += n
+        return result
+
+
+    def main() -> None:
+        with ProcessPoolExecutor(
+            max_workers=2, mp_context=get_context('spawn'),
+        ) as ex:
+            print(list(ex.map(my_sum, [[1, 2], [3, 4], [5, 6]])))
+
+
+    if __name__ == '__main__':
+        main()
+    """)
+    outer_script = ub.codeblock(f"""
+    import os
+    {preimport}
+    from tempfile import TemporaryDirectory
+
+    from kernprof import main as kp_main
+
+
+    def main() -> None:
+        for _ in range({n}):
+            with TemporaryDirectory() as tmpdir:
+                kp_main([
+                    '-lzv',
+                    f'--outfile={{os.path.join(tmpdir, "out.lprof")}}',
+                    '--prof-mod=inner_script.py',
+                    'inner_script.py',
+                ])
+
+
+    if __name__ == '__main__':
+        main()
+    """)
+    with chdir_temp() as temp_dpath:
+        (temp_dpath / 'inner_script.py').write_text(inner_script)
+        (temp_dpath / 'outer_script.py').write_text(outer_script)
+        proc = subprocess.run(
+            [sys.executable, 'outer_script.py'],
+            capture_output=True, text=True,
+        )
+        for stream in 'stdout', 'stderr':
+            content = getattr(proc, stream)
+            if content is None:
+                continue
+            print(content, file=getattr(sys, stream))
+    proc.check_returncode()
+    assert proc.stdout.startswith('[3, 7, 11]')
+    assert 'def main' in proc.stdout
 
 
 class TestKernprof(unittest.TestCase):

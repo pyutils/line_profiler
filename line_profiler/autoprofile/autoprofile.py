@@ -52,6 +52,7 @@ import types
 from collections.abc import MutableMapping
 from typing import Any, cast, Dict, Mapping
 from typing import ContextManager
+from ..line_profiler_utils import restore
 from .ast_tree_profiler import AstTreeProfiler
 from .run_module import AstTreeModuleProfiler
 from .line_profiler_utils import add_imported_function_or_module
@@ -107,22 +108,6 @@ def run(
         as_module (bool):
             Whether we're running script_file as a module
     """
-
-    class restore_dict:
-        def __init__(self, d: MutableMapping[str, Any]):
-            self.d = d
-            self.copy: Mapping[str, Any] | None = None
-
-        def __enter__(self):
-            assert self.copy is None
-            self.copy = dict(self.d)
-
-        def __exit__(self, *_, **__):
-            self.d.clear()
-            if self.copy is not None:
-                self.d.update(self.copy)
-            self.copy = None
-
     Profiler: type[AstTreeModuleProfiler] | type[AstTreeProfiler]
 
     if as_module:
@@ -148,7 +133,7 @@ def run(
 
     _extend_line_profiler_for_profiling_imports(ns[PROFILER_LOCALS_NAME])
     code_obj = compile(tree_profiled, script_file, 'exec')
-    with restore_dict(sys.modules):
+    with restore.mapping(sys.modules, ['__main__']):
         # Always set the module object to `sys.modules['__main__']` and
         # then restore it via the context manager, so that the executed
         # code is run as `__main__`

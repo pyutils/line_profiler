@@ -228,6 +228,7 @@ from line_profiler.cli_utils import (
     positive_float,
     short_string_path,
 )
+from line_profiler.line_profiler_utils import restore
 from line_profiler.profiler_mixin import ByCountProfilerMixin
 from line_profiler._logger import Logger
 from line_profiler import _diagnostics as diagnostics
@@ -402,118 +403,6 @@ def _normalize_profiling_targets(targets):
             filename = find(subchunk)
             results.setdefault(subchunk if filename is None else filename)
     return list(results)
-
-
-class _restore:
-    """
-    Restore a collection like :py:data:`sys.path` after running code
-    which potentially modifies it.
-    """
-
-    def __init__(self, obj, getter, setter):
-        self.obj = obj
-        self.setter = setter
-        self.getter = getter
-        self.old = None
-
-    def __enter__(self):
-        assert self.old is None
-        self.old = self.getter(self.obj)
-
-    def __exit__(self, *_, **__):
-        self.setter(self.obj, self.old)
-        self.old = None
-
-    def __call__(self, func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            with self:
-                return func(*args, **kwargs)
-
-        return wrapper
-
-    @classmethod
-    def sequence(cls, seq):
-        """
-        Example
-        -------
-        >>> l = [1, 2, 3]
-        >>>
-        >>> with _restore.sequence(l):
-        ...     print(l)
-        ...     l.append(4)
-        ...     print(l)
-        ...     l[:] = 5, 6
-        ...     print(l)
-        ...
-        [1, 2, 3]
-        [1, 2, 3, 4]
-        [5, 6]
-        >>> l
-        [1, 2, 3]
-        """
-
-        def set_list(orig, copy):
-            orig[:] = copy
-
-        return cls(seq, methodcaller('copy'), set_list)
-
-    @classmethod
-    def mapping(cls, mpg):
-        """
-        Example
-        -------
-        >>> d = {1: 2}
-        >>>
-        >>> with _restore.mapping(d):
-        ...     print(d)
-        ...     d[2] = 3
-        ...     print(d)
-        ...     d.clear()
-        ...     d.update({1: 4, 3: 5})
-        ...     print(d)
-        ...
-        {1: 2}
-        {1: 2, 2: 3}
-        {1: 4, 3: 5}
-        >>> d
-        {1: 2}
-        """
-
-        def set_mapping(orig, copy):
-            orig.clear()
-            orig.update(copy)
-
-        return cls(mpg, methodcaller('copy'), set_mapping)
-
-    @classmethod
-    def instance_dict(cls, obj):
-        """
-        Example
-        -------
-        >>> class Obj:
-        ...     def __init__(self, x, y):
-        ...         self.x, self.y = x, y
-        ...
-        ...     def __repr__(self):
-        ...         return 'Obj({0.x!r}, {0.y!r})'.format(self)
-        ...
-        >>>
-        >>> obj = Obj(1, 2)
-        >>>
-        >>> with _restore.instance_dict(obj):
-        ...     print(obj)
-        ...     obj.x, obj.y, obj.z = 4, 5, 6
-        ...     print(obj, obj.z)
-        ...
-        Obj(1, 2)
-        Obj(4, 5) 6
-        >>> obj
-        Obj(1, 2)
-        >>> hasattr(obj, 'z')
-        False
-        """
-        return cls.mapping(vars(obj))
 
 
 def pre_parse_single_arg_directive(args, flag, sep='--'):
@@ -922,9 +811,9 @@ def _parse_arguments(
     return options, tempfile_source_and_content
 
 
-@_restore.sequence(sys.argv)
-@_restore.sequence(sys.path)
-@_restore.instance_dict(diagnostics)
+@restore.sequence(sys.argv)
+@restore.sequence(sys.path)
+@restore.instance_dict(diagnostics, ['log'])
 def main(args=None, *, exit_on_error=True):
     """
     Runs the command line interface
@@ -1372,7 +1261,7 @@ def _main_profile(options, module=False, exit_on_error=True):
                 runner, target = 'execfile', script_file
             assert runner in module_ns
 
-            with _restore.mapping(sys.modules):
+            with restore.mapping(sys.modules, ['__main__']):
                 sys.modules['__main__'] = module_obj
                 if options.builtin:
                     call(module_ns[runner], target, module_ns)

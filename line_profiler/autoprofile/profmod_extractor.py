@@ -3,12 +3,16 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import List, cast, Any, Union
+from typing import cast
+from warnings import warn
+
 from .util_static import (
     modname_to_modpath,
     modpath_to_modname,
     package_modpaths,
 )
+from .. import _diagnostics as diagnostics
+from ._import_targets import ImportTarget
 
 
 class ProfmodExtractor:
@@ -30,7 +34,7 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (List[str]):
+            prof_mod (list[str]):
                 list of imports to profile in script.
                 passing the path to script will profile the whole script.
                 the objects can be specified using its dotted path or full path (if applicable).
@@ -77,13 +81,13 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (List[str]):
+            prof_mod (list[str]):
                 list of imports to profile in script.
                 passing the path to script will profile the whole script.
                 the objects can be specified using its dotted path or full path (if applicable).
 
         Returns:
-            modnames_to_profile (List[str]):
+            modnames_to_profile (list[str]):
                 list of dotted paths to profile.
         """
         script_directory = os.path.realpath(os.path.dirname(script_file))
@@ -105,7 +109,7 @@ class ProfmodExtractor:
             so we check if the item is path and whether that path exists, else skip the item.
             """
             modpath = modname_to_modpath(
-                mod, sys_path=cast(List[Union[str, os.PathLike]], new_sys_path)
+                mod, sys_path=cast('list[str | os.PathLike]', new_sys_path)
             )
             if modpath is None:
                 """if cannot convert to modpath, check if already path and if invalid"""
@@ -140,62 +144,33 @@ class ProfmodExtractor:
     @staticmethod
     def _ast_get_imports_from_tree(
         tree: ast.Module,
-    ) -> list[dict[str, str | int | None]]:
-        """Get all imports in an abstract syntax tree.
+    ) -> dict[tuple[str | int, ...], list[ImportTarget]]:
+        """Get all top-level imports in an abstract syntax tree.
 
         Args:
             tree (_ast.Module):
                 abstract syntax tree to fetch imports from.
 
         Returns:
-            module_dict_list (List[Dict[str,Union[str,int]]]):
-                list of dicts of all imports in the tree, containing:
-                    name (str):
-                        the real name of the import. e.g. foo from "import foo as bar"
-                    alias (str):
-                        the alias of an import if applicable. e.g. bar from "import foo as bar"
-                    tree_index (int):
-                        the index of the import as found in the tree
+            import_targets (dict[tuple[str | int, ...], list[ImportTarget]])
+
+        Note:
+            Imports nested in e.g. try-except or if statements are not
+            currently returned.
+
+        See also:
+            :py:meth:`.ImportTarget._from_ast_nodes`
         """
-        module_dict_list = []
-        modname_list = []
-        for idx, node in enumerate(tree.body):
-            if isinstance(node, ast.Import):
-                for name in node.names:
-                    modname = name.name
-                    if modname not in modname_list:
-                        alias = name.asname
-                        module_dict = {
-                            'name': modname,
-                            'alias': alias,
-                            'tree_index': idx,
-                        }
-                        module_dict_list.append(module_dict)
-                        modname_list.append(modname)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module is None:
-                    continue
-                for name in node.names:
-                    modname = f'{node.module}.{name.name}'
-                    if modname not in modname_list:
-                        alias = name.asname or name.name
-                        module_dict = {
-                            'name': modname,
-                            'alias': alias,
-                            'tree_index': idx,
-                        }
-                        module_dict_list.append(module_dict)
-                        modname_list.append(modname)
-        return module_dict_list
+        # TODO: descend into bodied statements (e.g. try-except)
+        return {('body',): ImportTarget._from_ast_nodes(tree.body)}
 
     @staticmethod
     def _find_modnames_in_tree_imports(
-        modnames_to_profile: list[str],
-        module_dict_list: list[dict[str, str | int | None]],
-    ) -> dict[int, str]:
+        modnames_to_profile: list[str], import_targets: list[ImportTarget],
+    ) -> dict[int, list[ImportTarget]]:
         """Map modnames to imports from an abstract sytax tree.
 
-        Find imports in modue_dict_list, created from an abstract syntax tree, that match
+        Find imports in import_targets, created from an abstract syntax tree, that match
         dotted paths in modnames_to_profile.
         When a submodule is imported, both the submodule and the parent module are checked
         whether they are in modnames_to_profile. As the user can ask to profile
@@ -204,65 +179,187 @@ class ProfmodExtractor:
         The import's alias is stored in the output dict.
 
         Args:
-            modnames_to_profile (List[str]):
+            modnames_to_profile (list[str]):
                 list of dotted paths to profile.
 
-            module_dict_list (List[Dict[str,Union[str,int]]]):
-                list of dicts of all imports in the tree.
+            import_targets (list[ImportTarget]):
+                list of all import targets in the tree
 
         Returns:
-            modnames_found_in_tree (Dict[int,str]):
+            filtered_imports (dict[int, list[ImportTarget]]):
                 dict of imports found
                     key (int):
-                        index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                        index of the (from-)import statement in AST
+                    value (list[ImportTarget]):
+                        list of filtered import targets
         """
-        modnames_found_in_tree: dict[int, str] = {}
+        filtered_imports: dict[int, list[ImportTarget]] = {}
         modname_added_list = []
-        for i, module_dict in enumerate(module_dict_list):
-            modname = module_dict['name']
-            if not isinstance(modname, str):
-                continue
+        for i, import_target in enumerate(import_targets):
+            modname = import_target.name
             if modname in modname_added_list:
                 continue
-            """check if either the parent module or submodule are in modnames_to_profile"""
+            # Check if either the parent module or submodule are in
+            # `modnames_to_profile`
             if (
                 modname not in modnames_to_profile
                 and modname.rsplit('.', 1)[0] not in modnames_to_profile
             ):
                 continue
-            name = module_dict['alias'] or modname
-            if not isinstance(name, str):
-                raise TypeError('should have gotten a str')
             modname_added_list.append(modname)
-            tree_index = module_dict['tree_index']
-            if not isinstance(tree_index, int):
-                raise TypeError('should have gotten an int')
-            modnames_found_in_tree[tree_index] = name
-        return modnames_found_in_tree
+            try:
+                filtered_imports[import_target.index].append(import_target)
+            except KeyError:  # No imports recorded for the statement
+                filtered_imports[import_target.index] = [import_target]
+        return filtered_imports
 
-    def run(self) -> dict[int, str]:
-        """Map prof_mod to imports in an abstract syntax tree.
-
-        Takes the paths and dotted paths in prod_mod and finds their respective imports in an
-        abstract syntax tree, returning their alias and the index they appear in the AST.
+    def extract_all(self) -> dict[tuple[str | int, ...], list[ImportTarget]]:
+        """
+        Map ``prof_mod`` to imports in an abstract syntax tree.
+        Takes the paths and dotted paths in ``prof_mod`` and finds their
+        respective imports in an abstract syntax tree, returning their
+        aliases and the location they appear in the AST.
 
         Returns:
-            (Dict[int,str]): tree_imports_to_profile_dict
+            tree_imports_to_profile_dict \
+(dict[tuple[str | int, ...], list[ImportTarget]]);
                 dict of imports to profile
-                    key (int):
-                        index of import in AST
-                    value (str):
-                        alias (or name if no alias used) of import
+                    key (tuple[str | int, ...]):
+                        Location of the import statement in the AST;
+                        e.g. ``('body', 0)`` for the case where it is
+                        the first statement in the
+                        :py:attr:`ast.Module.body`
+                    value (list[ImportTarget]):
+                        list of import targets, each with these
+                        attributes:
+
+                        name (str):
+                            Canonical name of the import
+                        index (int):
+                            Index where it occurs in e.g. a module body
+                        alias (str | None):
+                            Optional alias under which the import is
+                            inserted into the namespace
+                        lineno (int | None):
+                            Optional (1-indexed) line number associated
+                            with the target
+                        resolved_name (str | None):
+                            Name under which the import is inserted into
+                            the namespace (should never be
+                            :py:const`None` for non-star-imports)
+
+        Notes:
+            - As of now, ``from <module> import *`` is not supported,
+              and will result in a :py:class:`UserWarning`.
+
+            - Nested imports (e.g. imports in try-except/if blocks) are
+              not currently retrieved.
         """
         modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(
             self._script_file, self._prof_mod
         )
-
-        module_dict_list = self._ast_get_imports_from_tree(self._tree)
-
-        tree_imports_to_profile_dict = self._find_modnames_in_tree_imports(
-            modnames_to_profile, module_dict_list
+        import_targets = self._ast_get_imports_from_tree(self._tree)
+        raw: dict[tuple[str | int, ...], list[ImportTarget]] = {
+            (*loc, index): filtered_imports
+            for loc, imports in import_targets.items()
+            for index, filtered_imports in self._find_modnames_in_tree_imports(
+                modnames_to_profile, imports
+            ).items()
+        }
+        filtered: dict[tuple[str | int, ...], list[ImportTarget]] = {}
+        star_imports: set[ImportTarget] = set()
+        for loc, imports in raw.items():
+            # TODO: runtime introspection of imports to handle
+            # star-imports
+            # Notes:
+            # - We don't issue the warning in
+            #   `._find_modnames_in_tree_imports()` because that is a
+            #   static method and doesn't have access to the file from
+            #   which the AST is generated, which we want to include in
+            #   the warning message.
+            # - As far normal Python syntax is concerned, each
+            #   import-from statement can have at most one `*` target,
+            #   which would be the sole target thereof (so
+            #   `indices_to_drop` should either be `[]` or `[0]`);
+            #   but it doesn't hurt to be cautious
+            indices_to_drop = [
+                i for i, imp in enumerate(imports)
+                if imp.resolved_name is None  # Star-imports
+            ]
+            for i in reversed(indices_to_drop):
+                imp = imports.pop(i)
+                star_imports.add(imp)
+            if imports:
+                filtered[loc] = imports
+        ImportTarget._check_and_warn_dropped_imports(
+            star_imports,
+            "we don't currently handle `from ... import *` statements",
+            self._script_file,
+            stacklevel=2,  # Attribute warning to caller
         )
-        return tree_imports_to_profile_dict
+        return filtered
+
+    def run(self) -> dict[int, str]:
+        """
+        Deprecated, legacy method kept for backward compatibility.
+
+        Returns:
+            tree_imports_to_profile_dict (dict[int, str])
+                dict of top-level imports to profile
+                    key (int):
+                        index of import in module AST's body
+                    value (str):
+                        alias (or name if no alias used) of the LAST
+                        target to import in the corresponding
+                        :py:class:`ast.Import` or
+                        :py:class:`ast.ImportFrom` statement
+
+        Notes:
+            - New code should use the :py:meth:`.extract_all` method,
+              which handles multi-target import statements (see #434).
+
+            - Calling this method issues a
+              :py:class:`DeprecationWarning`.
+
+            - For multi-target import statements, this only preserves
+              the last target. If this results in import targets being
+              dropped, a :py:class:`UserWarning` is issued.
+
+            - ``from <module> import *`` is not supported, and will
+              result in a :py:class:`UserWarning`.
+
+            - Nested imports (e.g. imports in try-except/if blocks) are
+              not retrieved.
+        """
+        msg = (
+            '`ProfmodExtractor.run()` is now deprecated, because it cannot '
+            'correctly resolve multi-target import statements; '
+            'use `ProfmodExtractor.extract_all()` instead.'
+        )
+        diagnostics.log.warning(f'DeprecationWarning: {msg}')
+        warn(msg, DeprecationWarning, stacklevel=2)  # Caller
+        result: dict[int, str] = {}
+        dropped: set[ImportTarget] = set()
+        for index, imports in self.extract_all().items():
+            if not (
+                len(index) == 2
+                and index[0] == 'body'
+                and isinstance(index[1], int)
+            ):  # We only handle the top-level imports here
+                continue
+            *remainder, last = imports
+            dropped.update(remainder)
+            dropped.discard(last)
+            name = last.resolved_name
+            if name is None:
+                # Shouldn't happen with the current `.extract_all()`,
+                # but once we fix star-imports...
+                continue
+            result[index[1]] = name
+        ImportTarget._check_and_warn_dropped_imports(
+            dropped,
+            'the import statement(s) is/are multi-target',
+            self._script_file,
+            stacklevel=2,  # Attribute warning to caller
+        )
+        return result

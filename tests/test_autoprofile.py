@@ -1,13 +1,21 @@
 from __future__ import annotations
+
+import ast
+import contextlib
 import os
 import re
 import subprocess
 import sys
 import shlex
 import tempfile
+from collections.abc import Collection, Sequence
+from typing import Any, ClassVar, Literal
+from warnings import catch_warnings, WarningMessage
 
 import pytest
 import ubelt as ub
+from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
+from line_profiler.autoprofile.profmod_extractor import ProfmodExtractor
 
 
 def test_single_function_autoprofile():
@@ -1197,3 +1205,348 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
             f'^Function: {prefix}{func}', raw_output, re.MULTILINE
         )
         assert bool(in_output) == (func in profiled_funcs)
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'prof_os', 'prof_minidom', 'prof_pulldom',
+     'prof_elem', 'prof_etree', 'prof_parser'),
+    # Trivial cases
+    [([], False, False, False, False, False, False),
+     (['os', 'foo.bar'], True, False, False, False, False, False),
+     (['xml.etree.ElementTree'], False, False, False, True, True, True),
+     (['xml.etree.ElementTree.Element', 'xml.etree.ElementTree.XMLParser',
+       'xml.dom.minidom'],
+      False, True, False, True, False, True)])
+def test_multitarget_import_resolution(
+    prof_mod: list[str],
+    prof_os: bool,
+    prof_minidom: bool, prof_pulldom: bool,
+    prof_elem: bool, prof_etree: bool, prof_parser: bool,
+) -> None:
+    """
+    Test that (from-)import statements with multiple targets are
+    correctly transformed by :py:class:`.AstTreeProfiler`, resolving to
+    the correct entities being profiled.
+
+    See also:
+        Issue #433
+    """
+    input_module = ub.codeblock(
+        """
+        import os
+        from xml.dom import minidom, pulldom
+        from xml.etree.ElementTree import (
+            Element, ElementTree, XMLParser,
+        )
+
+
+        if __name__ == '__main__':
+            pass
+        """,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        fpath = ub.Path(tmp) / 'script.py'
+        fpath.write_text(input_module)
+        module_ast = AstTreeProfiler(str(fpath), prof_mod, False).profile()
+    output_module = ast.unparse(module_ast)
+
+    for target, profiled in {
+        'os': prof_os,
+        'minidom': prof_minidom, 'pulldom': prof_pulldom,
+        'Element': prof_elem, 'ElementTree': prof_etree,
+        'XMLParser': prof_parser,
+    }.items():
+        pattern = rf'add_imported_function_or_module\({target}\)'
+        assert bool(re.search(pattern, output_module)) == profiled
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'expected', 'method', 'expect_warning'),
+    [(['foo', 'foobar.ham'], {0: ['foo'], 2: ['ham']}, 'extract_all', None),
+     (['baz', 'foobar'], {1: ['baz'], 2: ['spam', 'ham', 'jam']},
+      'extract_all', None),
+     (['foobar', 'qux', 'fred'],
+      {2: ['spam', 'ham', 'jam'], 3: ['ham'], 5: ['alexa', 'bob']},
+      'extract_all', None),
+     # `from quux import *` cannot be profiled as of now, and results in
+     # a warning
+     (['qux', 'quux'], {3: ['ham']}, 'extract_all',
+      r'1 .* target.* dropped .* import \*.*'
+      r'- line 5: \* \(from quux\)'),
+     # This doesn't result in a `UserWarning` for dropped targets,
+     # because there is only one selected target on the multi-target
+     # import line
+     (['foo', 'foobar.ham'], {0: 'foo', 2: 'ham'}, 'run', None),
+     # This however results in the warning that `spam` and `ham` are
+     # supposed to be profiled, but are dropped
+     (['baz', 'foobar'], {1: 'baz', 2: 'jam'}, 'run',
+      '2 .* target.* dropped .* multi-target.*'
+      r'- line 3: ham \(= foobar.ham\), spam \(= foobar.spam\)'),
+     # - Despite how `foobar.ham` is shadowed by `qux.ham`, the former
+     #   is still dropped profiling; and so we include that in the
+     #   warning message, and also indicate the name's source
+     # - Note that the warning message is multiline because there are
+     #   dropped imports on multiple lines
+     (['foobar', 'qux', 'fred'], {2: 'jam', 3: 'ham', 5: 'bob'}, 'run',
+      '3 .* target.* dropped .* multi-target.*'
+      r'\n- line 3: ham \(= foobar.ham\), spam \(= foobar.spam\)'
+      r'\n- line 6: alexa \(= fred.alice\)'),
+     # Same warning for `quux.*` as above for `.extract_all()`
+     (['qux', 'quux'], {3: 'ham'}, 'run',
+      r'1 .* target.* dropped .* import \*.*'
+      r'- line 5: \* \(from quux\)')])
+def test_profmod_extractor_multitarget_behavior(
+    prof_mod: list[str],
+    expected: dict[int, str] | dict[int, list[str]],
+    method: Literal['extract_all', 'run'],
+    expect_warning: str | None,
+) -> None:
+    """
+    Test that :py:meth:`.ProfmodExtractor.extract_all` and
+    :py:meth:`.ProfmodExtractor.run` behaves as expected:
+
+    ``.run()`` (legacy method):
+
+        - Returns ``dict[int, str]``, where ``str`` is the last target
+          in a (multi-target) import(-from) statement
+
+        - Issues a :py:class:`DeprecationWarning` urging users to use
+          :py:meth:`.ProfmodExtractor.extract_all` instead
+
+        - Issues a :py:class:`UserWarning` against dropped profiling
+          targets because of multi-target import statements (if any)
+
+        - Issues a :py:class:`UserWarning` against dropped profiling
+          targets because of the currently unsupported
+          ``from ... import *`` statements (if any)
+
+    ``.extract_all()`` (new method):
+
+        - Returns \
+``dict[tuple[Literal['body'], int], list[ImportTarget]]``,
+          where ``ImportTarget.resolved_name`` is the name of the import
+          target in the namespace
+
+        - Does not result in the above warnings, except for the
+          ``from ... import *`` case
+
+    See also:
+        Issue #433
+    """
+    code = ub.codeblock(
+        """
+        import foo, bar
+        import baz
+        from foobar import spam, ham, eggs as jam
+        from qux import ham  # This shadows `foobar.ham` above
+        from quux import *  # Star-imports ignored for now
+        from fred import alice as alexa, bob
+
+
+        def func() -> None:
+            pass
+        """,
+    ).strip('\n')
+    depr_warning_pattern = 'run.* deprecated.* use .*extract_all'
+    targets_warning_pattern = 'profiling target.* dropped.*'
+    warnings: list[WarningMessage]
+    checks: list[tuple[bool, str, type[Warning]]] = []
+    # Check that the deprecation warning is only issued when using
+    # `.run()`
+    checks.append((method == 'run', depr_warning_pattern, DeprecationWarning))
+    # Check that the user warnin is only issued when a target has been
+    # dropped (and not shadowed by a later import)
+    if expect_warning:
+        checks.append((True, expect_warning, UserWarning))
+    else:
+        checks.append((False, targets_warning_pattern, UserWarning))
+
+    with contextlib.ExitStack() as stack:
+        tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
+        fname = ub.Path(tmpdir) / 'script.py'
+        fname.write_text(code)
+
+        warnings = stack.enter_context(catch_warnings(record=True))
+        extractor = ProfmodExtractor(ast.parse(code), str(fname), prof_mod)
+        if method == 'run':
+            assert extractor.run() == expected
+        else:
+            result: dict[int, list[str | None]] = {}
+            for loc, imports in extractor.extract_all().items():
+                # XXX: these assertions are true for the time being, but
+                # will become false when we extend to non-top-level
+                # import statements
+                assert len(loc) == 2
+                assert loc[0] == 'body'
+                assert isinstance(loc[1], int)
+                result[loc[1]] = [imp.resolved_name for imp in imports]
+            assert result == expected
+
+    _check_warnings(warnings, checks)
+
+
+def _check_warnings(
+    warnings: Sequence[WarningMessage],
+    checks: Collection[tuple[bool, str, type[Warning]]],
+) -> None:
+    """
+    With each tuple of ``warning_expected, msg, WarningType``, check
+    ``warnings`` that:
+
+    - If ``warning_expected = True``, there is at least 1 matching
+      warning.
+
+    - If ``warning_expected = False``, thers is no matching warning.
+    """
+    for warning_expected, pattern, WarningType in checks:
+        regex = re.compile(pattern)
+        matches = [
+            msg for msg in warnings
+            if issubclass(msg.category, WarningType)
+            if regex.search(str(msg.message))
+        ]
+        if bool(matches) == warning_expected:
+            continue
+        if warning_expected:
+            # Note: Until Python 3.14 `WarningMessage.__repr__()` is
+            # terse; use `.__str__()` to show more context
+            raise AssertionError(
+                f'expected {WarningType.__name__} matching {pattern!r}, '
+                f'didn\'t get a match out of {len(warnings)} '
+                f'warnings captured: {[str(m) for m in warnings]!r}'
+            )
+        else:
+            raise AssertionError(
+                f'expected no {WarningType.__name__} matching {pattern!r}, '
+                f'got {len(matches)} match(es): {[str(m) for m in matches]!r}'
+            )
+
+
+def test_multitarget_import_transformation_executes() -> None:
+    """
+    Test the runtime behavior of the transformed AST, including:
+    - multiple targets in one import statement;
+    - aliases;
+    - selection of profiling targets;
+    - preservation of profiling-call order;
+    - passing the actual imported objects to the profiler.
+
+    See also:
+        Issue #433
+    """
+    from xml.etree.ElementTree import Element, dump, XMLParser
+
+    class RecordingProfiler:
+        """
+        Mock :py:class:`line_profiler.LineProfiler` object.
+        """
+        @classmethod
+        def add_imported_function_or_module(cls, obj) -> None:
+            cls.profiled_objects.append(obj)
+
+        profiled_objects: ClassVar[list[Any]] = []
+
+    input_module = ub.codeblock("""
+        import os, sys as system
+        from xml.etree.ElementTree import (  # `xml_dump` not profiled
+            Element, dump as xml_dump, XMLParser as Parser,
+        )
+    """)
+    with tempfile.TemporaryDirectory() as tmp:
+        fpath = ub.Path(tmp) / 'script.py'
+        fpath.write_text(input_module)
+        module_ast = AstTreeProfiler(
+            str(fpath),
+            [
+                'os',
+                'sys',
+                'xml.etree.ElementTree.Element',
+                'xml.etree.ElementTree.XMLParser',
+            ],
+            False,
+        ).profile()
+        namespace = {'profile': RecordingProfiler()}
+        code = compile(module_ast, str(fpath), 'exec')
+        exec(code, namespace)
+
+    assert RecordingProfiler.profiled_objects == [
+        os,
+        sys,
+        Element,
+        XMLParser,
+    ]
+    # Also verify that the aliases created by the original imports resolve
+    # to the same objects that were passed to the profiler.
+    assert namespace['system'] is sys
+    assert namespace['Element'] is Element
+    assert namespace['xml_dump'] is dump
+    assert namespace['Parser'] is XMLParser
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'expected_targets', 'profile_imports', 'profile_whole_file',
+     'expect_warnings'),
+    [([], [], False, False, False),  # No-op case
+     # Whole-file rewriting, with and without import rewriting
+     ([], ['bar', 'baz'], True, True, True),
+     ([], [], False, True, False),
+     # No whole-file rewriting, bu we explicitly ask to profile the
+     # `spam.ham.*` import (which can't be done)
+     (['spam.ham'], [], False, False, True)])
+def test_handle_star_imports(
+    prof_mod: list[str],
+    expected_targets: Collection[Literal['bar', 'baz']],
+    profile_imports: bool,
+    profile_whole_file: bool,
+    expect_warnings: bool,
+) -> None:
+    """
+    Test that star-imports (``from ... import *``) don't cause
+    :py:meth:`AstTreeProfiler.profile` to choke, instead just issuing
+    warnings about ignoring them.
+
+    TODO: actually handle star-imports
+    """
+    code = ub.codeblock(
+        """
+        from foo import bar
+        from spam.ham import *
+        from foobar import baz
+
+
+        def func() -> None:
+            pass
+        """,
+    ).strip('\n')
+
+    targets_warning_pattern = 'profiling target.* dropped.*'
+    warning_checks = [(expect_warnings, targets_warning_pattern, UserWarning)]
+
+    re_checks: list[tuple[str, bool]] = []
+    re_checks.append((r'@profile\ndef func', profile_whole_file))
+    for target in 'bar', 'baz':
+        pattern = rf'add_imported_function_or_module\({target}\)'
+        re_checks.append((pattern, target in expected_targets))
+
+    with contextlib.ExitStack() as stack:
+        tmpdir = stack.enter_context(tempfile.TemporaryDirectory())
+        fpath = ub.Path(tmpdir) / 'script.py'
+        fpath.write_text(code)
+        if profile_whole_file:
+            prof_mod = [*prof_mod, str(fpath)]
+
+        warnings = stack.enter_context(catch_warnings(record=True))
+        rewriter = AstTreeProfiler(str(fpath), prof_mod, profile_imports)
+        module_ast = rewriter.profile()
+
+    # Check that we no longer get a `SyntaxError` from
+    # `add_imported_function_or_module(*)`
+    compile(module_ast, str(fpath), 'exec')
+
+    # Check the issuance of warnings related to star-imports
+    _check_warnings(warnings, warning_checks)
+
+    # Check the profiling of other targets
+    output_module = ast.unparse(module_ast)
+    for pattern, expected in re_checks:
+        assert bool(re.search(pattern, output_module)) == expected

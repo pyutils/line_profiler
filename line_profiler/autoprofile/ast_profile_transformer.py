@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import ast
-from typing import cast, Union, List
+from collections.abc import Callable, Sequence
+from functools import partial
+from os import PathLike
+from typing import cast, TypeVar
+
+from ._import_targets import ImportTarget
+
+
+_Import = TypeVar('_Import', ast.Import, ast.ImportFrom)
 
 
 def ast_create_profile_node(
@@ -81,6 +89,7 @@ class AstProfileTransformer(ast.NodeTransformer):
             profiled_imports if profiled_imports is not None else []
         )
         self._profiler_name = profiler_name
+        self._dropped_star_imports: set[ImportTarget] = set()
 
     def _visit_func_def(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef
@@ -114,12 +123,10 @@ class AstProfileTransformer(ast.NodeTransformer):
     visit_FunctionDef = visit_AsyncFunctionDef = _visit_func_def
 
     def _visit_import(
-        self, node: ast.Import | ast.ImportFrom
-    ) -> (
-        ast.Import
-        | ast.ImportFrom
-        | list[ast.Import | ast.ImportFrom | ast.Expr]
-    ):
+        self,
+        node: _Import,
+        get_import_targets: Callable[[_Import], Sequence[ImportTarget]],
+    ) -> _Import | list[_Import | ast.Expr]:
         """Add a node that profiles an import
 
         If profile_imports is True and the import is not in profiled_imports,
@@ -140,12 +147,16 @@ class AstProfileTransformer(ast.NodeTransformer):
         if not self._profile_imports:
             self.generic_visit(node)
             return node
-        this_visit = cast(
-            Union[ast.Import, ast.ImportFrom], self.generic_visit(node)
-        )
-        visited: list[ast.Import | ast.ImportFrom | ast.Expr] = [this_visit]
-        for names in node.names:
-            node_name = names.name if names.asname is None else names.asname
+        this_visit = cast(_Import, self.generic_visit(node))
+        visited: list[_Import | ast.Expr] = [this_visit]
+        for name, target in zip(
+            node.names, get_import_targets(node), strict=True,
+        ):
+            node_name = name.name if name.asname is None else name.asname
+            if target.resolved_name is None:
+                # TODO: handle starred imports
+                self._dropped_star_imports.add(target)
+                continue
             if node_name in self._profiled_imports:
                 continue
             self._profiled_imports.append(node_name)
@@ -169,10 +180,11 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return cast(
-            Union[ast.Import, List[Union[ast.Import, ast.Expr]]],
-            self._visit_import(node),
-        )
+        # Note: we don't actually care about the `ImportTarget.index`
+        # here; in fact, we're just reusing the name-resolution
+        # machinery in `ImportTarget`
+        get_targets = partial(ImportTarget._from_import_node, 0)
+        return self._visit_import(node, get_targets)
 
     def visit_ImportFrom(
         self, node: ast.ImportFrom
@@ -190,7 +202,41 @@ class AstProfileTransformer(ast.NodeTransformer):
                 if profile_imports is True:
                     returns list containing the import node and the profiling node
         """
-        return cast(
-            Union[ast.ImportFrom, List[Union[ast.ImportFrom, ast.Expr]]],
-            self._visit_import(node),
-        )
+        get_targets = partial(ImportTarget._from_import_from_node, 0)
+        return self._visit_import(node, get_targets)
+
+    @classmethod
+    def _transform(
+        cls,
+        node: ast.Module,
+        filename: PathLike[str] | str | None = None,
+        **kwargs,
+    ) -> ast.Module:
+        """
+        Wrapper around ``<instance>.visit()`` with extra bookkeeping.
+
+        Args:
+            node (ast.Module):
+                AST module node
+            filename (PathLike[str] | str | None):
+                Optional filename to be used in error/warning messages
+            **kwargs
+                Passed to the initializer
+
+        Returns:
+            node (ast.Module):
+                Input module node
+        """
+        transformer = cls(**kwargs)
+        dropped_star_imports = transformer._dropped_star_imports
+        if filename is None:
+            filename = '???'
+        try:
+            return transformer.visit(node)
+        finally:
+            ImportTarget._check_and_warn_dropped_imports(
+                dropped_star_imports,
+                "we don't currently handle `from ... import *` statements",
+                filename,
+                stacklevel=2,  # Attribute warning to the caller
+            )
