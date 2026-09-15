@@ -4,7 +4,7 @@ This module defines the |lprun| and |lprun_all| IPython magic functions.
 If you are using IPython, there is an implementation of an |lprun| magic
 command which will let you specify functions to profile and a statement
 to execute. It will also add its
-:py:class:`~.LineProfiler` instance into the |builtins|, but typically,
+:py:class:`LineProfiler <line_profiler.line_profiler.LineProfiler>` instance into the |builtins|, but typically,
 you would not use it like that.
 
 You can also use |lprun_all|, which profiles the whole cell you're
@@ -398,14 +398,14 @@ class LineProfilerMagics(Magics):
             %lprun [<options>] <statement>
 
         The given statement (which doesn't require quote marks) is run
-        via the :py:class:`~.LineProfiler`. Profiling is enabled for
+        via the :py:class:`LineProfiler <line_profiler.line_profiler.LineProfiler>`. Profiling is enabled for
         the functions specified by the ``-f`` options. The statistics
         will be shown side-by-side with the code through the pager once
         the statement has completed.
 
         Options:
 
-        ``-f <function>``: :py:class:`~.LineProfiler` only profiles
+        ``-f <function>``: :py:class:`LineProfiler <line_profiler.line_profiler.LineProfiler>` only profiles
         functions and methods it is told to profile. This option tells
         the profiler about these functions. Multiple ``-f`` options may
         be used. The argument may be any expression that gives
@@ -425,7 +425,7 @@ class LineProfilerMagics(Magics):
         ``-T <filename>``: dump the text-formatted statistics with the
         code side-by-side out to a text file.
 
-        ``-r``: return the :py:class:`~.LineProfiler` object after it
+        ``-r``: return the :py:class:`LineProfiler <line_profiler.line_profiler.LineProfiler>` object after it
         has completed profiling.
 
         ``-s``: strip out all entries from the print-out that have
@@ -504,7 +504,7 @@ class LineProfilerMagics(Magics):
         ``-T <filename>``: dump the text-formatted statistics with the
         code side-by-side out to a text file.
 
-        ``-r``: return the :py:class:`~.LineProfiler` object after it
+        ``-r``: return the :py:class:`LineProfiler <line_profiler.line_profiler.LineProfiler>` object after it
         has completed profiling.
 
         ``-z``: strip out all entries from the print-out that have

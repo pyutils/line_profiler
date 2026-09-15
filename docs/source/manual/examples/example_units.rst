@@ -48,6 +48,7 @@ reported use the ``--unit`` command line argument. The following example shows
 4 variants:
 
 .. code:: bash
+
    LINE_PROFILE=1 python script.py
 
    # Use different values for the unit report

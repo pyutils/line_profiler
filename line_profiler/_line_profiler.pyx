@@ -678,12 +678,8 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
     @cython.profile(False)
     cpdef handle_line_event(self, object code, int lineno):
         """
-        Line-event (|LINE|_) callback passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
-        .. _LINE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-LINE
+        Line-event callback for :py:attr:`!sys.monitoring.events.LINE`,
+        passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._base_callback(
             1, sys.monitoring.events.LINE, code, lineno, (lineno,), ())
@@ -692,13 +688,8 @@ sys.monitoring.html#monitoring-event-LINE
     cpdef handle_return_event(
             self, object code, int instruction_offset, object retval):
         """
-        Return-event (|PY_RETURN|_) callback passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        .. |PY_RETURN| replace:: \
-:py:attr:`!sys.monitoring.events.PY_RETURN`
-        .. _PY_RETURN: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-PY_RETURN
+        Return-event callback for :py:attr:`!sys.monitoring.events.PY_RETURN`,
+        passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
             sys.monitoring.events.PY_RETURN, code, instruction_offset, retval)
@@ -707,13 +698,8 @@ sys.monitoring.html#monitoring-event-PY_RETURN
     cpdef handle_yield_event(
             self, object code, int instruction_offset, object retval):
         """
-        Yield-event (|PY_YIELD|_) callback passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        .. |PY_YIELD| replace:: \
-:py:attr:`!sys.monitoring.events.PY_YIELD`
-        .. _PY_YIELD: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-PY_YIELD
+        Yield-event callback for :py:attr:`!sys.monitoring.events.PY_YIELD`,
+        passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
             sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
@@ -722,12 +708,8 @@ sys.monitoring.html#monitoring-event-PY_YIELD
     cpdef handle_raise_event(
             self, object code, int instruction_offset, object exception):
         """
-        Raise-event (|RAISE|_) callback passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
-        .. _RAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RAISE
+        Raise-event callback for :py:attr:`!sys.monitoring.events.RAISE`,
+        passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
             sys.monitoring.events.RAISE, code, instruction_offset, exception)
@@ -736,12 +718,8 @@ sys.monitoring.html#monitoring-event-RAISE
     cpdef handle_reraise_event(
             self, object code, int instruction_offset, object exception):
         """
-        Re-raise-event (|RERAISE|_) callback passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
-        .. _RERAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RERAISE
+        Re-raise-event callback for :py:attr:`!sys.monitoring.events.RERAISE`,
+        passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
             sys.monitoring.events.RERAISE, code, instruction_offset, exception)
@@ -1307,8 +1285,7 @@ datamodel.html#user-defined-functions
     def c_last_time(self):
         """
         Raises:
-            KeyError
-                If no profiling data is available on the current thread.
+            KeyError: If no profiling data is available on the current thread.
         """
         try:
             return (<dict>self._c_last_time)[PyThread_get_thread_ident()]

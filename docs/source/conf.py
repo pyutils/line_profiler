@@ -274,7 +274,10 @@ templates_path = ['_templates']
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-source_suffix = ['.rst', '.md']
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
+}
 
 # The master toctree document.
 master_doc = 'index'
@@ -289,7 +292,15 @@ language = 'en'
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path .
-exclude_patterns = []
+exclude_patterns = [
+    # Stale sphinx-apidoc entry points. The canonical API navigation is
+    # rooted at auto/line_profiler.rst and docs/source/index.rst.
+    'modules.rst',
+    'auto/modules.rst',
+    # There is no importable Python module named line_profiler.timers; the
+    # timers implementation lives in C support files.
+    'auto/line_profiler.timers.rst',
+]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
@@ -301,7 +312,6 @@ pygments_style = 'sphinx'
 # a list of builtin themes.
 #
 html_theme = 'sphinx_rtd_theme'
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -309,7 +319,6 @@ html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 #
 html_theme_options = {
     'collapse_navigation': False,
-    'display_version': True,
     'navigation_depth': -1,
     # 'logo_only': True,
 }

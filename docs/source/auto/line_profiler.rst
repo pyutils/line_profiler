@@ -28,7 +28,6 @@ Submodules
 Module contents
 ---------------
 
-.. automodule:: line_profiler
-   :members:
-   :undoc-members:
-   :show-inheritance:
+The package overview and top-level usage documentation are rendered on the
+main documentation page. This page keeps the generated subpackage and submodule
+navigation in one place.

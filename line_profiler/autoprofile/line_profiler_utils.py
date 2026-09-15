@@ -91,9 +91,9 @@ def add_imported_function_or_module(
     See also:
         :py:data:`~line_profiler.line_profiler\
 .DEFAULT_SCOPING_POLICIES`,
-        :py:meth:`.LineProfiler.add_callable()`,
-        :py:meth:`.LineProfiler.add_module()`,
-        :py:meth:`.LineProfiler.add_class()`,
+        :py:meth:`add_callable() <line_profiler.line_profiler.LineProfiler.add_callable>`,
+        :py:meth:`add_module() <line_profiler.line_profiler.LineProfiler.add_module>`,
+        :py:meth:`add_class() <line_profiler.line_profiler.LineProfiler.add_class>`,
         :py:class:`~.ScopingPolicy`,
         :py:meth:`ScopingPolicy.to_policies() \
 <line_profiler.line_profiler.ScopingPolicy.to_policies>`

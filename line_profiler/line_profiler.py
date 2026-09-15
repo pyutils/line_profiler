@@ -78,9 +78,10 @@ def get_column_widths(
     config: bool | str | None = False,
 ) -> Mapping[ColumnLiterals, int]:
     """
-    Arguments
-        config (bool | str | None)
+    Args:
+        config (bool | str | None):
             Passed to :py:meth:`.ConfigSource.from_config`.
+
     Note:
         * Results are cached.
         * The default value (:py:data:`False`) loads the config from the

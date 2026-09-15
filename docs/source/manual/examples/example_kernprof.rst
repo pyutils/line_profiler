@@ -262,8 +262,10 @@ like ``python -c``:
       argument thereafter (the executed code).
       If there isn't one, an error is raised as
       :ref:`above <kernprof-m-note>` with ``kernprof -m``.
-    * .. _kernprof-c-note:
-      Since the temporary file containing the executed code will not
+
+    .. _kernprof-c-note:
+
+    * Since the temporary file containing the executed code will not
       exist beyond the ``kernprof`` process, profiling results
       pertaining to targets (function definitions) local to said code
       :ref:`will not be accessible later <kernprof-script-note>` by

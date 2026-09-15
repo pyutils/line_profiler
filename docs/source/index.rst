@@ -3,6 +3,12 @@
    :show-inheritance:
 
 .. toctree::
+   :maxdepth: 2
+   :caption: User Guide
+
+   manual/index
+
+.. toctree::
    :maxdepth: 8
    :caption: Package Layout
 
@@ -10,8 +16,6 @@
    auto/line_profiler.autoprofile
    auto/line_profiler.explicit_profiler
    auto/kernprof
-
-   manual/examples/index
 
 
 Indices and tables

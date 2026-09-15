@@ -40,6 +40,7 @@ def add_argument(
     * Set the destination value to the corresponding value in the no-arg
       form, but also allow (for long options) for a single arg which is
       parsed by :py:func:`.boolean()`.
+
     Also automatically generates complementary boolean options for
     ``action='store_true'`` options.
     If ``hide_complementary_options`` is
@@ -56,8 +57,8 @@ def add_argument(
             Whether to hide the auto-generated complementary options to
             ``action='store_true'`` options from the help text for
             brevity.
-        arg, *args, **kwargs
-            Passed to ``parser_like.add_argument()``
+        arg, *args, **kwargs:
+            Passed to ``parser_like.add_argument()``.
 
     Returns:
         Any: action_like
