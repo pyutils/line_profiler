@@ -94,6 +94,9 @@ preimports = true
 #   - `prof-imports` (bool):
 #     `--prof-imports` (true) or `--no-prof-imports` (false)
 prof-imports = false
+#   - `prof-star-imports` (bool):
+#     `--prof-star-imports` (true) or `--no-prof-star-imports` (false)
+prof-star-imports = false
 
 # - Misc flags
 #   - `verbose` (count):
@@ -123,6 +126,13 @@ output-interval = 0
 #     functions, or classes) to be profiled if imported in the profiled
 #     script/module
 prof-mod = []
+#   - `prof-nested-imports`
+#     (list[Literal['conditionals', 'try_except', 'contexts', 'loops',
+#                   'func_defs', 'class_defs']]):
+#     `--prof-nested-imports`: categories of compound statements in
+#     which to search for and profile imports; see also
+#     `[tool.line_profiler.autoprofile.import_discovery]`
+prof-nested-imports = ['conditionals', 'try_except', 'contexts', 'class_defs']
 
 # `python -m line_profiler` options
 
@@ -206,3 +216,59 @@ hits = 9
 time = 12
 perhit = 8
 percent = 8
+
+# `line_profiler.autoprofile` import-profiling options
+
+# Note:
+# 1. When using `preimports = true`, the `prof-mod` names are always
+#    profiled, regardless of whether they are directly or indirectly
+#    imported in the profiled code.
+# 2, If (i) the file-/module-path of the profiled code is itself among
+#    the `prof-mod` names, and (ii) `prof-imports = true`, its imports
+#    are ALWAYS profiled via module-AST rewriting.
+# 3. Else, imports are selectively discovered from the AST of the
+#    profiled code, and import targets specifically matching the
+#    `prof-mod` names are profiled. Import discovery is dictated by the
+#    `import_discovery` options:
+#    - If the option corresponding to a language construction is `false`,
+#      we won't descend therein to look for imports.
+#    - If all these options are set to false, only raw (from-)import
+#      statements on the top level of the profiled code will be checked.
+# 4. For performance reasons (each generated call to
+#    `add_imported_function_or_module()` can result in arbitrarily deep
+#    descent into the object to be profiled), import discovery in loops
+#    and function/method definitions are disabled by default.
+# 5. Star-imports (`from ... import *`) are ignored (with a warning) by
+#    default, due to the extra complexity in retrieving the import
+#    targets; to profile those (either when individual import targets
+#    match the `prof-mod` names, or when the profiled code goes through
+#    whole-module rewriting (see point 2) with `prof-imports` true), set
+#    `prof_star_imports` to true.
+
+[tool.line_profiler.autoprofile]
+
+# - `prof_star_imports` (bool):
+#   Whether to profile targets implicitly imported via
+#   `from ... import *` statements
+prof_star_imports = false
+
+[tool.line_profiler.autoprofile.import_discovery]
+
+# - `conditionals` (bool):
+#   Whether to look into `if-elif-else` and `match-case` statements.
+conditionals = true
+# - `try_except` (bool):
+#   Whether to look into `try-except-else-finally` statements.
+try_except = true
+# - `contexts` (bool):
+#   Whether to look into `[async] with` statements.
+contexts = true
+# - `loops` (bool):
+#   Whether to look into `[async] for-else` and `while-else` statements.
+loops = false
+# - `func_defs` (bool):
+#   Whether to look into `[async] def` statements.
+func_defs = false
+# - `class_defs` (bool):
+#   Whether to look into `class` statements.
+class_defs = true

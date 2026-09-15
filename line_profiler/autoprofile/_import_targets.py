@@ -10,6 +10,15 @@ from warnings import warn
 from .. import _diagnostics as diagnostics
 
 
+_DROPPED_STAR_IMPORTS_MSG_TEMPLATE = (
+    'star-imports (`from ... import *`) are not {action}; '
+    'see the `{argname}` argument, '
+    'the `tool.line_profiler.kernprof.prof-star-imports` and '
+    '`tool.line_profiler.autoprofile.prof_star_imports` config '
+    'options, and the `--[no-]prof-star-imports` `kernprof` CLI option'
+)
+
+
 @dataclasses.dataclass(eq=True, frozen=True)
 class ImportTarget:
     """
@@ -147,7 +156,7 @@ class ImportTarget:
         imports: Collection[Self],
         reason: str,
         source: Any,
-        category: type[Warning] = UserWarning,
+        category: type[Warning] | None = None,
         stacklevel: int = 1,
         *args,
         **kwargs

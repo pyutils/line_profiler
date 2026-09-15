@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import os
+from collections.abc import Sequence
 from typing import cast
 
 from .ast_tree_profiler import AstTreeProfiler
@@ -96,7 +97,7 @@ class AstTreeModuleProfiler(AstTreeProfiler):
 
     @classmethod
     def _check_profile_full_script(
-        cls, script_file: str, prof_mod: list[str]
+        cls, script_file: str, prof_mod: Sequence[str],
     ) -> bool:
         rp = os.path.realpath
         paths_to_check = {rp(script_file)}

@@ -135,8 +135,26 @@ which displays:
                             profiling (`-l`/`--line-by-line`). (Default: True)
       --prof-imports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
                             If the script/module profiled is in `--prof-mod`, autoprofile
-                            all its imports. Only works with line profiling (`-l`/`--line-
+                            its imports regardless of whether the import targets are
+                            themselves in `--prof-mod`; restrictions from `--prof-star-
+                            imports` and `--prof-nested-imports` apply. Only works with
+                            line profiling (`-l`/`--line-by-line`). (Default: False)
+      --prof-star-imports [Y[es] | N[o] | T[rue] | F[alse] | on | off | 1 | 0]
+                            Dynamically analyze the contents of star-imports (`from ...
+                            import *`) and profile the imported names as one would the
+                            explicit imports. Only works with line profiling (`-l`/`--line-
                             by-line`). (Default: False)
+      --prof-nested-imports {CONSTRUCT[, ...] | 'all'}
+                            List of compound-statement constructs (valid values:
+                            'conditionals', 'loops', 'contexts', 'try-except', 'func-defs',
+                            'class-defs'; or 'all' as a shorthand for all of the above) in
+                            which to look for and profile nested import statements. They can
+                            be supplied both as comma-separated items, or separately with
+                            multiple copies of this flag. Only works with line profiling
+                            (`-l`/`--line-by-line`). (Default: ['conditionals',
+                            'try_except', 'contexts', 'class_defs']; pass an empty string to
+                            clear the defaults (or any `--prof-nested-imports` target
+                            specified earlier))
 
     output options:
       -o, --outfile OUTFILE
@@ -201,7 +219,6 @@ import time
 import warnings
 from argparse import ArgumentParser
 from io import StringIO
-from operator import methodcaller
 from runpy import run_module
 from pathlib import Path
 from pprint import pformat
@@ -566,9 +583,39 @@ def _add_core_parser_arguments(parser):
         '--prof-imports',
         action='store_true',
         help='If the script/module profiled is in `--prof-mod`, '
-        'autoprofile all its imports. '
+        'autoprofile its imports regardless of whether the import targets '
+        'are themselves in `--prof-mod`; '
+        'restrictions from `--prof-star-imports` and `--prof-nested-imports` '
+        'apply. '
         'Only works with line profiling (`-l`/`--line-by-line`). '
         f'(Default: {default.conf_dict["prof_imports"]})',
+    )
+    add_argument(
+        prof_opts,
+        '--prof-star-imports',
+        action='store_true',
+        help='Dynamically analyze the contents of star-imports '
+        '(`from ... import *`) and profile the imported names as '
+        'one would the explicit imports. '
+        'Only works with line profiling (`-l`/`--line-by-line`). '
+        f'(Default: {default.conf_dict["prof_star_imports"]})',
+    )
+    add_argument(
+        prof_opts,
+        '--prof-nested-imports',
+        action='append',
+        metavar="{CONSTRUCT[, ...] | 'all'}",
+        help='List of compound-statement constructs '
+        "(valid values: 'conditionals', 'loops', 'contexts', 'try-except', "
+        "'func-defs', 'class-defs'; "
+        "or 'all' as a shorthand for all of the above) "
+        'in which to look for and profile nested import statements. '
+        'They can be supplied both as comma-separated items, '
+        'or separately with multiple copies of this flag. '
+        'Only works with line profiling (`-l`/`--line-by-line`). '
+        f'(Default: {default.conf_dict["prof_nested_imports"]}; '
+        'pass an empty string to clear the defaults '
+        '(or any `--prof-nested-imports` target specified earlier))',
     )
     out_opts = parser.add_argument_group('output options')
     if default.conf_dict['outfile']:
@@ -754,17 +801,28 @@ def _parse_arguments(
         else:
             return
 
-    # Parse the provided config file (if any), and resolve the values
-    # of the un-specified options
+    # Parse the provided config file (if any), normalize the specified
+    # options, and resolve the values of the un-specified options
     try:
         del options.help
     except AttributeError:
         pass
+    normalizers = {
+        # Note: `prof_mod` entries can be filenames (which can contain
+        # commas), so check against existing filenames before splitting
+        # them
+        'prof_mod': _normalize_profiling_targets,
+        'prof_nested_imports': _normalize_prof_nested_imports,
+    }
     default = get_cli_config('kernprof', options.config)
     options.config = default.path
     for key, default in default.conf_dict.items():
-        if getattr(options, key, None) is None:
+        value = getattr(options, key, None)
+        if value is None:  # Not specified
             setattr(options, key, default)
+        elif key in normalizers:  # Normalize
+            value = normalizers[key](value)
+            setattr(options, key, value)
 
     # Add in the pre-partitioned arguments cut off by `-m <module>` or
     # `-c <script>`
@@ -809,6 +867,41 @@ def _parse_arguments(
         f'Loaded configs from {short_string_path(options.config)!r}'
     )
     return options, tempfile_source_and_content
+
+
+def _normalize_prof_nested_imports(parsed):
+    """
+    Convert the :option:`!--prof-nested-imports` option read from the
+    command line to a set of names that can be passed to the
+    ``profile_nested_imports`` parameter of
+    :py:func:`line_profiler.autoprofile.autoprofile.run`.
+    """
+    from typing import get_args
+    from line_profiler.autoprofile.profmod_extractor import _CompoundStatement
+
+    result = set()
+    valid = list(get_args(_CompoundStatement))
+    invalid = set()
+    for chunk in parsed:
+        if not chunk:
+            result.clear()
+            continue
+        for subchunk in chunk.split(','):
+            normalized = subchunk.strip().lower().replace('-', '_')
+            if normalized in valid:
+                result.add(normalized)
+            elif normalized == 'all':
+                result.update(valid)
+            else:
+                invalid.add(subchunk)
+    if invalid:
+        msg = (
+            '--prof-nested-imports=...: '
+            f'the following options are invalid: {sorted(invalid)!r}; '
+            f'valid option are: {valid + ["all"]!r}'
+        )
+        warnings.warn(msg, stacklevel=2)  # Attribute to caller
+    return result
 
 
 @restore.sequence(sys.argv)
@@ -1186,11 +1279,6 @@ def _pre_profile(options, module, exit_on_error):
 
     # If using eager pre-imports, write a dummy module which contains
     # all those imports and marks them for profiling, then run it
-    if options.prof_mod:
-        # Note: `prof_mod` entries can be filenames (which can contain
-        # commas), so check against existing filenames before splitting
-        # them
-        options.prof_mod = _normalize_profiling_targets(options.prof_mod)
     if not options.prof_mod:
         options.preimports = False
     if options.line_by_line and options.preimports:
@@ -1242,6 +1330,9 @@ def _main_profile(options, module=False, exit_on_error=True):
                 prof_mod=options.prof_mod,
                 profile_imports=options.prof_imports,
                 as_module=module is not None,
+                config=options.config,
+                profile_star_imports=options.prof_star_imports,
+                profile_nested_imports=options.prof_nested_imports,
             )
         else:
             # Note: to reduce complications (e.g. whenever something

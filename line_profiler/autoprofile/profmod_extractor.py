@@ -3,29 +3,251 @@ from __future__ import annotations
 import ast
 import os
 import sys
-from typing import cast
+from collections.abc import Callable, Collection, Mapping, Sequence
+from functools import cached_property
+from typing import TYPE_CHECKING, ClassVar, Literal, cast, get_args
 from warnings import warn
 
+from ..toml_config import ConfigSource
 from .util_static import (
     modname_to_modpath,
     modpath_to_modname,
     package_modpaths,
 )
 from .. import _diagnostics as diagnostics
-from ._import_targets import ImportTarget
+from ._import_targets import _DROPPED_STAR_IMPORTS_MSG_TEMPLATE, ImportTarget
+
+
+# Node types where code blocks can be found
+_CompoundNodeType = Literal[
+    # Basic top-level nodes
+    'Module', 'Interactive',
+    # Function-definition nodes
+    'FunctionDef', 'AsyncFunctionDef',
+    # Class-definition nodes
+    'ClassDef',
+    # Loop nodes
+    'For', 'AsyncFor', 'While',
+    # Conditional nodes
+    'If', 'match_case',
+    # Context nodes
+    'With', 'AsyncWith',
+    # `try-except` nodes
+    'Try', 'TryStar', 'ExceptHandler',
+]
+_CompoundStatement = Literal[
+    'func_defs', 'class_defs',
+    'loops', 'conditionals', 'contexts', 'try_except',
+]
+
+
+class _ImportFinder(ast.NodeVisitor):
+    """
+    Locate all the imports inside an AST, including those nested inside
+    other nodes.
+    """
+    _compound_node_types: ClassVar[set[_CompoundNodeType]] = cast(
+        set[_CompoundNodeType], set(get_args(_CompoundNodeType)),
+    )
+
+    def __init__(
+        self,
+        node_types: Mapping[_CompoundNodeType, bool],
+        found_imports: (
+            dict[tuple[str | int, ...], list[ImportTarget]] | None
+        ) = None,
+    ) -> None:
+        self._current_loc: list[str | int] = []
+        self._should_visit = node_types
+        if found_imports is None:
+            found_imports = {}
+        self.found_imports = found_imports
+
+    @classmethod
+    def find(
+        cls,
+        node: ast.AST,
+        *,
+        collect_from_conditionals: bool | None = None,
+        collect_from_try_except: bool | None = None,
+        collect_from_contexts: bool | None = None,
+        collect_from_loops: bool | None = None,
+        collect_from_func_defs: bool | None = None,
+        collect_from_class_defs: bool | None = None,
+    ) -> dict[tuple[str | int, ...], list[ImportTarget]]:
+        """
+        Parameters:
+            node (ast.AST):
+                AST node
+            collect_from_conditionals (bool | None):
+                Whether to collect imports inside :py:class:`ast.If` and
+                :py:class:`ast.match_case` nodes (and their children).
+            collect_from_try_except (bool | None):
+                Whether to collect imports inside
+                :py:class:`ast.ExceptHandler`, :py:class:`ast.Try`, and
+                :py:class:`ast.TryStar` nodes (and their children).
+            collect_from_contexts (bool | None):
+                Whether to collect imports inside
+                :py:class:`ast.AsyncWith` and :py:class:`ast.With` nodes
+                (and their children).
+            collect_from_loops (bool | None):
+                Whether to collect imports inside
+                :py:class:`ast.AsyncFor`, :py:class:`ast.For`, and
+                :py:class:`ast.While` nodes (and their children).
+            collect_from_func_defs (bool | None):
+                Whether to collect imports inside
+                :py:class:`AsyncFunctionDef` and
+                :py:class:`ast.FunctionDef` nodes (and their children).
+            collect_from_class_defs (bool | None):
+                Whether to collect imports inside
+                :py:class:`ast.ClassDef` nodes (and their children).
+
+        Returns:
+            found_imports \
+(dict[tuple[str | int, ...], list[ImportTarget]]):
+                The import targets and their locations in the AST
+
+        Notes:
+            If a ``collect_from_*`` option is set to :py:const:`None`,
+            the value is taken from the default configs.
+        """
+        default_config = ConfigSource.from_default()
+        filter_kwargs = {
+            'collect_from_conditionals': collect_from_conditionals,
+            'collect_from_try_except': collect_from_try_except,
+            'collect_from_contexts': collect_from_contexts,
+            'collect_from_loops': collect_from_loops,
+            'collect_from_func_defs': collect_from_func_defs,
+            'collect_from_class_defs': collect_from_class_defs,
+        }
+        consolidated_filter_kwargs: dict[str, bool] = {
+            k: v if filter_kwargs[k] is None else cast(bool, filter_kwargs[k])
+            for k, v in cls._get_filter_args(default_config).items()
+        }
+        node_types = cls.filter_node_types(**consolidated_filter_kwargs)
+        visitor = cls(node_types)
+        visitor.visit(node)
+        return visitor.found_imports
+
+    @classmethod
+    def filter_node_types(
+        cls,
+        *,
+        collect_from_conditionals: bool = False,
+        collect_from_try_except: bool = False,
+        collect_from_contexts: bool = False,
+        collect_from_loops: bool = False,
+        collect_from_func_defs: bool = False,
+        collect_from_class_defs: bool = False,
+    ) -> dict[_CompoundNodeType, bool]:
+        """
+        Select the which of the compound node types (i.e. those than can
+        contain nested code blocks, e.g. try-except statements) to
+        visit.
+        """
+        allowed: set[_CompoundNodeType] = {'Module', 'Interactive'}
+        if collect_from_conditionals:
+            allowed.update({'If', 'match_case'})
+        if collect_from_try_except:
+            allowed.update({'Try', 'TryStar', 'ExceptHandler'})
+        if collect_from_contexts:
+            allowed.update({'AsyncWith', 'With'})
+        if collect_from_loops:
+            allowed.update({'AsyncFor', 'For', 'While'})
+        if collect_from_func_defs:
+            allowed.update({'AsyncFunctionDef', 'FunctionDef'})
+        if collect_from_class_defs:
+            allowed.update({'ClassDef'})
+        return {
+            node_type: node_type in allowed
+            for node_type in cls._compound_node_types
+        }
+
+    @staticmethod
+    def _get_filter_args(
+        config: ConfigSource,
+        find_nested_imports: Collection[_CompoundStatement] | None = None,
+    ) -> dict[str, bool]:
+        if find_nested_imports is None:
+            cfg = cast(
+                dict[_CompoundStatement, bool],
+                config
+                .get_subconfig('autoprofile', 'import_discovery')
+                .conf_dict,
+            )
+        else:
+            cfg = {
+                cast(_CompoundStatement, stmt):
+                stmt in find_nested_imports
+                for stmt in get_args(_CompoundStatement)
+            }
+        return {
+            'collect_from_conditionals': cfg['conditionals'],
+            'collect_from_try_except': cfg['try_except'],
+            'collect_from_contexts': cfg['contexts'],
+            'collect_from_loops': cfg['loops'],
+            'collect_from_func_defs': cfg['func_defs'],
+            'collect_from_class_defs': cfg['class_defs'],
+        }
+
+    def generic_visit(self, node: ast.AST) -> None:
+        """
+        For the compound node types, only visit their children if said
+        type is selected via the init args; for other types, visit by
+        default.
+        """
+        node_type = type(node).__name__
+        if not self._should_visit.get(
+            cast(_CompoundNodeType, node_type), True,
+        ):
+            return  # Deselected types
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                self._current_loc.append(field)
+                try:
+                    self.visit(value)
+                finally:
+                    self._current_loc.pop()
+            elif isinstance(value, Sequence):  # Compound node
+                if not all(isinstance(item, ast.AST) for item in value):
+                    continue
+                if TYPE_CHECKING:
+                    value = cast(Sequence[ast.AST], value)
+                self._current_loc.append(field)
+                try:
+                    # Parse import targets
+                    imports = ImportTarget._from_ast_nodes(value)
+                    # Descend into children nodes
+                    if imports:
+                        loc = tuple(self._current_loc)
+                        self.found_imports[loc] = imports
+                    for i, item in enumerate(value):
+                        self._current_loc.append(i)
+                        try:
+                            self.visit(item)
+                        finally:
+                            self._current_loc.pop()
+                finally:
+                    self._current_loc.pop()
 
 
 class ProfmodExtractor:
-    """Map prof_mod to imports in an abstract syntax tree.
-
-    Takes the paths and dotted paths in prod_mod and finds their respective imports in an
-    abstract syntax tree.
     """
-
+    Map ``prof_mod`` to imports in an abstract syntax tree. Takes the
+    paths and dotted paths in ``prof_mod`` and finds their respective
+    imports in an abstract syntax tree.
+    """
     def __init__(
-        self, tree: ast.Module, script_file: str, prof_mod: list[str]
+        self,
+        tree: ast.Module,
+        script_file: str,
+        prof_mod: Sequence[str],
+        *,
+        config: ConfigSource | None = None,
     ) -> None:
-        """Initializes the AST tree profiler instance with the AST, script file path and prof_mod
+        """
+        Initializes the AST tree profiler instance with the AST,
+        script-file path and ``prof_mod``
 
         Args:
             tree (_ast.Module):
@@ -34,14 +256,23 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (list[str]):
-                list of imports to profile in script.
-                passing the path to script will profile the whole script.
-                the objects can be specified using its dotted path or full path (if applicable).
+            prof_mod (Sequence[str]):
+                optional list of imports to profile in script.
+                passing the path to script will profile the whole
+                script.
+                the objects can be specified using its dotted path or
+                full path (if applicable).
+
+            config (ConfigSource | None):
+                optional :py:class:`.ConfigSource` to load additional
+                configurations from.
         """
         self._tree = tree
         self._script_file = script_file
         self._prof_mod = prof_mod
+        if config is None:
+            config = ConfigSource.from_default()
+        self._config = config
 
     @staticmethod
     def _is_path(text: str) -> bool:
@@ -62,7 +293,7 @@ class ProfmodExtractor:
 
     @classmethod
     def _get_modnames_to_profile_from_prof_mod(
-        cls, script_file: str, prof_mod: list[str]
+        cls, script_file: str, prof_mod: Sequence[str]
     ) -> list[str]:
         """Grab the valid paths and all dotted paths in prof_mod and their subpackages
         and submodules, in the form of dotted paths.
@@ -81,7 +312,7 @@ class ProfmodExtractor:
             script_file (str):
                 path to script being profiled.
 
-            prof_mod (list[str]):
+            prof_mod (Sequence[str]):
                 list of imports to profile in script.
                 passing the path to script will profile the whole script.
                 the objects can be specified using its dotted path or full path (if applicable).
@@ -143,30 +374,19 @@ class ProfmodExtractor:
 
     @staticmethod
     def _ast_get_imports_from_tree(
-        tree: ast.Module,
+        node: ast.AST,
+        config: ConfigSource | None = None,
+        find_nested_imports: Collection[_CompoundStatement] | None = None,
     ) -> dict[tuple[str | int, ...], list[ImportTarget]]:
-        """Get all top-level imports in an abstract syntax tree.
-
-        Args:
-            tree (_ast.Module):
-                abstract syntax tree to fetch imports from.
-
-        Returns:
-            import_targets (dict[tuple[str | int, ...], list[ImportTarget]])
-
-        Note:
-            Imports nested in e.g. try-except or if statements are not
-            currently returned.
-
-        See also:
-            :py:meth:`.ImportTarget._from_ast_nodes`
-        """
-        # TODO: descend into bodied statements (e.g. try-except)
-        return {('body',): ImportTarget._from_ast_nodes(tree.body)}
+        if config is None:
+            config = ConfigSource.from_default()
+        kwargs = _ImportFinder._get_filter_args(config, find_nested_imports)
+        return _ImportFinder.find(node, **kwargs)
 
     @staticmethod
     def _find_modnames_in_tree_imports(
-        modnames_to_profile: list[str], import_targets: list[ImportTarget],
+        modnames_to_profile: Collection[str],
+        import_targets: Sequence[ImportTarget],
     ) -> dict[int, list[ImportTarget]]:
         """Map modnames to imports from an abstract sytax tree.
 
@@ -179,10 +399,10 @@ class ProfmodExtractor:
         The import's alias is stored in the output dict.
 
         Args:
-            modnames_to_profile (list[str]):
+            modnames_to_profile (Collection[str]):
                 list of dotted paths to profile.
 
-            import_targets (list[ImportTarget]):
+            import_targets (Sequence[ImportTarget]):
                 list of all import targets in the tree
 
         Returns:
@@ -199,12 +419,12 @@ class ProfmodExtractor:
             modname = import_target.name
             if modname in modname_added_list:
                 continue
-            # Check if either the parent module or submodule are in
-            # `modnames_to_profile`
-            if (
-                modname not in modnames_to_profile
-                and modname.rsplit('.', 1)[0] not in modnames_to_profile
-            ):
+            should_profile: Callable[[Collection[str], str], bool]
+            if modname.endswith('.*'):
+                should_profile = _should_profile_star_import
+            else:
+                should_profile = _should_profile_regular_import
+            if not should_profile(modnames_to_profile, modname):
                 continue
             modname_added_list.append(modname)
             try:
@@ -213,12 +433,32 @@ class ProfmodExtractor:
                 filtered_imports[import_target.index] = [import_target]
         return filtered_imports
 
-    def extract_all(self) -> dict[tuple[str | int, ...], list[ImportTarget]]:
+    def extract_all(
+        self,
+        *,
+        filter_star_imports: bool | None = None,
+        find_nested_imports: Collection[_CompoundStatement] | None = None,
+    ) -> dict[tuple[str | int, ...], list[ImportTarget]]:
         """
         Map ``prof_mod`` to imports in an abstract syntax tree.
         Takes the paths and dotted paths in ``prof_mod`` and finds their
         respective imports in an abstract syntax tree, returning their
         aliases and the location they appear in the AST.
+
+        Args:
+            filter_star_imports (bool | None):
+                If true, filter out star imports
+                (``from <module> import *``) with a warning;
+                if :py:const:`None`, it is loaded from the ``config``
+                (as the negation of ``autoprofile.prof_star_imports``).
+
+            find_nested_imports \
+(Collection[Literal['func_defs', 'class_defs', \
+'loops', 'conditionals', 'contexts', 'try_except']] | None):
+                Which of the compound-statement types to look for nested
+                imports in;
+                if :py:const:`None`, it is loaded from the ``config``
+                (from ``autoprofile.import_discovery``).
 
         Returns:
             tree_imports_to_profile_dict \
@@ -247,30 +487,24 @@ class ProfmodExtractor:
                             Name under which the import is inserted into
                             the namespace (should never be
                             :py:const`None` for non-star-imports)
-
-        Notes:
-            - As of now, ``from <module> import *`` is not supported,
-              and will result in a :py:class:`UserWarning`.
-
-            - Nested imports (e.g. imports in try-except/if blocks) are
-              not currently retrieved.
         """
-        modnames_to_profile = self._get_modnames_to_profile_from_prof_mod(
-            self._script_file, self._prof_mod
+        if filter_star_imports is None:
+            filter_star_imports = not _should_profile_star_imports(
+                self._config,
+            )
+        import_targets = self._ast_get_imports_from_tree(
+            self._tree, self._config, find_nested_imports,
         )
-        import_targets = self._ast_get_imports_from_tree(self._tree)
         raw: dict[tuple[str | int, ...], list[ImportTarget]] = {
             (*loc, index): filtered_imports
             for loc, imports in import_targets.items()
             for index, filtered_imports in self._find_modnames_in_tree_imports(
-                modnames_to_profile, imports
+                self._modnames_to_profile, imports,
             ).items()
         }
         filtered: dict[tuple[str | int, ...], list[ImportTarget]] = {}
         star_imports: set[ImportTarget] = set()
         for loc, imports in raw.items():
-            # TODO: runtime introspection of imports to handle
-            # star-imports
             # Notes:
             # - We don't issue the warning in
             #   `._find_modnames_in_tree_imports()` because that is a
@@ -282,20 +516,23 @@ class ProfmodExtractor:
             #   which would be the sole target thereof (so
             #   `indices_to_drop` should either be `[]` or `[0]`);
             #   but it doesn't hurt to be cautious
-            indices_to_drop = [
-                i for i, imp in enumerate(imports)
-                if imp.resolved_name is None  # Star-imports
-            ]
-            for i in reversed(indices_to_drop):
-                imp = imports.pop(i)
-                star_imports.add(imp)
+            if filter_star_imports:
+                indices_to_drop = [
+                    i for i, imp in enumerate(imports)
+                    if imp.resolved_name is None  # Star-imports
+                ]
+                for i in reversed(indices_to_drop):
+                    star_imports.add(imports.pop(i))
             if imports:
                 filtered[loc] = imports
         ImportTarget._check_and_warn_dropped_imports(
             star_imports,
-            "we don't currently handle `from ... import *` statements",
+            _DROPPED_STAR_IMPORTS_MSG_TEMPLATE.format(
+                action='extracted',
+                argname='filter_star_imports',
+            ),
             self._script_file,
-            stacklevel=2,  # Attribute warning to caller
+            stacklevel=2,  # Attribute warning to the caller
         )
         return filtered
 
@@ -363,3 +600,44 @@ class ProfmodExtractor:
             stacklevel=2,  # Attribute warning to caller
         )
         return result
+
+    @cached_property
+    def _modnames_to_profile(self) -> frozenset[str]:
+        return frozenset(self._get_modnames_to_profile_from_prof_mod(
+            self._script_file, self._prof_mod,
+        ))
+
+
+def _should_profile_regular_import(
+    targets: Collection[str], modname: str,
+) -> bool:
+    """
+    Check if either the parent module or submodule are in
+    ``targets``
+    """
+    names = {modname, modname.rsplit('.', 1)[0]}
+    return bool(names.intersection(targets))
+
+
+def _should_profile_star_import(
+    targets: Collection[str], star_modname: str,
+) -> bool:
+    """
+    Check if ``star_modname`` (should end in '.*') would match any of
+    ``targets`` (should they actually exist)
+    """
+    assert star_modname.endswith('.*')
+    modname = star_modname[:-2]
+    if modname in targets:
+        return True
+    return any(
+        target.rpartition('.')[0] == modname
+        for target in targets if '.' in target
+    )
+
+
+def _should_profile_star_imports(config: ConfigSource | None) -> bool:
+    if config is None:
+        config = ConfigSource.from_default()
+    kvps = config.get_subconfig('autoprofile').conf_dict
+    return bool(kvps['prof_star_imports'])

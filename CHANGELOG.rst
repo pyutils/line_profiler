@@ -18,6 +18,11 @@ Changes
   targets if multiple thereof are imported in the same (from-)import
   statement, and (2) crashes when profiling modules containing
   ``from ... import *`` statements (#434)
+* ENH: Better on-import (i.e. ``--no-preimports``) profiling: (1)
+  improved consistency and granularity for profiling import statements
+  nested inside various compound-statement constructs
+  (``--prof-nested-imports=...``); (2) added option to profile targets
+  imported via ``from ... import *`` (``--prof-star-imports``)
 
 
 5.0.2

@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import contextlib
 import os
 import re
+import shlex
 import subprocess
 import sys
-import shlex
+import textwrap
 import tempfile
-from collections.abc import Collection, Sequence
-from typing import Any, ClassVar, Literal
+import uuid
+from collections.abc import Collection, Generator, Sequence
+from types import CodeType
+from typing import Any, Literal, get_args
 from warnings import catch_warnings, WarningMessage
 
 import pytest
 import ubelt as ub
+from line_profiler.toml_config import ConfigSource
+from line_profiler.autoprofile.ast_profile_transformer import (
+    AstProfileTransformer,
+)
 from line_profiler.autoprofile.ast_tree_profiler import AstTreeProfiler
+from line_profiler.autoprofile.line_profiler_utils import add_star_import
 from line_profiler.autoprofile.profmod_extractor import ProfmodExtractor
+from line_profiler.line_profiler import LineStats
 
 
 def test_single_function_autoprofile():
@@ -1208,6 +1218,308 @@ def test_autoprofile_callable_wrapper_objects(prof_mod, profiled_funcs):
 
 
 @pytest.mark.parametrize(
+    ('prof_mod', 'prof_imports',
+     'expected_profiled_funcs', 'expected_output', 'expect_warning',
+     'script_args'),
+    [
+        # When no `--prof-mod` targets are supplied, the imported module
+        # is profiled iff `--prof-imports` and `--prof-star-imports`,
+        # and the profiling hook is inserted by `AstProfileTransformer`
+        ([], True, ['make_unnumbered_list', 'make_numbered_list'],
+         '* 1\n* 2\n* 3', True, ['1', '2', '3']),
+        ([], False, [], '* 1\n* 2\n* 3', False, ['1', '2', '3']),
+        # With an appropriate `--prof-mod`, the target is profiled if
+        # `--prof-star-imports`; the profiling hook is inserted by
+        # `AstTreeProfiler` using `ProfmodExtractor.extract_all()`
+        (['__module__.make_numbered_list', '__module__.bad_target'], False,
+         ['make_numbered_list'], '1. a\n2. b\n3. c', True,
+         ['-n', 'a', 'b', 'c']),
+        (['__module__', 'bad_module'], False,
+         ['make_unnumbered_list', 'make_numbered_list'],
+         '1. a\n2. b\n3. c', True, ['-n', 'a', 'b', 'c']),
+        (['bad_module'], False, [],
+         '1. a\n2. b\n3. c', False, ['-n', 'a', 'b', 'c']),
+    ])
+def test_autoprofile_star_imports(
+    prof_mod: Sequence[str],
+    prof_imports: bool,
+    expected_profiled_funcs: Collection[
+        Literal['make_unnumbered_list', 'make_numbered_list']
+    ],
+    expected_output: str,
+    expect_warning: bool,
+    script_args: Sequence[str],
+) -> None:
+    """
+    Test that the ``--prof-star-imports`` CLI flag in :py:mod:`kernprof`
+    works as intended.
+    """
+    module_name = next(_propose_module_names())
+    imported_module = ub.codeblock(r"""
+    from __future__ import annotations
+
+    from collections.abc import Sequence
+    from textwrap import indent
+    from typing import Any
+
+
+    __all__ = ('make_unnumbered_list', 'make_numbered_list')
+
+
+    def make_unnumbered_list(items: Sequence[Any], bullet: str = '*') -> str:
+        return indent('\n'.join(str(item) for item in items), bullet + ' ')
+
+
+    def make_numbered_list(items: Sequence[Any]) -> str:
+        width = len(str(len(items)))
+        return '\n'.join(
+            f'{index:>{width}}. {item}' for index, item in enumerate(items, 1)
+        )
+    """).strip('\n')
+    test_code = ub.codeblock(f"""
+    from __future__ import annotations
+
+    from argparse import ArgumentParser
+    from collections.abc import Callable, Sequence
+    from typing import Any
+
+    from {module_name} import *
+
+
+    def main(args: Sequence[str] | None = None) -> None:
+        parser = ArgumentParser()
+        parser.add_argument('-n', '--numbered', action='store_true')
+        parser.add_argument('args', nargs='+')
+        arguments = parser.parse_args(args)
+        if arguments.numbered:
+            func: Callable[[Sequence[Any]], str] = make_numbered_list
+        else:
+            func = make_unnumbered_list
+        print(func(arguments.args))
+
+
+    if __name__ == '__main__':
+        main()
+    """).strip('\n')
+
+    cmd = [sys.executable, '-m', 'kernprof']
+    kernprof_options = ['-lzv', '--no-preimports']
+    script_options = ['-c', test_code, *script_args]
+    if prof_imports:
+        kernprof_options.append('--prof-imports')
+    if prof_mod:
+        prof_mod = [
+            target.replace('__module__', module_name) for target in prof_mod
+        ]
+        kernprof_options.extend(['--prof-mod', ','.join(prof_mod)])
+
+    with contextlib.ExitStack() as stack:
+        tmp = ub.Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        python_path = tmp / 'python-path'
+        python_path.mkdir()
+        (python_path / (module_name + '.py')).write_text(imported_module)
+        stats_path = tmp / 'out.lprof'
+
+        kernprof_options.extend(['--outfile', str(stats_path)])
+
+        mp = stack.enter_context(pytest.MonkeyPatch.context())
+        mp.setenv('PYTHONPATH', str(python_path), prepend=os.pathsep)
+
+        # For convenience, instead of using parametrization for the
+        # presence of the `--prof-star-imports` flag, just test both
+        # cases in a loop;
+        # the supplied `expected_profiled_funcs` is an upper bound, and
+        # those two functions are never profiled if the option is false
+        for prof_star_imports, expected_funcs in [
+            (True, expected_profiled_funcs), (False, []),
+        ]:
+            kp_options = kernprof_options.copy()
+            if prof_star_imports:
+                kp_options.append('--prof-star-imports')
+            else:
+                kp_options.append('--no-prof-star-imports')
+            proc = ub.cmd(
+                cmd + kp_options + script_options, check=True, verbose=2,
+            )
+            assert isinstance(proc.stdout, str)
+            assert expected_output in proc.stdout
+            # `-c` code always profiled
+            assert 'def main' in proc.stdout
+
+            if not prof_star_imports:  # Warning may be issued
+                streams = [proc.stdout]
+                if isinstance(proc.stderr, str):
+                    streams.append(proc.stderr)
+
+                warning = (
+                    'UserWarning:.* 1 .* target.* dropped.* '
+                    r'star-imports .*\bnot profiled'
+                )
+                assert (
+                    any(re.search(warning, stream) for stream in streams)
+                    == expect_warning
+                )
+
+            assert stats_path.exists()
+            stats = LineStats.from_files(stats_path)
+            stats_path.unlink()
+
+            func_names = {func for *_, func in stats.timings}
+            for func in 'make_unnumbered_list', 'make_numbered_list':
+                assert (func in func_names) == (func in expected_funcs)
+
+
+@pytest.mark.parametrize(
+    ('expected_output', 'script_args'),
+    [('foo.jam.qux = True', ['foo', 'jam', 'qux'])])
+@pytest.mark.parametrize(
+    ('prof_mod', 'prof_imports', 'prof_nested_imports',
+     'expected_profiled_funcs', 'expect_warning'),
+    [
+        # By default, we profile imports as long as they aren't inside
+        # function definitions or loops
+        ([], True, [], ['loads', 'parse_args'], None),
+        ([], True, ['all'], ['loads', 'parse_args', 'dedent'], None),
+        # As with `--prof-mod`, `--prof-nested-imports` defaults (and
+        # previously-specified values) can be invalidated by passing an
+        # empty string
+        ([], True, [''], [], None),
+        ([], True, ['func-defs', ''], [], None),
+        # Check that we're warning against bad values
+        ([], True, ['', 'bad-value'], [], r"\binvalid\b.* \['bad-value'\]"),
+        # Also test cases where we use a combination of `--prof-mod`
+        # and `--prof-nested-imports` to narrow down the profiled funcs
+        (['argparse.ArgumentParser', 'textwrap.dedent'], False,
+         [], ['parse_args'], None),
+        (['argparse.ArgumentParser', 'textwrap.dedent'], False,
+         ['all'], ['parse_args', 'dedent'], None),
+        (['argparse.ArgumentParser', 'textwrap.dedent'], False,
+         ['try-except'], [], None),
+    ])
+def test_autoprofile_nested_imports(
+    prof_mod: Sequence[str],
+    prof_imports: bool,
+    prof_nested_imports: Sequence[str],
+    expected_profiled_funcs: Collection[
+        Literal['loads', 'parse_args', 'dedent']
+    ],
+    expected_output: str,
+    expect_warning: str | None,
+    script_args: Sequence[str],
+) -> None:
+    """
+    Test that the ``--prof-nested-imports`` CLI flag in
+    :py:mod:`kernprof` works as intended.
+    """
+    sample_toml = r"""
+    [foo]
+    spam = 1
+    ham = [1, 2, 3]
+
+    [foo.eggs]
+    foobar = 'some string'
+    baz = 'some other string'
+
+    [foo.jam]
+    qux = true
+
+    [bar]
+    foobar = []
+    """
+    test_code_template = ub.codeblock("""
+    from __future__ import annotations
+
+    try:
+        from tomllib import loads as load_toml
+    except ImportError:  # Python < 3.11
+        from tomli import loads as load_toml
+
+    if True:
+        from argparse import ArgumentParser
+        from collections.abc import Callable, Sequence
+
+
+    def main(args: Sequence[str] | None = None) -> None:
+        from textwrap import dedent
+
+        with open({}) as fobj:
+            text = dedent(fobj.read())
+
+        data = load_toml(text)
+
+        parser = ArgumentParser()
+        parser.add_argument('keys', nargs='*')
+        keys = parser.parse_args(args).keys
+
+        for key in keys:
+            data = data[key]
+        print('.'.join(keys), '=', data)
+
+
+    if __name__ == '__main__':
+        main()
+    """).strip('\n')
+
+    cmd = [sys.executable, '-m', 'kernprof']
+    kernprof_options = ['-lzv', '--no-preimports']
+    if prof_imports:
+        kernprof_options.append('--prof-imports')
+    if prof_mod:
+        kernprof_options.extend(['--prof-mod', ','.join(prof_mod)])
+    for pni in prof_nested_imports:
+        kernprof_options.extend(['--prof-nested-imports', pni])
+
+    func_aliases: dict[str, str] = {}
+    if hasattr(CodeType, 'co_qualname'):
+        # Since Python 3.11 we use the qualname of the function in
+        # outputs
+        func_aliases['parse_args'] = 'ArgumentParser.parse_args'
+
+    with tempfile.TemporaryDirectory() as tmp_:
+        tmp = ub.Path(tmp_)
+        toml_path = tmp / 'data.toml'
+        stats_path = tmp / 'out.lprof'
+        toml_path.write_text(sample_toml)
+
+        kernprof_options.extend(['--outfile', str(stats_path)])
+        script_options = [
+            '-c', test_code_template.format(repr(str(toml_path))),
+            *script_args
+        ]
+
+        proc = ub.cmd(
+            cmd + kernprof_options + script_options, check=True, verbose=2,
+        )
+        assert isinstance(proc.stdout, str)
+        assert expected_output in proc.stdout
+        # `-c` code always profiled
+        assert 'def main' in proc.stdout
+
+        streams = [proc.stdout]
+        if isinstance(proc.stderr, str):
+            streams.append(proc.stderr)
+        warning = 'UserWarning:.*--prof-nested-imports'
+        if expect_warning is None:
+            assert not any(re.search(warning, stream) for stream in streams)
+        else:
+            warning = f'{warning}.*{expect_warning}'
+            assert any(re.search(warning, stream) for stream in streams)
+
+        assert stats_path.exists()
+        stats = LineStats.from_files(stats_path)
+        stats_path.unlink()
+
+        func_names = {func for *_, func in stats.timings}
+        for func in [
+            'loads',  # In a try-except block
+            'parse_args',  # In an if block
+            'dedent',  # In a function def (not profiled by default)
+        ]:
+            profiled = func_aliases.get(func, func) in func_names
+            assert profiled == (func in expected_profiled_funcs)
+
+
+@pytest.mark.parametrize(
     ('prof_mod', 'prof_os', 'prof_minidom', 'prof_pulldom',
      'prof_elem', 'prof_etree', 'prof_parser'),
     # Trivial cases
@@ -1422,6 +1734,21 @@ def _check_warnings(
             )
 
 
+class _RecordingProfiler:
+    """
+    Mock :py:class:`line_profiler.LineProfiler` object.
+    """
+    def __init__(self) -> None:
+        self.profiled_objects: list[Any] = []
+
+    def __call__(self, x: Any) -> Any:
+        return x
+
+    def add_imported_function_or_module(self, obj) -> Literal[1]:
+        self.profiled_objects.append(obj)
+        return 1
+
+
 def test_multitarget_import_transformation_executes() -> None:
     """
     Test the runtime behavior of the transformed AST, including:
@@ -1436,22 +1763,13 @@ def test_multitarget_import_transformation_executes() -> None:
     """
     from xml.etree.ElementTree import Element, dump, XMLParser
 
-    class RecordingProfiler:
-        """
-        Mock :py:class:`line_profiler.LineProfiler` object.
-        """
-        @classmethod
-        def add_imported_function_or_module(cls, obj) -> None:
-            cls.profiled_objects.append(obj)
-
-        profiled_objects: ClassVar[list[Any]] = []
-
     input_module = ub.codeblock("""
         import os, sys as system
         from xml.etree.ElementTree import (  # `xml_dump` not profiled
             Element, dump as xml_dump, XMLParser as Parser,
         )
     """)
+    mock_prof = _RecordingProfiler()
     with tempfile.TemporaryDirectory() as tmp:
         fpath = ub.Path(tmp) / 'script.py'
         fpath.write_text(input_module)
@@ -1465,11 +1783,11 @@ def test_multitarget_import_transformation_executes() -> None:
             ],
             False,
         ).profile()
-        namespace = {'profile': RecordingProfiler()}
+        namespace = {'profile': mock_prof}
         code = compile(module_ast, str(fpath), 'exec')
         exec(code, namespace)
 
-    assert RecordingProfiler.profiled_objects == [
+    assert mock_prof.profiled_objects == [
         os,
         sys,
         Element,
@@ -1483,6 +1801,58 @@ def test_multitarget_import_transformation_executes() -> None:
     assert namespace['Parser'] is XMLParser
 
 
+_ImportDiscoveryOption = Literal[
+    'conditionals', 'try_except', 'contexts', 'loops',
+    'func_defs', 'class_defs',
+]
+_CompoundStatement = Literal[
+    'function-def',
+    'async-function-def',  # 3.5+
+    'class-def',
+    'for-else',
+    'async-for-else',  # 3.5+
+    'while-else',
+    'if-elif-else',
+    'match-case',  # 3.10+
+    'with',
+    'async-with',  # 3.5+
+    'try-except-else-finally',
+    'try-except*-else-finally',  # 3.11+
+]
+
+
+def _get_toml_import_discovery_section(
+    options: set[_ImportDiscoveryOption] | None = None,
+) -> str:
+    all_options = set(get_args(_ImportDiscoveryOption))
+    if options is None:
+        options = all_options
+    config_file_lines = ['[tool.line_profiler.autoprofile.import_discovery]']
+    for option in all_options:
+        line = f'{option} = {str(option in options).lower()}'
+        config_file_lines.append(line)
+    return '\n'.join(config_file_lines)
+
+
+def _grep_profiled_names(module_text: str) -> list[str]:
+    prof_pattern = (
+        r'\badd_imported_function_or_module\((\w+(?:\.\w+)*)\)'
+    )
+    return re.findall(prof_pattern, module_text)
+
+
+def _propose_module_names(
+    prefix: str = 'my_module',
+) -> Generator[str, None, None]:
+    while True:
+        random = str(uuid.uuid4()).replace('-', '_')
+        name = f'{prefix}_{random}'
+        if not name.isidentifier():
+            continue
+        if name not in sys.modules:
+            yield name
+
+
 @pytest.mark.parametrize(
     ('prof_mod', 'expected_targets', 'profile_imports', 'profile_whole_file',
      'expect_warnings'),
@@ -1493,7 +1863,7 @@ def test_multitarget_import_transformation_executes() -> None:
      # No whole-file rewriting, bu we explicitly ask to profile the
      # `spam.ham.*` import (which can't be done)
      (['spam.ham'], [], False, False, True)])
-def test_handle_star_imports(
+def test_drop_and_warn_against_star_imports(
     prof_mod: list[str],
     expected_targets: Collection[Literal['bar', 'baz']],
     profile_imports: bool,
@@ -1501,11 +1871,9 @@ def test_handle_star_imports(
     expect_warnings: bool,
 ) -> None:
     """
-    Test that star-imports (``from ... import *``) don't cause
-    :py:meth:`AstTreeProfiler.profile` to choke, instead just issuing
-    warnings about ignoring them.
-
-    TODO: actually handle star-imports
+    Test the default behavior of :py:meth:`AstTreeProfiler.profile`:
+    that star-imports (``from ... import *``) don't cause it to choke,
+    instead just issuing warnings about ignoring them.
     """
     code = ub.codeblock(
         """
@@ -1550,3 +1918,612 @@ def test_handle_star_imports(
     output_module = ast.unparse(module_ast)
     for pattern, expected in re_checks:
         assert bool(re.search(pattern, output_module)) == expected
+
+
+@pytest.mark.parametrize(
+    ('prof_mod', 'expected', 'options'),
+    [(['qux', 'quux'], {'qux.jam', 'spam', 'ham', 'eggs'}, {'conditionals'}),
+     (['os', 'qux'], {'qux.jam'}, {'conditionals'}),
+     (['os', 'qux'], {'fork', 'register_at_fork'}, {'try_except'}),
+     (['foobar'], {'baz'}, {'try_except', 'contexts'}),
+     (['ersatz_foobar.my_baz'], {'baz'}, {'try_except', 'contexts'}),
+     (['os.fork', 'foobar.bar'], {'fork'}, {'try_except', 'contexts'}),
+     (['backup_fred', 'operator'], {'methodcaller', 'setitem'},
+      {'func_defs'}),
+     (['backup_fred', 'operator'], {'__getattr__'},
+      {'class_defs'}),
+     (['backup_fred', 'operator'], {'fred'}, {'loops'})])
+def test_nested_import_discovery(
+    prof_mod: list[str],
+    expected: set[str],
+    options: set[_ImportDiscoveryOption],
+) -> None:
+    """
+    Check the source code transformed by :py:class:`.AstTreeProfiler` to
+    see if the import-discovery selection options in the TOML file
+    (``[tool.line_profiler.autoprofile.import_discovery]``) are handled
+    correctly in a real-ish script, with some of the compound statements
+    hosting the import statements nested inside other coumpound
+    statements.
+    """
+    test_module = ub.codeblock("""
+    from collections.abc import Generator, Iterable, Mapping
+    from contextlib import contextmanager
+    from functools import partial
+    from importlib import import_module
+    from sys import path, version_info
+    from typing import Any
+
+    notify_fork = partial(print, 'Forking...')
+    try:
+        from os import fork
+    except Exception:  # Windows
+        pass
+    else:
+        from os import register_at_fork
+
+        register_at_fork(before=notify_fork)
+
+    import foo, bar
+
+    if version_info > (3, 14):
+        import qux.jam
+        from quux import spam, ham, eggs
+    else:
+        qux = ham = spam = eggs = None
+
+
+    @contextmanager
+    def _restore_sys_path() -> Generator[None, None, None]:
+        from operator import methodcaller, setitem
+
+        old = methodcaller('copy')(path)
+        try:
+            yield
+        finally:
+            setitem(path, slice(None), old)
+
+
+    class MyMapping(Mapping[str, Any]):
+        from operator import getitem as __getattr__
+
+        def __getitem__(self, key: str) -> Any:
+            ...
+
+        def __iter__(self) -> Iterable[str]:
+            ...
+
+        def __len__(self) -> int:
+            ...
+
+
+    with _restore_sys_path():
+        try:
+            from foobar import baz
+        except ImportError:
+            from ersatz_foobar import my_baz as baz
+
+    for _fred in 'fred', 'some_fred', 'other_fred':
+        try:
+            fred = import_module(_fred)
+        except ImportError:
+            continue
+        else:
+            del _fred
+            break
+    else:  # Fallback
+        import backup_fred as fred
+    """).strip('\n')
+
+    with tempfile.TemporaryDirectory() as tmp:
+        mod_fname = os.path.join(tmp, 'test_module.py')
+        with open(mod_fname, 'w') as fobj:
+            print(test_module, file=fobj)
+
+        cfg_fname = os.path.join(tmp, 'config.toml')
+        with open(cfg_fname, 'w') as fobj:
+            print(_get_toml_import_discovery_section(options), file=fobj)
+
+        config = ConfigSource.from_config(cfg_fname)
+        atp = AstTreeProfiler(mod_fname, prof_mod, False, config=config)
+        output_module = ast.unparse(atp.profile())
+
+    for label, module_text in [
+        ('input', test_module), ('output', output_module),
+    ]:
+        print(f'{label.capitalize()}:\n{textwrap.indent(module_text, "  ")}\n')
+
+    assert set(_grep_profiled_names(output_module)) == expected
+
+
+@pytest.mark.parametrize('inject_options_with', ['config', 'args'])
+@pytest.mark.parametrize('use_component',
+                         ['ast_tree_profiler', 'ast_profile_transformer'])
+@pytest.mark.parametrize(
+    ('compound_statement', 'options', 'should_be_profiled'),
+    [('function-def', set(), False),
+     ('function-def', {'func_defs'}, True),
+     ('async-function-def', set(), False),
+     ('async-function-def', {'func_defs'}, True),
+     ('class-def', set(), False),
+     ('class-def', {'class_defs'}, True),
+     ('for-else', set(), False),
+     ('for-else', {'loops'}, True),
+     ('async-for-else', {'func_defs'}, False),
+     ('async-for-else', {'func_defs', 'loops'}, True),
+     ('while-else', set(), False),
+     ('while-else', {'loops'}, True),
+     ('if-elif-else', set(), False),
+     ('if-elif-else', {'conditionals'}, True),
+     ('match-case', set(), False),
+     ('match-case', {'conditionals'}, True),
+     ('with', set(), False),
+     ('with', {'contexts'}, True),
+     ('async-with', {'func_defs'}, False),
+     ('async-with', {'func_defs', 'contexts'}, True),
+     ('try-except-else-finally', set(), False),
+     ('try-except-else-finally', {'try_except'}, True),
+     ('try-except*-else-finally', set(), False),
+     ('try-except*-else-finally', {'try_except'}, True)])
+def test_import_discovery_in_all_compound_statements(
+    compound_statement: _CompoundStatement,
+    options: set[_ImportDiscoveryOption],
+    use_component: Literal['ast_tree_profiler', 'ast_profile_transformer'],
+    inject_options_with: Literal['config', 'args'],
+    should_be_profiled: bool,
+) -> None:
+    """
+    Exhaustive "unit" test for imports nested in all the kwown
+    compound-statement language constructions, and all their respective
+    config-level switches.
+
+    Notes:
+        - If a construction is not valid in the current Python version,
+          the subtest is skipped.
+
+        - Some ``async`` constructions are nested inside a coroutine
+          definition by necessity.
+    """
+    test_cases = {
+        'function-def': """
+        def func():
+            import foo, bar
+            import baz
+            import foobar
+
+            ...
+        """,
+        'async-function-def': """
+        async def coroutine(awaitable):
+            import foo
+            import bar
+            import baz, foobar
+
+            await awaitable
+        """,
+        'class-def': """
+        class Class:
+            import foo
+            import bar, baz
+            import foobar
+
+            ...
+        """,
+        'for-else': """
+        for _ in range(5):
+            import foo
+            import bar
+
+            ...
+        else:
+            import baz
+            import foobar
+
+            ...
+        """,
+        'async-for-else': """
+        async def agen(awaitable):
+            async for x in (await awaitable):
+                import foo, bar
+
+                yield x
+            else:
+                import baz, foobar
+                ...
+        """,
+        'while-else': """
+        while True:
+            import foo, bar, baz
+            ...
+        else:
+            import foobar
+        """,
+        'if-elif-else': """
+        if True:
+            import foo
+        elif False:
+            import bar, baz
+        else:
+            import foobar
+        """,
+        'match-case': """
+        match [1, 2, 3]:
+            case [1, *a, 2]:
+                import foo
+                ...
+            case [1, 2, 3, b]:
+                import bar
+                ...
+            case [1, *c]:
+                import baz
+                ...
+            case _:
+                import foobar
+        """,
+        'with': """
+        with ctx:
+            import foo, bar, baz, foobar
+            ...
+        """,
+        'async-with': """
+        async def afunc():
+            async with actx:
+                import foo
+                import bar, baz, foobar
+                ...
+        """,
+        'try-except-else-finally': """
+        try:
+            import foo
+        except ImportError:
+            import bar
+        else:
+            import baz
+        finally:
+            import foobar
+        """,
+    }
+    test_cases['try-except*-else-finally'] = (
+        test_cases['try-except-else-finally'].replace('except', 'except*')
+    )
+    version_bounds = {
+        'async-function-def': (3, 5),
+        'async-def': (3, 5),
+        'async-for-else': (3, 5),
+        'async-with': (3, 5),
+        'match-case': (3, 10),
+        'try-except*-else-finally': (3, 11),
+    }
+    all_names = {'foo', 'bar', 'baz', 'foobar'}
+
+    test_case = ub.codeblock(test_cases[compound_statement]).strip('\n')
+    version_bound: tuple[int, ...] = version_bounds.get(compound_statement, ())
+    if sys.version_info < version_bound:
+        version = '.'.join(str(v) for v in sys.version_info[:3])
+        pytest.skip(reason=f'cannot test {compound_statement} on {version}')
+
+    with tempfile.TemporaryDirectory() as tmp:
+        case_fname = os.path.join(tmp, 'test_case.py')
+        with open(case_fname, 'w') as fobj:
+            print(test_case, file=fobj)
+
+        if inject_options_with == 'config':
+            cfg_fname = os.path.join(tmp, 'config.toml')
+            with open(cfg_fname, 'w') as fobj:
+                print(_get_toml_import_discovery_section(options), file=fobj)
+
+            config: ConfigSource | None
+            profile_nested_imports: Collection[_ImportDiscoveryOption] | None
+
+            config = ConfigSource.from_config(cfg_fname)
+            profile_nested_imports = None
+        else:  # Explicitly passed via args
+            config, profile_nested_imports = None, options
+
+        if use_component == 'ast_tree_profiler':
+            atp = AstTreeProfiler(
+                # `profile_imports=False` prevents
+                # `AstProfileTransformer` from rewriting the imports, so
+                # we're really testing `ProfmodExtractor` here
+                case_fname, list(all_names), False,
+                config=config,
+            )
+            module_ast = atp.profile(
+                profile_nested_imports=profile_nested_imports,
+            )
+        else:
+            module_ast = AstProfileTransformer._transform(
+                ast.parse(test_case),
+                case_fname,
+                profile_imports=True,
+                config=config,
+                profile_nested_imports=profile_nested_imports,
+            )
+        output = ast.unparse(module_ast)
+
+    for label, module_text in [
+        ('input', test_case), ('output', output),
+    ]:
+        print(f'{label.capitalize()}:\n{textwrap.indent(module_text, "  ")}\n')
+
+    expected = all_names if should_be_profiled else set()
+    assert set(_grep_profiled_names(output)) == expected
+
+
+@pytest.mark.parametrize(
+    ('call', 'use_component', 'expected_profiled_objects'),
+    [
+        # Nothing special happens when calling `first()` and `second()`,
+        # there's only a single import target (`textwrap.indent`) inside
+        # the function
+        ('first', 'profmod_extractor', ['indent']),
+        ('first', 'ast_tree_profiler', ['indent']),
+        ('first', 'ast_profile_transformer', ['indent']),
+        ('second', 'profmod_extractor', ['indent']),
+        ('second', 'ast_tree_profiler', ['indent']),
+        ('second', 'ast_profile_transformer', ['indent']),
+        # With `third()`, because `textwrap.dedent()` is also imported:
+        ('third', 'profmod_extractor', ['indent']),
+        # - When using `AstTreeProfiler`, `ProfmodExtractor` first
+        #   inserts a profiling node for `indent()`, then followed by
+        #   another for `dedent()` inserted by `AstProfileTransformer`;
+        #   since the profiling node for `dedent()` is created later, it
+        #   is inserted bewteen the import statement and the profiling
+        #   node for `indent()`, and is hence executed first
+        ('third', 'ast_tree_profiler', ['dedent', 'indent']),
+        # - When using `AstProfileTransformer`, profiling nodes are
+        #   inserted for both `indent()` and `dedent()` in one go
+        ('third', 'ast_profile_transformer', ['indent', 'dedent']),
+    ])
+def test_nested_imports_correct_deduplication_across_scopes(
+    call: Literal['first', 'second', 'third'],
+    use_component: Literal[
+        'profmod_extractor', 'ast_tree_profiler', 'ast_profile_transformer',
+    ],
+    expected_profiled_objects: Sequence[Literal['indent', 'dedent']],
+) -> None:
+    """
+    Test that there is no aliasing in the check we have against
+    inserting duplicate ``profile.add_imported_function_or_module(...)``
+    statements: duplicates should only be counted within the same scope.
+
+    Note:
+        - At runtime, duplicates don't really matter in terms of
+          CORRECTNESS, because ultimately
+          :py:class:`line_profiler.LineProfiler.add_callable` is
+          idempotent.
+
+        - However, since calls to
+          :py:func:`line_profiler.autoprofile.line_profiler_utils\
+.add_imported_function_or_module`
+          can result in arbitrary deep descent into the profiled object,
+          these interpolated calls can have an impact on the
+          PERFORMANCE, especially when inserted into function/method
+          bodies. For this reason, import discovery in function bodies
+          is off by default.
+    """
+    test_module = ub.codeblock("""
+    def first() -> str:
+        from textwrap import indent
+
+        return indent('first', '  ')
+
+
+    def second() -> str:
+        from textwrap import indent as ind
+
+        return ind('second', '  ')
+
+
+    def third() -> str:
+        from textwrap import indent, dedent
+        from textwrap import indent as _indent  # Duplicate
+
+        return _indent('third', '  ')
+    """).strip('\n')
+
+    mock_prof = _RecordingProfiler()
+    with tempfile.TemporaryDirectory() as tmp:
+        mod_fname = os.path.join(tmp, 'test_module.py')
+        with open(mod_fname, 'w') as fobj:
+            print(test_module, file=fobj)
+
+        cfg_fname = os.path.join(tmp, 'config.toml')
+        with open(cfg_fname, 'w') as fobj:
+            print(_get_toml_import_discovery_section(), file=fobj)
+
+        config = ConfigSource.from_config(cfg_fname)
+        if use_component == 'profmod_extractor':
+            # Ditto comment in
+            # `test_import_discovery_in_all_compound_statements()`
+            mod_ast = AstTreeProfiler(
+                mod_fname, ['textwrap.indent'], False,
+                config=config,
+            ).profile()
+        elif use_component == 'ast_tree_profiler':
+            # Integration of both
+            mod_ast = AstTreeProfiler(
+                mod_fname, ['textwrap.indent', str(mod_fname)], True,
+                config=config,
+            ).profile()
+        else:  # `ast_profile_transformer`
+            mod_ast = AstProfileTransformer._transform(
+                ast.parse(test_module),
+                mod_fname,
+                profile_imports=True,
+                config=config,
+            )
+            # We need this to actually compile and exec the code
+            mod_ast = ast.fix_missing_locations(mod_ast)
+        print(ast.unparse(mod_ast))
+
+        namespace: dict[str, Any] = {'profile': mock_prof}
+        code = compile(mod_ast, mod_fname, 'exec')
+        exec(code, namespace)
+
+    # Make the call; regardless of which of the functions is called,
+    # `textwrap.indent()` should be presented to the profiler exactly
+    # once
+    assert namespace[call]() == '  ' + call
+    profiled_objects = [func.__name__ for func in mock_prof.profiled_objects]
+    assert profiled_objects == list(expected_profiled_objects)
+
+
+@pytest.mark.parametrize(
+    ('definitions', 'expected'),
+    [
+        # The profiling statement is always inserted into the first
+        # function body where the import occurs...
+        (['foo'], {'indent'}), (['bar'], {'ind'}),
+        # ... but only the first
+        (['foo', 'bar'], {'indent'}), (['bar', 'foo'], {'ind'}),
+    ])
+def test_ast_profile_transformer_deprecated_profiled_imports(
+    definitions: Sequence[Literal['foo', 'bar']],
+    expected: Collection[Literal['indent', 'ind']],
+) -> None:
+    """
+    Test that the legacy invocation of
+    :py:class:`.AstProfileTransformer` with
+    ``profiled_imports: Collection[str]`` works "as expected":
+
+    - :py:class:`DeprecationWarning` is issued, instructing users to
+      switch to the mapping form of the argument.
+
+    - Deduplication of imports happens without regard of scopes.
+
+    See also:
+        :py:func:\
+`test_nested_imports_correct_deduplication_across_scopes`
+    """
+    defs = {
+        'foo': """
+        def foo() -> str:
+            from textwrap import indent
+
+            return indent('foo', '  ')
+        """,
+        'bar': """
+        def bar() -> str:
+            from textwrap import indent as ind
+
+            return ind('bar', '  ')
+        """,
+    }
+    test_module = '\n\n'.join(
+        ub.codeblock(defs[func]).strip('\n') for func in definitions
+    )
+
+    with contextlib.ExitStack() as stack:
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+
+        mod_fname = os.path.join(tmp, 'test_module.py')
+        with open(mod_fname, 'w') as fobj:
+            print(test_module, file=fobj)
+
+        cfg_fname = os.path.join(tmp, 'config.toml')
+        with open(cfg_fname, 'w') as fobj:
+            print(_get_toml_import_discovery_section(), file=fobj)
+
+        stack.enter_context(pytest.warns(
+            DeprecationWarning,
+            match='.*'.join(
+                '{}{}{}'.format(
+                    r'\b' if chunk[0].isalnum() else '',
+                    chunk,
+                    r'\b' if chunk[-1].isalnum() else '',
+                )
+                for chunk in [
+                    'profiled_imports=', r'Collection\[str\]', 'deprecated',
+                    'use', r'Mapping\[.+, .+\]', 'or', 'None',
+                ]
+            )
+        ))
+
+        config = ConfigSource.from_config(cfg_fname)
+        mod_ast = AstProfileTransformer._transform(
+            ast.parse(test_module),
+            mod_fname,
+            profile_imports=True,
+            profiled_imports=[],  # This triggers legacy behavior
+            config=config,
+        )
+        output = ast.unparse(mod_ast)
+        print(output)
+
+    assert set(_grep_profiled_names(output)) == set(expected)
+
+
+@pytest.mark.parametrize(
+    ('targets', 'dunder_all', 'expected_imports', 'expected_profiled'),
+    [
+        # No `__all__` -> all the public names included
+        (None, None, {'indent', 'foo', 'bar'}, {'indent', 'foo', 'bar'}),
+        # `_baz` specified as a target, but is never imported to begin
+        # with
+        ({'__module__.bar', '__module__._baz'}, None,
+         {'indent', 'foo', 'bar'}, {'bar'}),
+        # With a valid `__all__`, only names inside will be imported
+        (None, ['foo', '_baz', '_dedent'],
+         {'foo', '_dedent', '_baz'}, {'foo', 'dedent', '_baz'}),
+        ({'__module__._baz', '__module__._dedent'}, ['foo', '_baz', '_dedent'],
+         {'foo', '_dedent', '_baz'}, {'dedent', '_baz'}),
+    ])
+def test_add_star_import(
+    targets: Collection[str] | None,
+    dunder_all: Sequence[str] | None,
+    expected_imports: Collection[str],
+    expected_profiled: Collection[str],
+) -> None:
+    """
+    Test that :py:func:`.add_star_import` works as expected, retriving
+    the correct names from the namespace and profiling them.
+    """
+    test_module = ub.codeblock("""
+    from textwrap import indent, dedent as _dedent
+
+
+    def foo() -> None:
+        ...
+
+
+    def bar() -> None:
+        ...
+
+
+    def _baz() -> None:
+        ...
+    """).strip('\n')
+    if dunder_all is not None:
+        all_repr = repr(dunder_all)
+        assert ast.literal_eval(all_repr) == dunder_all
+        test_module = f'{test_module}\n\n__all__ = {all_repr}'
+
+    module_name = next(_propose_module_names())
+    if targets is not None:
+        targets = [
+            t.replace('__module__', module_name) for t in targets
+        ]
+    mock_prof = _RecordingProfiler()
+    with contextlib.ExitStack() as stack:
+        tmp = stack.enter_context(tempfile.TemporaryDirectory())
+        mp = stack.enter_context(pytest.MonkeyPatch.context())
+        mp.syspath_prepend(tmp)
+
+        mod_fname = os.path.join(tmp, module_name + '.py')
+        with open(mod_fname, 'w') as fobj:
+            print(test_module, file=fobj)
+
+        # Check that the correct names are imported by the star-import
+        namespace: dict[str, Any] = {'baz': None, '__builtins__': builtins}
+        preexisting = set(namespace)
+        exec(f'from {module_name} import *', namespace)
+        assert set(namespace) == set(expected_imports) | preexisting
+
+        # Check that the same names are passed to the profiler by
+        # `add_star_import()`
+        add_star_import(mock_prof, module_name, targets, namespace)
+        profiled_objects = {
+            func.__name__ for func in mock_prof.profiled_objects
+        }
+        assert profiled_objects == set(expected_profiled)
