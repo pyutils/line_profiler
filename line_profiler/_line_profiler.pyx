@@ -356,21 +356,68 @@ list[tuple[int, int, int]]]):
 
 cdef class _SysMonitoringState:
     """
-    Another helper object for managing the thread-local state.
+    Helper object for managing the :py:mod:`sys.monitoring` state.
+
+    Methods of interest:
+
+    :py:meth:`~.handle_line_event`
+        Callback for |LINE|_ events
+    :py:meth:`~.handle_return_event`
+        Callback for |PY_RETURN|_ events
+    :py:meth:`~.handle_yield_event`
+        Callback for |PY_YIELD|_ events
+    :py:meth:`~.handle_raise_event`
+        Callback for |RAISE|_ events
+    :py:meth:`~.handle_reraise_event`
+        Callback for |RERAISE|_ events
 
     Note:
-        Documentations are for reference only, and all APIs are to be
-        considered private and subject to change.
+        - Documentations are for reference only, and all APIs are to be
+          considered private and subject to change.
+
+        - In contrast to the legacy trace system (which is set up
+          per-thread), :py:mod:`sys.monitoring` registration is
+          process-global; a single instance (per tool ID) is therefore
+          shared between the per-thread :py:class:`_LineProfilerManager`
+          objects (see :py:func:`_get_shared_mon_state`), while its
+          :py:attr:`~.active_instances` set remains thread-local.  This
+          way, the global callbacks/events are only torn down when the
+          last profiler anywhere is disabled, instead of whenever any
+          one thread's manager runs out of active profilers (which used
+          to kill profiling on the other threads and make their
+          subsequent :py:meth:`LineProfiler.disable` calls raise).
+
+    .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
+    .. |PY_RETURN| replace:: :py:attr:`!sys.monitoring.events.PY_RETURN`
+    .. |PY_YIELD| replace:: :py:attr:`!sys.monitoring.events.PY_YIELD`
+    .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
+    .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
+    .. _LINE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-LINE
+    .. _PY_RETURN: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_RETURN
+    .. _PY_YIELD: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_YIELD
+    .. _RAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RAISE
+    .. _RERAISE: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef int tool_id
-    cdef object name  # type: str | None
-    # type: dict[int, Callable | None], int = event id
-    cdef dict callbacks
+    # type: dict[int, set[LineProfiler]], int = thread id
+    cdef dict _active_inst_sets
     # type: dict[int, set[tuple[code, Unpack[tuple]]]],
     # int = event id, tuple = <locational info>
     cdef dict disabled
-    cdef int events
+    cdef int _wrap_trace
     cdef Py_uintptr_t restart_version
+
+    # These attributes pertain to the stored pre-`.register()` states,
+    # to be restored upon `.deregister()`
+    cdef object name  # type: str | None
+    # type: dict[int, Callable | None], int = event id
+    cdef dict callbacks
+    cdef int events
 
     if _CAN_USE_SYS_MONITORING:
         line_tracing_event_set = (  # type: ClassVar[FrozenSet[int]]
@@ -388,17 +435,26 @@ cdef class _SysMonitoringState:
         line_tracing_event_set = frozenset({})
         line_tracing_events = 0
 
-    def __init__(self, tool_id: int):
+    def __init__(self, tool_id: int, wrap_trace: bool):
         self.tool_id = tool_id
         self.name = None
         self.callbacks = {}
         self.disabled = {}
+        self._active_inst_sets = {}
+        self.wrap_trace = wrap_trace
         self.events = 0  # NO_EVENTS
         self.restart_version = monitoring_restart_version()
 
-    cpdef register(self, object handle_line,
-                   object handle_return, object handle_yield,
-                   object handle_raise, object handle_reraise):
+    property active_instances:  # type: set[LineProfiler]
+        def __get__(self):
+            thread_id = PyThread_get_thread_ident()
+            try:
+                return self._active_inst_sets[thread_id]
+            except KeyError:
+                self._active_inst_sets[thread_id] = instances = set()
+                return instances
+
+    cpdef register(self):
         # Note: only activating `sys.monitoring` line events for the
         # profiled code objects in `LineProfiler.add_function()` may
         # seem like an obvious optimization, but:
@@ -425,11 +481,20 @@ cdef class _SysMonitoringState:
         mon.set_events(self.tool_id, self.events | self.line_tracing_events)
 
         # Register tracebacks and remember the existing ones
-        for event_id, callback in [(mon.events.LINE, handle_line),
-                                   (mon.events.PY_RETURN, handle_return),
-                                   (mon.events.PY_YIELD, handle_yield),
-                                   (mon.events.RAISE, handle_raise),
-                                   (mon.events.RERAISE, handle_reraise)]:
+        # Note: we need to declare `cpdef`-ed methods explicitly as
+        # `object`s, otherwise Cython will assume that we meant the
+        # C++-level functions (see Cython issue #8001)
+        cdef object handle_line_event = self.handle_line_event
+        cdef object handle_return_event = self.handle_return_event
+        cdef object handle_yield_event = self.handle_yield_event
+        cdef object handle_raise_event = self.handle_raise_event
+        cdef object handle_reraise_event = self.handle_reraise_event
+        for event_id, callback in [
+                (mon.events.LINE, handle_line_event),
+                (mon.events.PY_RETURN, handle_return_event),
+                (mon.events.PY_YIELD, handle_yield_event),
+                (mon.events.RAISE, handle_raise_event),
+                (mon.events.RERAISE, handle_reraise_event)]:
             self.callbacks[event_id] = mon.register_callback(
                 self.tool_id, event_id, callback)
 
@@ -437,16 +502,119 @@ cdef class _SysMonitoringState:
         mon = sys.monitoring
         cdef dict wrapped_callbacks = self.callbacks
 
-        # Restore prior state
-        mon.set_events(self.tool_id, self.events)
-        if self.name is None:
+        # No-op unless `.register()` has been called (makes repeated or
+        # spurious `.deregister()` calls harmless)
+        if not wrapped_callbacks:
+            return
+
+        # Restore prior state; be tolerant of external interference
+        # (e.g. other code having freed the tool ID from under us),
+        # which shouldn't prevent the teardown from completing
+        try:
+            mon.set_events(self.tool_id, self.events)
+        except ValueError:
+            pass
+        if self.name is None and mon.get_tool(self.tool_id) is not None:
             mon.free_tool_id(self.tool_id)
         self.name = None
         self.events = mon.events.NO_EVENTS
+        self.disabled.clear()
 
         # Reset tracebacks
         while wrapped_callbacks:
             mon.register_callback(self.tool_id, *wrapped_callbacks.popitem())
+
+    cdef int _has_active_instances(self):
+        if any(self._active_inst_sets.values()):
+            return 1
+        return 0
+
+    # If we allowed these `sys.monitoring` callbacks to be profiled
+    # (i.e. to emit line events), we may fall into an infinite recusion;
+    # so disable profiling for them pre-emptively
+
+    @cython.profile(False)
+    cpdef handle_line_event(self, object code, int lineno):
+        """
+        Line-event callback for :py:attr:`!sys.monitoring.events.LINE`,
+        passed to :py:func:`sys.monitoring.register_callback`.
+        """
+        self._base_callback(
+            1, sys.monitoring.events.LINE, code, lineno, (lineno,), ())
+
+    @cython.profile(False)
+    cpdef handle_return_event(
+            self, object code, int instruction_offset, object retval):
+        """
+        Return-event callback for
+        :py:attr:`!sys.monitoring.events.PY_RETURN`, passed to
+        :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.PY_RETURN, code, instruction_offset, retval)
+
+    @cython.profile(False)
+    cpdef handle_yield_event(
+            self, object code, int instruction_offset, object retval):
+        """
+        Yield-event callback for
+        :py:attr:`!sys.monitoring.events.PY_YIELD`, passed to
+        :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
+
+    @cython.profile(False)
+    cpdef handle_raise_event(
+            self, object code, int instruction_offset, object exception):
+        """
+        Raise-event callback for
+        :py:attr:`!sys.monitoring.events.RAISE`, passed to
+        :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.RAISE, code, instruction_offset, exception)
+
+    @cython.profile(False)
+    cpdef handle_reraise_event(
+            self, object code, int instruction_offset, object exception):
+        """
+        Re-raise-event callback for
+        :py:attr:`!sys.monitoring.events.RERAISE`, passed to
+        :py:func:`sys.monitoring.register_callback`.
+        """
+        self._handle_exit_event(
+            sys.monitoring.events.RERAISE, code, instruction_offset, exception)
+
+    cdef void _handle_exit_event(
+            self, int event_id, object code, int offset, object obj) noexcept:
+        """
+        Base for the frame-exit-event (e.g. via returning or yielding)
+        callbacks passed to :py:func:`sys.monitoring.register_callback`.
+
+        Note:
+            This is deliberately made a non-traceable C method so that
+            we don't fall info infinite recursion.
+        """
+        cdef int lineno = PyCode_Addr2Line(<PyCodeObject*>code, offset)
+        self._base_callback(0, event_id, code, lineno, (offset,), (obj,))
+
+    cdef void _base_callback(
+            self, int is_line_event, int event_id, object code, int lineno,
+            object loc_args, object other_args) noexcept:
+        """
+        Base for the various callbacks passed to
+        :py:func:`sys.monitoring.register_callback`.
+
+        Note:
+            * This is deliberately made a non-traceable C method so that
+              we don't fall info infinite recursion.
+            * ``loc_args`` and ``other_args`` should be tuples.
+        """
+        inner_trace_callback(
+            is_line_event, self.active_instances, code, lineno)
+        if self._wrap_trace:
+            self.call_callback(event_id, code, loc_args, other_args)
 
     cdef void call_callback(self, int event_id, object code,
                             object loc_args, object other_args) noexcept:
@@ -523,6 +691,33 @@ cdef class _SysMonitoringState:
             mon.set_events(self.tool_id,
                            self.events | self.line_tracing_events)
 
+    property wrap_trace:
+        def __get__(self):
+            return bool(self._wrap_trace)
+        def __set__(self, wrap_trace):
+            self._wrap_trace = 1 if wrap_trace else 0
+
+
+# type: dict[int, _SysMonitoringState], int = tool id
+_shared_mon_states = {}
+
+
+cdef _SysMonitoringState _get_shared_mon_state(
+        int tool_id, object wrap_trace = None):
+    """
+    Get the process-global :py:class:`_SysMonitoringState` for the
+    ``tool_id``, creating it if necessary; see the class docstring for
+    why the state is shared.
+    """
+    try:
+        state = _shared_mon_states[tool_id]
+    except KeyError:
+        state = _shared_mon_states[tool_id] = _SysMonitoringState(
+            tool_id, wrap_trace)
+    if wrap_trace is not None:
+        state.wrap_trace = wrap_trace
+    return state
+
 
 cdef class _LineProfilerManager:
     """
@@ -530,38 +725,9 @@ cdef class _LineProfilerManager:
     Supports being called with the same signature as a legacy trace
     function (see :py:func:`sys.settrace`).
 
-    Other methods of interest:
-
-    :py:meth:`~.handle_line_event`
-        Callback for |LINE|_ events
-    :py:meth:`~.handle_return_event`
-        Callback for |PY_RETURN|_ events
-    :py:meth:`~.handle_yield_event`
-        Callback for |PY_YIELD|_ events
-    :py:meth:`~.handle_raise_event`
-        Callback for |RAISE|_ events
-    :py:meth:`~.handle_reraise_event`
-        Callback for |RERAISE|_ events
-
     Note:
         Documentations are for reference only, and all APIs are to be
         considered private and subject to change.
-
-    .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
-    .. |PY_RETURN| replace:: :py:attr:`!sys.monitoring.events.PY_RETURN`
-    .. |PY_YIELD| replace:: :py:attr:`!sys.monitoring.events.PY_YIELD`
-    .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
-    .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
-    .. _LINE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-LINE
-    .. _PY_RETURN: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-PY_RETURN
-    .. _PY_YIELD: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-PY_YIELD
-    .. _RAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RAISE
-    .. _RERAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RERAISE
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
@@ -588,9 +754,21 @@ sys.monitoring.html#monitoring-event-RERAISE
             :py:class:`~.LineProfiler`
         """
         self.legacy_callback = NULL
-        self.mon_state = _SysMonitoringState(tool_id)
+        if USE_LEGACY_TRACE:
+            # The legacy trace system is per-thread, so each (per-
+            # thread) manager tracks its own state
+            self.mon_state = _SysMonitoringState(tool_id, wrap_trace)
+            self.active_instances = set()
+        else:
+            # `sys.monitoring` is process-global, so all managers share
+            # one monitoring state and one set of active profilers;
+            # the global callbacks are then only torn down when the
+            # last profiler anywhere is disabled, regardless of which
+            # thread registered or disables them
+            self.mon_state = _get_shared_mon_state(tool_id, wrap_trace)
+            # However, this set here is thread-local
+            self.active_instances = self.mon_state.active_instances
 
-        self.active_instances = set()
         self.wrap_trace = wrap_trace
         self.set_frame_local_trace = set_frame_local_trace
         self.recursion_guard = 0
@@ -671,114 +849,29 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             pass
         return wrapper
 
-    # If we allowed these `sys.monitoring` callbacks to be profiled
-    # (i.e. to emit line events), we may fall into an infinite recusion;
-    # so disable profiling for them pre-emptively
-
-    @cython.profile(False)
-    cpdef handle_line_event(self, object code, int lineno):
-        """
-        Line-event callback for :py:attr:`!sys.monitoring.events.LINE`,
-        passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._base_callback(
-            1, sys.monitoring.events.LINE, code, lineno, (lineno,), ())
-
-    @cython.profile(False)
-    cpdef handle_return_event(
-            self, object code, int instruction_offset, object retval):
-        """
-        Return-event callback for :py:attr:`!sys.monitoring.events.PY_RETURN`,
-        passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._handle_exit_event(
-            sys.monitoring.events.PY_RETURN, code, instruction_offset, retval)
-
-    @cython.profile(False)
-    cpdef handle_yield_event(
-            self, object code, int instruction_offset, object retval):
-        """
-        Yield-event callback for :py:attr:`!sys.monitoring.events.PY_YIELD`,
-        passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._handle_exit_event(
-            sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
-
-    @cython.profile(False)
-    cpdef handle_raise_event(
-            self, object code, int instruction_offset, object exception):
-        """
-        Raise-event callback for :py:attr:`!sys.monitoring.events.RAISE`,
-        passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._handle_exit_event(
-            sys.monitoring.events.RAISE, code, instruction_offset, exception)
-
-    @cython.profile(False)
-    cpdef handle_reraise_event(
-            self, object code, int instruction_offset, object exception):
-        """
-        Re-raise-event callback for :py:attr:`!sys.monitoring.events.RERAISE`,
-        passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._handle_exit_event(
-            sys.monitoring.events.RERAISE, code, instruction_offset, exception)
-
-    cdef void _handle_exit_event(
-            self, int event_id, object code, int offset, object obj) noexcept:
-        """
-        Base for the frame-exit-event (e.g. via returning or yielding)
-        callbacks passed to :py:func:`sys.monitoring.register_callback`.
-
-        Note:
-            This is deliberately made a non-traceable C method so that
-            we don't fall info infinite recursion.
-        """
-        cdef int lineno = PyCode_Addr2Line(<PyCodeObject*>code, offset)
-        self._base_callback(0, event_id, code, lineno, (offset,), (obj,))
-
-    cdef void _base_callback(
-            self, int is_line_event, int event_id, object code, int lineno,
-            object loc_args, object other_args) noexcept:
-        """
-        Base for the various callbacks passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        Note:
-            * This is deliberately made a non-traceable C method so that
-              we don't fall info infinite recursion.
-            * ``loc_args`` and ``other_args`` should be tuples.
-        """
-        inner_trace_callback(
-            is_line_event, self.active_instances, code, lineno)
-        if self._wrap_trace:
-            self.mon_state.call_callback(event_id, code, loc_args, other_args)
-
     cpdef _handle_enable_event(self, prof):
         cdef TraceCallback* legacy_callback
-        instances = self.active_instances
-        already_active = bool(instances)
-        instances.add(prof)
+        cdef int already_active = self._has_active_instances()
+
+        self.active_instances.add(prof)
         if already_active:
             return
+
         if USE_LEGACY_TRACE:
             legacy_callback = alloc_callback()
             populate_callback(legacy_callback)
             self.legacy_callback = legacy_callback
             PyEval_SetTrace(legacy_trace_callback, self)
         else:
-            self.mon_state.register(self.handle_line_event,
-                                    self.handle_return_event,
-                                    self.handle_yield_event,
-                                    self.handle_raise_event,
-                                    self.handle_reraise_event)
+            self.mon_state.register()
 
     cpdef _handle_disable_event(self, prof):
         cdef TraceCallback* legacy_callback
-        instances = self.active_instances
-        instances.discard(prof)
-        if instances:
+        self.active_instances.discard(prof)
+
+        if self._has_active_instances():  # Still active
             return
+
         # Only use the legacy trace-callback system if Python < 3.12 or
         # if explicitly requested with `LINE_PROFILER_CORE=legacy`;
         # otherwise, use `sys.monitoring`
@@ -791,11 +884,18 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
         else:
             self.mon_state.deregister()
 
+    cdef int _has_active_instances(self):
+        if USE_LEGACY_TRACE:
+            return 1 if self.active_instances else 0
+        return self.mon_state._has_active_instances()
+
     property wrap_trace:
         def __get__(self):
             return bool(self._wrap_trace)
         def __set__(self, wrap_trace):
-            self._wrap_trace = 1 if wrap_trace else 0
+            self.mon_state._wrap_trace = self._wrap_trace = (
+                1 if wrap_trace else 0
+            )
 
     property set_frame_local_trace:
         def __get__(self):
@@ -911,7 +1011,7 @@ cdef class LineProfiler:
           :py:mod:`sys.monitoring` tool ID it acquired.
         * When setting :py:attr:`.wrap_trace` and
           :py:attr:`.set_frame_local_trace`, they are set process-wide
-          for all instances.
+          for all instances across all threads.
 
     .. _note-backends:
 
@@ -1334,6 +1434,8 @@ datamodel.html#user-defined-functions
         return py_last_time
 
     cpdef disable(self):
+        # Note: `operator[]` (re-)creates an empty entry for the
+        # calling thread, which `.c_last_time` expects to find
         self._c_last_time[PyThread_get_thread_ident()].clear()
         self._manager._handle_disable_event(self)
 

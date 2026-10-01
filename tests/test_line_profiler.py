@@ -1,20 +1,26 @@
 from __future__ import annotations
+
 import asyncio
-import contextlib
 import functools
 import gc
 import inspect
-import io
 import os
 import pickle
 import subprocess
 import sys
 import textwrap
 import types
+import warnings
+from contextlib import ExitStack, nullcontext
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any, Literal, cast
+
 import pytest
+
 from ubelt import ChDir
+
 from line_profiler import _line_profiler, LineProfiler, LineStats
 
 
@@ -50,7 +56,7 @@ def strip(s):
 
 
 def get_prof_stats(prof, name='prof', **kwargs):
-    with io.StringIO() as sio:
+    with StringIO() as sio:
         prof.print_stats(sio, **kwargs)
         output = sio.getvalue()
         print(f'@{name}:', textwrap.indent(output, '  '), sep='\n\n')
@@ -147,6 +153,9 @@ class check_timings_and_mem:
     @property
     def timings(self):
         return self.prof.get_stats().timings
+
+
+# ------------------------ `LineProfiler` tests ------------------------
 
 
 def test_init():
@@ -320,7 +329,7 @@ def test_async_gen_decorator(gc):
             with (
                 pytest.raises(StopAsyncIteration)
                 if send is None
-                else contextlib.nullcontext()
+                else nullcontext()
             ):
                 results.append(await agen.asend(send))
             if send is None:
@@ -366,7 +375,7 @@ def test_async_gen_decorator(gc):
         assert profile.enable_count == 0
         assert asyncio.run(use_agen_simple(1, 2, 3)) == [0, 1, 3, 6]
         assert profile.enable_count == 0
-    with contextlib.ExitStack() as stack:
+    with ExitStack() as stack:
         if xfail_refcount:
             excinfo = stack.enter_context(
                 pytest.raises(AssertionError, match=r'ag\(\): ref count')
@@ -747,7 +756,6 @@ def test_profiler_c_callable_no_op(decorate):
 def test_show_func_column_formatting():
     from line_profiler.line_profiler import show_func
     import line_profiler
-    import io
 
     # Use a function in this module as an example
     func = line_profiler.line_profiler.show_text
@@ -785,7 +793,7 @@ def test_show_func_column_formatting():
         (lineno, idx * 1e13, idx * (2e10 ** (idx % 3)))
         for idx, lineno in enumerate(line_numbers, start=1)
     ]
-    stream = io.StringIO()
+    stream = StringIO()
     show_func(
         filename,
         start_lineno,
@@ -803,7 +811,7 @@ def test_show_func_column_formatting():
         (lineno, idx * 1e15, idx * 2e19)
         for idx, lineno in enumerate(line_numbers, start=1)
     ]
-    stream = io.StringIO()
+    stream = StringIO()
     show_func(
         filename,
         start_lineno,
@@ -1352,9 +1360,12 @@ def test_profiling_exception():
             assert line.split()[1] == str(nhits)
 
 
+# ------------------------- `LineStats` tests --------------------------
+
+
 @pytest.mark.parametrize('n', [1, 2])
 @pytest.mark.parametrize('legacy', [True, False])
-def test_load_stats_files(legacy, n):
+def test_load_stats_files_backward_compatibility(legacy: bool, n: int) -> None:
     """
     Test the loading of stats files. If ``legacy`` is true, the
     tempfiles are written from
@@ -1363,7 +1374,6 @@ def test_load_stats_files(legacy, n):
     that we ensure that ``'.lprof'`` files written by old versions of
     :py:mod:`line_profiler` is still properly handled.
     """
-
     def write(stats, filename):
         if legacy:
             legacy_stats = type(stats).__base__(stats.timings, stats.unit)
@@ -1394,3 +1404,97 @@ def test_load_stats_files(legacy, n):
         stats_read = LineStats.from_files(*files)
     assert isinstance(stats_read, LineStats)
     assert stats_read == stats_combined
+
+
+@pytest.mark.parametrize(
+    ('behavior', 'status', 'error'),
+    [('ignore', 'empty', None), ('ignore', 'nonexistent', None),
+     ('ignore', 'corrupted', None), ('ignore', 'incompatible', None),
+     ('warn', 'empty',
+      (UserWarning, r'.*1 file.* empty.* skipped: .*bad\.lprof')),
+     ('warn', 'nonexistent',
+      (UserWarning,
+       '.*1 file.* cannot be loaded.* skipped: '
+       r'.*FileNotFoundError: .*bad\.lprof')),
+     ('warn', 'corrupted',
+      (UserWarning,
+       '.*1 file.* cannot be loaded.* skipped: .*UnpicklingError')),
+     ('warn', 'incompatible',
+      (UserWarning, '.*1 file.* cannot be loaded.* skipped')),
+     ('error', 'empty', (OSError, r'.*bad\.lprof')),
+     ('error', 'nonexistent', (FileNotFoundError, r'.*bad\.lprof')),
+     ('error', 'corrupted', (pickle.UnpicklingError, None)),
+     ('error', 'incompatible', ((TypeError, AttributeError), None))])
+def test_load_problematic_stats_file(
+    tmp_path_factory: pytest.TempPathFactory,
+    behavior: Literal['ignore', 'warn', 'error'],
+    status: Literal['empty', 'nonexistent', 'corrupted', 'incompatible'],
+    error: tuple[
+        type[Exception] | tuple[type[Exception], ...], str | None,
+    ] | None,
+) -> None:
+    """
+    Test the behavior when trying to load a :py:class:`LineStats` object
+    from:
+    - An empty file
+    - A nonexistent file
+    - A corrupted pickle file
+    - A pickle file of an incompatible object
+    """
+    tmpdir = tmp_path_factory.mktemp('mytmp')
+    kwargs: dict[str, Any] = {}
+    bad_file = tmpdir / 'bad.lprof'
+
+    good_file = tmpdir / 'good.lprof'
+    good_stats = LineStats.get_empty_instance()
+    good_stats.timings = {('foo.py', 10, 'func'): [(12, 10, 300)]}
+    good_stats.to_file(good_file)
+
+    if status == 'empty':
+        bad_file.touch()
+        kwargs['on_empty'] = behavior
+    elif status == 'nonexistent':
+        kwargs['on_defective'] = behavior
+    elif status == 'corrupted':
+        kwargs['on_defective'] = behavior
+        LineStats.get_empty_instance().to_file(bad_file)
+        with open(bad_file, mode='wb+') as fobj:
+            fobj.write(b'42')  # Destroy the magic number in the start
+    elif status == 'incompatible':
+        kwargs['on_defective'] = behavior
+        with open(bad_file, mode='wb') as fobj:
+            pickle.dump([1, 2, 3], fobj)
+    else:
+        assert False, f'{status=}'
+
+    with ExitStack() as stack:
+        if behavior == 'ignore':
+            stack.enter_context(warnings.catch_warnings())
+            warnings.filterwarnings(
+                'error', module='line_profiler.line_profiler',
+            )
+        elif behavior == 'warn':
+            if error is None:
+                ErrorClass: type[Exception] | tuple[type[Exception], ...]
+                ErrorClass = UserWarning
+                error_msg: str | None = None
+            else:
+                ErrorClass, error_msg = error
+            stack.enter_context(pytest.warns(
+                cast(type[Warning] | tuple[type[Warning], ...], ErrorClass),
+                match=error_msg,
+            ))
+        elif behavior == 'error':
+            if error is None:
+                ErrorClass, error_msg = Exception, None
+            else:
+                ErrorClass, error_msg = error
+            stack.enter_context(pytest.raises(ErrorClass, match=error_msg))
+        else:
+            assert False, f'{behavior=}'
+        stats = LineStats.from_files(bad_file, good_file, **kwargs)
+
+    if behavior != 'error':
+        # As long as we don't error out, the data from the good file
+        # should remain
+        assert stats == good_stats

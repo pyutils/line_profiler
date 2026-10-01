@@ -311,16 +311,6 @@ class GlobalProfiler:
         # supplied `config`)
         self.show_config.pop('column_widths')
 
-    def _kernprof_overwrite(self, profile: LineProfiler) -> None:
-        """
-        Kernprof will call this when it runs, so we can use its profile object
-        instead of our own. Note: when kernprof overwrites us we wont register
-        an atexit hook. This is what we want because kernprof wants us to use
-        another program to read its output file.
-        """
-        self._profile = profile
-        self.enabled = True
-
     def _implicit_setup(self) -> None:
         """
         Called once the first time the user decorates a function with

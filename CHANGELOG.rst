@@ -3,6 +3,11 @@ Changes
 
 5.0.3
 -----
+* FIX: misc. fixes and refactoring (#442):
+  
+  * Continuity of profiling in multithreaded environments
+  * Fix for frame-local trace-function wrapper reference leaks
+  * Context-manager-based setup and teardown
 * FIX: Make sure that the profiled code is run in the
   ``sys.modules['__main__']`` namespace to avoid issues w/e.g. pickling
   (#423)

@@ -100,13 +100,23 @@ class ConfigSource:
             ...         == default.subtable + ['show', 'column_widths'])
             >>> assert (display_widths.conf_dict
             ...         is default.conf_dict['show']['column_widths'])
+            >>> display_widths_copy = default.get_subconfig(
+            ...     'show', 'column_widths', copy=True)
+            >>> assert (
+            ...     display_widths.conf_dict
+            ...     == display_widths_copy.conf_dict
+            ...     is not display_widths.conf_dict
+            ... )
         """
         new_dict = cast(
             Dict[str, Any],
             get_subtable(self.conf_dict, headers, allow_absence=allow_absence),
         )
         new_subtable = [*self.subtable, *headers]
-        return type(self)(new_dict, self.path, new_subtable)
+        new_instance = type(self)(new_dict, self.path, new_subtable)
+        if copy:
+            new_instance = new_instance.copy()
+        return new_instance
 
     @classmethod
     def from_default(cls, *, copy: bool = True) -> ConfigSource:
@@ -355,7 +365,8 @@ def find_and_read_config_file(
 
 
 def get_subtable(
-    table: Mapping[K, Mapping], keys: Sequence[K], *, allow_absence: bool = True
+    table: Mapping[K, Mapping], keys: Sequence[K], *,
+    allow_absence: bool = True,
 ) -> Mapping:
     """
     Arguments:
