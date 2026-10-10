@@ -820,6 +820,47 @@ def test_show_func_column_formatting():
     # TODO: write a check to verify columns are aligned nicely
 
 
+def test_show_func_non_encodable_source(tmp_path):
+    """
+    Source lines containing characters the output stream cannot encode
+    are printed with escape-sequence placeholders instead of being
+    dropped.
+    """
+    from line_profiler.line_profiler import show_func
+
+    # A source file with text an ascii stream cannot encode
+    mod_fpath = tmp_path / 'mod_with_unicode.py'
+    mod_fpath.write_text(
+        'def foo():\n    x = "∀"\n    return x\n', encoding='utf-8'
+    )
+
+    # An ascii-encoded stream raises UnicodeEncodeError on non-ascii
+    # text, mimicking ``PYTHONIOENCODING=ascii``.
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding='ascii')
+
+    timings = [(lineno, 1, 1e-6) for lineno in range(1, 4)]
+    show_func(
+        filename=str(mod_fpath),
+        start_lineno=1,
+        func_name='foo',
+        timings=timings,
+        unit=1e-6,
+        output_unit=1e-6,
+        stream=stream,
+        stripzeros=False,
+    )
+    stream.flush()
+    text = raw.getvalue().decode('ascii')
+
+    # Every source line is still shown; the unencodable character is
+    # replaced by its escape sequence.
+    assert 'def foo():' in text
+    assert 'return x' in text
+    assert 'x = "\\u2200"' in text
+    assert 'UnicodeEncodeError' not in text
+
+
 @pytest.mark.skipif(
     not hasattr(sys, 'monitoring'),
     reason='no `sys.monitoring` in version '
