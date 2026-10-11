@@ -24,3 +24,14 @@ cpdef sin(Float x, int n):  # Start: sin
         result += last_term
         last_term *= neg_xsq / <Float>(n * (n + 1))
     return result + last_term  # End: sin
+
+
+def add_one(int x):  # Start: add_one
+    return x + 1  # End: add_one
+
+
+def count_up(int n):  # Start: count_up
+    cdef int total = 0
+    for _ in range(n):
+        total = add_one(total)
+    return total  # End: count_up

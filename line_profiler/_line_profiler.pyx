@@ -1401,6 +1401,7 @@ cdef inline void inner_trace_callback(
     cdef bint has_last
     cdef int64 code_hash
     cdef int64 frame_key = 0
+    cdef bint is_cython = False
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
@@ -1420,6 +1421,7 @@ cdef inline void inner_trace_callback(
     else:
         # fallback for Cython functions
         block_hash = hash(code)
+        is_cython = True
 
     code_hash = compute_line_hash(block_hash, lineno)
 
@@ -1435,10 +1437,16 @@ cdef inline void inner_trace_callback(
             # the last-line records are kept per frame rather than per
             # code block, so that the records of recursive calls to a
             # function don't overwrite those of the calls further up the stack
-            if py_frame == NULL:
-                frame_key = <int64><intptr_t>get_current_frame_key()
-            else:
+            if py_frame != NULL:
                 frame_key = <int64><intptr_t>py_frame
+            elif is_cython:
+                # cython functions don't have frames of their own with
+                # sys.monitoring, so their records are kept per code
+                # block instead (which means that the times of recursive
+                # calls of Cython functions are still lost)
+                frame_key = <int64>block_hash
+            else:
+                frame_key = <int64><intptr_t>get_current_frame_key()
         ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
         # deref() is Cython's version of the -> accessor in C++. if we don't use deref then
