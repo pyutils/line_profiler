@@ -22,7 +22,7 @@ from cython.operator cimport dereference as deref
 from cpython.object cimport PyObject_Hash
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
 from cpython.version cimport PY_VERSION_HEX
-from libc.stdint cimport int64_t
+from libc.stdint cimport int64_t, intptr_t
 
 from libcpp.unordered_map cimport unordered_map
 import functools
@@ -101,6 +101,7 @@ cdef extern from "Python_wrapper.h":
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
     cdef void Py_XDECREF(PyObject *o)
+    cdef void *get_current_frame_key()
 
     cdef unsigned long PyThread_get_thread_ident()
 
@@ -750,7 +751,7 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             * ``loc_args`` and ``other_args`` should be tuples.
         """
         inner_trace_callback(
-            is_line_event, self.active_instances, code, lineno)
+            is_line_event, self.active_instances, code, lineno, NULL)
         if self._wrap_trace:
             self.mon_state.call_callback(event_id, code, loc_args, other_args)
 
@@ -1286,15 +1287,28 @@ datamodel.html#user-defined-functions
         """
         Raises:
             KeyError: If no profiling data is available on the current thread.
+
+        Note:
+            Internally the records are kept per frame (so that recursive
+            calls don't overwrite each other's), but this view is keyed
+            by block hash as before; if a function has more than one
+            active frame, the record of the innermost one is used.
         """
         try:
-            return (<dict>self._c_last_time)[PyThread_get_thread_ident()]
+            records = (<dict>self._c_last_time)[PyThread_get_thread_ident()]
         except KeyError as e:
             # We haven't actually profiled anything yet
             raise (KeyError('No profiling data on the current thread '
                             '(`threading.get_ident()` = '
                             f'{threading.get_ident()})')
                    .with_traceback(e.__traceback__)) from None
+        c_last_time = {}
+        for record in records.values():
+            block_hash = record.pop('block_hash')
+            current = c_last_time.get(block_hash)
+            if current is None or record['time'] > current['time']:
+                c_last_time[block_hash] = record
+        return c_last_time
 
     @property
     def code_map(self):
@@ -1373,7 +1387,8 @@ datamodel.html#user-defined-functions
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef inline void inner_trace_callback(
-        int is_line_event, set instances, object code, int lineno):
+        int is_line_event, set instances, object code, int lineno,
+        PyFrameObject *py_frame):
     """
     The basic building block for the trace callbacks.
     """
@@ -1385,6 +1400,7 @@ cdef inline void inner_trace_callback(
     cdef bint has_time = False
     cdef bint has_last
     cdef int64 code_hash
+    cdef int64 frame_key = 0
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
     cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
@@ -1416,13 +1432,25 @@ cdef inline void inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = True
+            # the last-line records are kept per frame rather than per
+            # code block, so that the records of recursive calls to a
+            # function don't overwrite those of the calls further up the stack
+            if py_frame == NULL:
+                frame_key = <int64><intptr_t>get_current_frame_key()
+            else:
+                frame_key = <int64><intptr_t>py_frame
         ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
         # deref() is Cython's version of the -> accessor in C++. if we don't use deref then
         # Cython thinks that when we index last_map,
         # we want pointer indexing (which is not the case)
-        if deref(last_map).count(block_hash):
-            old = deref(last_map)[block_hash]
+        has_last = False
+        if deref(last_map).count(frame_key):
+            old = deref(last_map)[frame_key]
+            # a record left by a frame of another function at the same
+            # address is stale
+            has_last = old.block_hash == block_hash
+        if has_last:
             line_entries = &(prof._c_code_map[code_hash])
             # Ensure that an entry exists in line_entries before accessing it
             entry = line_ensure_entry(line_entries, old.f_lineno, code_hash)
@@ -1432,19 +1460,17 @@ cdef inline void inner_trace_callback(
             # to correctly write `ptr->attr = (ptr->attr + incr)`
             entry.nhits += 1
             entry.total_time += time - old.time
-            has_last = True
-        else:
-            has_last = False
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
-            deref(last_map)[block_hash] = LastTime(lineno, hpTimer())
-        elif deref(last_map).count(block_hash):
+            deref(last_map)[frame_key] = LastTime(
+                lineno, hpTimer(), block_hash)
+        elif deref(last_map).count(frame_key):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            last_erase_if_present(last_map, block_hash)
+            last_erase_if_present(last_map, frame_key)
 
 
 cdef extern int legacy_trace_callback(
@@ -1486,7 +1512,8 @@ pystate.h#L16
         inner_trace_callback((what == PyTrace_LINE),
                              manager_.active_instances,
                              <object>code,
-                             PyFrame_GetLineNumber(py_frame))
+                             PyFrame_GetLineNumber(py_frame),
+                             py_frame)
         Py_XDECREF(code)
 
     # Call the trace callback that we're wrapping around where

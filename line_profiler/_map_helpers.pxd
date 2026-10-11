@@ -13,6 +13,7 @@ cdef extern from "Python_wrapper.h":
 cdef struct LastTime:
     int f_lineno
     PY_LONG_LONG time
+    long long block_hash
 
 cdef struct LineTime:
     long long code
@@ -20,7 +21,7 @@ cdef struct LineTime:
     PY_LONG_LONG total_time
     long nhits
 
-# Types used for mappings from code hash to last/line times.
+# Types used for mappings from frame/code hash to last/line times.
 ctypedef unordered_map[int64, LastTime] LastTimeMap
 ctypedef unordered_map[int64, LineTime] LineTimeMap
 
