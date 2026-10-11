@@ -219,9 +219,12 @@ def test_recursive_call_timing():
     (timings,) = stats.timings.values()
     *_, (_, sleep_nhits, sleep_time), (_, call_nhits, call_time) = timings
     assert sleep_nhits == call_nhits == 3
-    assert sleep_time * stats.unit >= 3 * delay
-    # the recursive calls on that line should take 2, 1, and 0 sleeps
-    assert call_time * stats.unit >= 3 * delay
+    assert sleep_time > 0
+    # the recursive calls on that line take 2, 1, and 0 sleeps, which is about
+    # as long as the sleeps on the line before (whereas the time used to be
+    # lost), so we compare with that rather than delay, since time.sleep() can
+    # be slightly shorter than requested on Windows
+    assert call_time >= .5 * sleep_time
 
 
 def test_enable_disable():
