@@ -1070,9 +1070,14 @@ def show_func(
             try:
                 stream.write(txt)
             except UnicodeEncodeError:
-                # todo: better handling of windows encoding issue
-                # for now just work around it
-                line_ = 'UnicodeEncodeError - help wanted for a fix'
+                # If the stream cannot encode the line's contents (e.g.
+                # an ascii stream and source with non-ascii characters),
+                # replace the offending characters with escape sequences
+                # instead of dropping the entire line.
+                encoding = getattr(stream, 'encoding', None) or 'ascii'
+                line_ = line_.encode(
+                    encoding, errors='backslashreplace'
+                ).decode(encoding)
                 txt = template % (
                     lineno,
                     nhits_s,
