@@ -10,6 +10,7 @@ import pickle
 import subprocess
 import sys
 import textwrap
+import time
 import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -194,6 +195,44 @@ def test_last_time():
     assert not get_last_time(prof)
     assert set(clt) == {hash(func.__wrapped__.__code__.co_code)}
     assert set(lt) == {func.__wrapped__.__code__}
+
+
+def test_recursive_call_timing():
+    """
+    Test that a line making a recursive call is timed like any other line
+    with a call in it, i.e. its time includes that of the call (the
+    records of the inner calls used to overwrite those of the outer ones,
+    so that the time was lost). Thanks to @notEvil for finding this bug in 2023!
+    """
+    prof = LineProfiler()
+    delay = .01
+    call_durations = []
+
+    def timed_recurse(n):
+        # this is not profiled, it just measures how long the recursive call 
+        # takes since time.sleep() can be quite a bit shorter or longer than
+        # requested depending on the platform
+        start = time.perf_counter()
+        recurse(n)
+        call_durations.append(time.perf_counter() - start)
+
+    @prof
+    def recurse(n):
+        if not n:
+            return
+        time.sleep(delay)
+        timed_recurse(n - 1)
+
+    recurse(3)
+    stats = prof.get_stats()
+    (timings,) = stats.timings.values()
+    *_, (_, sleep_nhits, sleep_time), (_, call_nhits, call_time) = timings
+    assert sleep_nhits == call_nhits == 3
+    assert len(call_durations) == 3
+    # the time of the line making the recursive calls should include all
+    # of them (whereas it used to be lost), so we allow for some slack
+    # between the profiler's timer and time.perf_counter()
+    assert call_time * stats.unit >= .9 * sum(call_durations)
 
 
 def test_enable_disable():

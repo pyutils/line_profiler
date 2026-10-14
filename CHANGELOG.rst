@@ -20,6 +20,8 @@ Changes
   targets if multiple thereof are imported in the same (from-)import
   statement, and (2) crashes when profiling modules containing
   ``from ... import *`` statements (#434)
+* FIX: Fixed bug where lines making recursive calls had incorrect
+  timing data. (#444)
 
 
 5.0.2
