@@ -1,131 +1,230 @@
 [build-system]
+build-backend = "setuptools.build_meta"
 requires = [
-    "setuptools>=68.2.2; python_version < '4.0'  and python_version >= '3.8'",
-    "Cython>=3.0.3",
-]
-build-backend = "setuptools.build_meta"  # comment out to disable pep517
-
-[tool.coverage.run]
-branch = true
-
-[tool.coverage.report]
-exclude_lines =[
-    "pragma: no cover",
-    ".*  # pragma: no cover",
-    ".*  # nocover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if trace is not None",
-    "verbose = .*",
-    "^ *raise",
-    "^ *pass *$",
-    "if _debug:",
-    "if __name__ == .__main__.:",
-    ".*if typing.TYPE_CHECKING:",
-    ".*if TYPE_CHECKING:",
-    "@typing.overload",
-    "@overload",
+  "cython>=3.0.3",
+  "setuptools>=77",
 ]
 
-omit =[
-    "*/setup.py"
+[project]
+name = "line_profiler"
+description = "Line-by-line profiler"
+license = "BSD-3-Clause"
+license-files = [
+  "LICENSE.txt",
+  "LICENSE_Python.txt",
+]
+authors = [ { name = "Robert Kern", email = "robert.kern@enthought.com" } ]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Utilities",
+]
+dynamic = [
+  "dependencies",
+  "optional-dependencies",
+  "readme",
+  "version",
+]
+urls.Homepage = "https://github.com/pyutils/line_profiler"
+scripts.kernprof = "kernprof:main"
+
+[tool.setuptools]
+py-modules = [
+  "kernprof",
+]
+include-package-data = true
+dynamic.dependencies.file = [
+  "requirements/runtime.txt",
+]
+dynamic.optional-dependencies.all.file = [
+  "requirements/optional-metadata.txt",
+  "requirements/ipython.txt",
+  "requirements/build.txt",
+]
+dynamic.optional-dependencies.build.file = [
+  "requirements/build.txt",
+]
+dynamic.optional-dependencies.docs.file = [
+  "requirements/docs-metadata.txt",
+  "requirements/ipython.txt",
+]
+dynamic.optional-dependencies.ipython.file = [
+  "requirements/ipython.txt",
+]
+dynamic.optional-dependencies.optional.file = [
+  "requirements/optional-metadata.txt",
+  "requirements/ipython.txt",
+]
+dynamic.optional-dependencies.tests.file = [
+  "requirements/tests.txt",
+]
+dynamic.readme.file = [
+  "README.rst",
+]
+dynamic.readme.content-type = "text/x-rst"
+dynamic.version.attr = "line_profiler.__version__"
+package-data.line_profiler = [
+  "py.typed",
+  "*.pyi",
+  "*.toml",
+  "rc/*.toml",
+]
+package-data."*" = [
+  "requirements/*.txt",
+]
+packages.find.where = [
+  ".",
+]
+packages.find.include = [
+  "line_profiler*",
+]
+
+[[tool.setuptools.ext-modules]]
+name = "line_profiler._line_profiler"
+sources = [
+  "line_profiler/_line_profiler.pyx",
+  "line_profiler/timers.c",
+  "line_profiler/c_trace_callbacks.c",
+]
+language = "c++"
+depends = [
+  "line_profiler/_map_helpers.pxd",
 ]
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
-# XXX: since `tests.yml` already defines `matrix.cibw_skip` for
-# `build_binpy_wheels`, can we deduplicate and just use that?
-# Or do we need these when building wheels for release, which may run on
-# separate pipelines?
-skip = ["*-win32", "cp310-win_arm64", "cp313-musllinux_i686"]
+build = "cp310-* cp311-* cp312-* cp313-* cp314-* cp315-*"
+skip = "pp* *-musllinux_* cp310-win_arm64"
 build-frontend = "build"
 build-verbosity = 1
 test-command = "python {project}/run_tests.py"
-test-extras = ["tests-strict", "runtime-strict"]
+test-extras = [
+  "tests",
+]
+linux.archs = [
+  "auto",
+]
+linux.before-all = "yum install epel-release lz4 lz4-devel -y"
+macos.archs = [
+  "x86_64",
+  "universal2",
+  "arm64",
+]
+macos.before-all = "brew install lz4"
+windows.archs = [
+  "AMD64",
+  "ARM64",
+]
+windows.before-all = "choco install lz4 -y"
 
-# https://cibuildwheel.readthedocs.io/en/stable/options/#archs
-[tool.cibuildwheel.linux]
-# We'll build X86 and ARM wheels natively on separate runners
-archs = ['auto']
-[tool.cibuildwheel.macos]
-archs = ["x86_64", "universal2", "arm64"]
-[tool.cibuildwheel.windows]
-archs = ['AMD64', 'ARM64']
-
+[tool.ruff]
+target-version = "py310"
+line-length = 80
+format.indent-style = "space"
+format.quote-style = "single"
+format.line-ending = "auto"
+format.skip-magic-trailing-comma = false
+format.docstring-code-format = false
+lint.select = [
+  "E",
+  "F",
+  "I",
+]
+lint.ignore = [
+  "E402",
+  "E501",
+]
 
 [tool.mypy]
 ignore_missing_imports = true
 
+[tool.ty]
+overrides = [ { include = [
+  "line_profiler/line_profiler_utils.py",
+], rules.unused-type-ignore-comment = "ignore" } ]
+rules.unused-ignore-comment = "ignore"
+rules.unused-type-ignore-comment = "ignore"
+rules.unresolved-import = "ignore"
+terminal.error-on-warning = false
+
+[tool.pytest]
+ini_options.addopts = "-p no:doctest --xdoctest --xdoctest-style=google --ignore-glob=setup.py --ignore-glob=dev --ignore-glob=docs"
+ini_options.norecursedirs = ".git ignore build __pycache__ dev _skbuild docs"
+ini_options.filterwarnings = [
+  "default",
+  "ignore:.*No cfgstr given in Cacher constructor or call.*:Warning",
+  "ignore:.*Define the __nice__ method for.*:Warning",
+  "ignore:.*private pytest class or function.*:Warning",
+]
+
+[tool.coverage]
+run.branch = true
+report.exclude_lines = [
+  ".*  # nocover",
+  ".*  # pragma: no cover",
+  ".*if six.PY2:",
+  "^ *pass *$",
+  "^ *raise",
+  "def __repr__",
+  "if __name__ == .__main__.:",
+  "if _debug:",
+  "if 0:",
+  "if trace is not None",
+  "pragma: no cover",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "verbose = .*",
+]
+report.omit = [
+  "*/setup.py",
+  "line_profiler/__main__.py",
+]
+
 [tool.xcookie]
-tags = [ "pyutils", "binpy", "github", "mypy", "binpy-ubuntu-arm"]
+tags = [
+  "pyutils",
+  "binpy",
+  "github",
+  "mypy",
+  "binpy-ubuntu-arm",
+]
 mod_name = "line_profiler"
 repo_name = "line_profiler"
 rel_mod_parent_dpath = "."
-os = [ "all", "linux", "osx", "win",]
-main_python = '3.13'
-min_python = '3.10'
-max_python = '3.14'
+os = [
+  "all",
+  "linux",
+  "osx",
+  "win",
+]
+main_python = "3.13"
+min_python = "3.10"
+max_python = "3.15"
+use_setup_py = false
 author = "Robert Kern"
 author_email = "robert.kern@enthought.com"
 description = "Line-by-line profiler"
 url = "https://github.com/pyutils/line_profiler"
-license = "BSD"
+license = "BSD-3-Clause"
 dev_status = "stable"
 ci_pypi_trusted_publishing = true
 ci_gpg_secret_transport = "direct_ci"
 typed = true
-skip_autogen = ["MANIFEST.in", "CHANGELOG.md"]
-test_env = """
-COVERAGE_CORE: ctrace
-"""
-
-[tool.xcookie.entry_points]
-# the console_scripts entry point creates the xdoctest executable
-console_scripts = [
-    "kernprof=kernprof:main",
+skip_autogen = [
+  "MANIFEST.in",
+  "CHANGELOG.md",
 ]
-
-
-[tool.pytest.ini_options]
-addopts = "--ignore-glob=setup.py --ignore-glob=dev --ignore-glob=setup.py --ignore-glob=docs --ignore-glob=agentx"
-norecursedirs = ".git ignore build __pycache__ dev _skbuild docs agentx"
-filterwarnings = [
-    "default",
+test_env = "COVERAGE_CORE: ctrace\n"
+workspace_members = []
+workspace_sync_versions = false
+use_pyproject_requirements = false
+entry_points.console_scripts = [
+  "kernprof=kernprof:main",
 ]
-
-[[tool.ty.overrides]]
-# Apply the ignore unresolved rules to these files
-include = [
-  "line_profiler/line_profiler_utils.py",
-]
-rules = { unused-type-ignore-comment = "ignore" }
-
-[tool.ruff]
-line-length = 80
-target-version = "py310"
-
-[tool.ruff.lint]
-# Enable Flake8 (E, F) and isort (I) rules.
-select = ["E", "F", "I"]
-# Ignore specific rules, for example, E501 (line too long) as it's handled by the formatter.
-ignore = [
-    "E501",  # line too long
-    "E402",  # Module level import not at top of file
-]
-
-[tool.ruff.format]
-quote-style = "single"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
-docstring-code-format = false
-
-[tool.ty.rules]
-unused-ignore-comment = "ignore"
-unused-type-ignore-comment = "ignore"
-unresolved-import = "ignore"
-
-[tool.ty.terminal]
-error-on-warning = false  # No longer the default since 0.0.52

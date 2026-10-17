@@ -1,13 +1,9 @@
-# Cython is the only hard requirement
+# Only the Python packaging backend and Cython compiler are needed to
+# produce native wheels from the pyproject.toml extension declaration.
 Cython>=3.0.3
+setuptools>=77
 
-setuptools>=68.2.2; python_version < '4.0'  and python_version >= '3.8'
-
-scikit-build>=0.11.1
-cmake>=3.21.2
-ninja>=1.10.2
-
-cibuildwheel>=3.1.2    ; python_version < '4.0'  and python_version >= '3.11'    # Python 3.11+
-cibuildwheel>=3.1.2    ; python_version < '3.11' and python_version >= '3.10'    # Python 3.10
-cibuildwheel>=2.19.2   ; python_version < '3.10' and python_version >= '3.9'     # Python 3.9
-cibuildwheel>=2.19.2   ; python_version < '3.9'  and python_version >= '3.8'     # Python 3.8
+# cibuildwheel requires Python >=3.11 as a host tool, even when it produces
+# wheels targeting Python 3.10. Do not require cibuildwheel on Python 3.10;
+# the extension's own build backend remains compatible with that version.
+cibuildwheel>=4.3.1 ; python_version >= '3.11'

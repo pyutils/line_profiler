@@ -1,6 +1,9 @@
 # cython: language_level=3
 # cython: infer_types=True
 # cython: legacy_implicit_noexcept=True
+# cython: linetrace=True
+# Line tracing is opt-in: define CYTHON_TRACE=1 while compiling to enable it.
+# For example, on Unix: CFLAGS=-DCYTHON_TRACE=1 CXXFLAGS=-DCYTHON_TRACE=1
 # distutils: language=c++
 # distutils: include_dirs = python25.pxd
 r"""
