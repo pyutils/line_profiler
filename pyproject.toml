@@ -34,7 +34,7 @@ omit =[
 ]
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+build = "cp310-* cp311-* cp312-* cp313-* cp314-* cp315-*"
 # XXX: since `tests.yml` already defines `matrix.cibw_skip` for
 # `build_binpy_wheels`, can we deduplicate and just use that?
 # Or do we need these when building wheels for release, which may run on
@@ -66,7 +66,7 @@ rel_mod_parent_dpath = "."
 os = [ "all", "linux", "osx", "win",]
 main_python = '3.13'
 min_python = '3.10'
-max_python = '3.14'
+max_python = '3.15'
 author = "Robert Kern"
 author_email = "robert.kern@enthought.com"
 description = "Line-by-line profiler"
