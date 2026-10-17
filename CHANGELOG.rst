@@ -23,6 +23,8 @@ Changes
 * FIX: Corrected line timing for recursive Python function calls by
   tracking timing state per execution frame (recursive Cython calls
   under ``sys.monitoring`` are still tracked per code block) (#444)
+* ENH: add support for Python 3.15
+* ENH: migrate away from setup.py
 
 
 5.0.2

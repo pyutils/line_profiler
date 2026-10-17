@@ -14,3 +14,4 @@ recursive-include line_profiler *.pxd
 recursive-include line_profiler *.pyd
 recursive-include line_profiler *.c
 recursive-include line_profiler *.h
+include dev/repair_windows_wheel.py

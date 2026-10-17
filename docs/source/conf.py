@@ -111,7 +111,6 @@ Notes:
 # sys.path.insert(0, os.path.abspath('.'))
 
 # -- Project information -----------------------------------------------------
-import sphinx_rtd_theme
 from os.path import exists
 from os.path import dirname
 from os.path import join
@@ -181,6 +180,7 @@ extensions = [
 ]
 
 todo_include_todos = True
+myst_heading_anchors = 3
 napoleon_google_docstring = True
 napoleon_use_param = False
 napoleon_use_ivar = True
@@ -236,6 +236,7 @@ intersphinx_mapping = {
     'xdoctest': ('https://xdoctest.readthedocs.io/en/latest/', None),
     'networkx': ('https://networkx.org/documentation/stable/', None),
     'scriptconfig': ('https://scriptconfig.readthedocs.io/en/latest/', None),
+    'kwconf': ('https://kwconf.readthedocs.io/en/latest/', None),
     'rich': ('https://rich.readthedocs.io/en/latest/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
     'sympy': ('https://docs.sympy.org/latest/', None),
@@ -271,9 +272,8 @@ python -m sphinx.ext.intersphinx https://pygments-doc.readthedocs.io/en/latest/o
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
-# The suffix(es) of source filenames.
-# You can specify multiple suffix as a list of string:
-#
+# The suffix(es) of source filenames. Mapping form avoids Sphinx
+# converting a legacy list at runtime.
 source_suffix = {
     '.rst': 'restructuredtext',
     '.md': 'markdown',
@@ -292,15 +292,7 @@ language = 'en'
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path .
-exclude_patterns = [
-    # Stale sphinx-apidoc entry points. The canonical API navigation is
-    # rooted at auto/line_profiler.rst and docs/source/index.rst.
-    'modules.rst',
-    'auto/modules.rst',
-    # There is no importable Python module named line_profiler.timers; the
-    # timers implementation lives in C support files.
-    'auto/line_profiler.timers.rst',
-]
+exclude_patterns = []
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
@@ -328,7 +320,10 @@ html_theme_options = {
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+# Keep empty by default to avoid warnings when generated projects do not
+# define custom static assets. Projects that create ``docs/source/_static``
+# can opt back in locally.
+html_static_path = []
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.

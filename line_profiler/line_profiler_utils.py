@@ -22,62 +22,22 @@ T2 = TypeVar('T2')
 PS = ParamSpec('PS')
 
 
-class _StrEnumBase(str, enum.Enum):
+class StringEnum(str, enum.Enum):
     """
-    Base class mimicking :py:class:`enum.StrEnum` in Python 3.11+.
+    A string-valued enumeration with case-insensitive lookup.
+
+    This implementation supports Python 3.10 and later without dynamically
+    selecting the enum base class. Using ``enum.Enum`` directly also lets
+    static type checkers identify subclasses' values as enum members.
 
     Example
     -------
     >>> import enum
-    >>>
-    >>>
-    >>> class MyEnum(_StrEnumBase):
-    ...     foo = enum.auto()
-    ...     BAR = enum.auto()
-    ...
-    >>>
-    >>> MyEnum.foo
-    <MyEnum.foo: 'foo'>
-    >>> MyEnum('bar')
-    <MyEnum.BAR: 'bar'>
-    >>> MyEnum('baz')
-    Traceback (most recent call last):
-      ...
-    ValueError: 'baz' is not a valid MyEnum
-    """
-
-    @staticmethod
-    def _generate_next_value_(name: str, *_, **__) -> str:
-        return name.lower()
-
-    def __eq__(self, other: object) -> bool:
-        return self.value == other
-
-    def __str__(self) -> str:
-        return self.value
-
-
-try:
-    from enum import StrEnum as _StrEnum
-except ImportError:
-    if not TYPE_CHECKING:  # Don't confuse the typechecker
-        _StrEnum = _StrEnumBase
-
-
-class StringEnum(_StrEnum):
-    """
-    Convenience wrapper around :py:class:`enum.StrEnum`.
-
-    Example
-    -------
-    >>> import enum
-    >>>
     >>>
     >>> class MyEnum(StringEnum):
     ...     foo = enum.auto()
     ...     BAR = enum.auto()
     ...
-    >>>
     >>> MyEnum.foo
     <MyEnum.foo: 'foo'>
     >>> MyEnum('bar')
@@ -90,6 +50,13 @@ class StringEnum(_StrEnum):
     >>> str(bar)
     'bar'
     """
+
+    @staticmethod
+    def _generate_next_value_(name: str, *_, **__) -> str:
+        return name.lower()
+
+    def __str__(self) -> str:
+        return self.value
 
     @classmethod
     def _missing_(cls, value: object) -> Self | None:
