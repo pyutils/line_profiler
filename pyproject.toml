@@ -130,6 +130,7 @@ windows.archs = [
   "AMD64",
   "ARM64",
 ]
+windows.repair-wheel-command = 'python "{project}/dev/repair_windows_wheel.py" "{wheel}" "{dest_dir}"'
 
 [tool.ruff]
 target-version = "py310"
