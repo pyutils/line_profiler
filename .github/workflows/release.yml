@@ -82,19 +82,19 @@ jobs:
         include:
         - os: ubuntu-latest
           arch: auto
-          cibw_skip: '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+          cibw_skip: pp* *-musllinux_* cp310-win_arm64
         - os: ubuntu-24.04-arm
           arch: auto
-          cibw_skip: '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+          cibw_skip: pp* *-musllinux_* cp310-win_arm64
         - os: macos-15
           arch: auto
-          cibw_skip: '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+          cibw_skip: pp* *-musllinux_* cp310-win_arm64
         - os: macos-15-intel
           arch: auto
-          cibw_skip: '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+          cibw_skip: pp* *-musllinux_* cp310-win_arm64
         - os: windows-latest
           arch: auto
-          cibw_skip: '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+          cibw_skip: pp* *-musllinux_* cp310-win_arm64
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -104,7 +104,7 @@ jobs:
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v4.2.1
+      uses: pypa/cibuildwheel@v4.3.1
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
@@ -170,7 +170,7 @@ jobs:
         IMPORTED_FPR=$($GPG_EXECUTABLE --list-keys --with-colons "$GPG_KEYID" | awk -F: '/^fpr/ { print $10; exit }')
         if [[ "$IMPORTED_FPR" != "$GPG_KEYID" ]]; then echo "ERROR: imported GPG fingerprint $IMPORTED_FPR does not match pinned $GPG_KEYID"; exit 1; fi
         echo "GPG fingerprint verified: $IMPORTED_FPR"
-        VERSION=$(python -c "import setup; print(setup.VERSION)")
+        VERSION=$(python -c 'import ast, pathlib; tree = ast.parse(pathlib.Path('"'"'line_profiler/__init__.py'"'"').read_text()); print(next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "__version__" for t in n.targets)))')
         python -m pip install pip uv -U
         python -m pip install packaging twine -U
         python -m pip install urllib3 requests[security]
@@ -266,7 +266,7 @@ jobs:
         IMPORTED_FPR=$($GPG_EXECUTABLE --list-keys --with-colons "$GPG_KEYID" | awk -F: '/^fpr/ { print $10; exit }')
         if [[ "$IMPORTED_FPR" != "$GPG_KEYID" ]]; then echo "ERROR: imported GPG fingerprint $IMPORTED_FPR does not match pinned $GPG_KEYID"; exit 1; fi
         echo "GPG fingerprint verified: $IMPORTED_FPR"
-        VERSION=$(python -c "import setup; print(setup.VERSION)")
+        VERSION=$(python -c 'import ast, pathlib; tree = ast.parse(pathlib.Path('"'"'line_profiler/__init__.py'"'"').read_text()); print(next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "__version__" for t in n.targets)))')
         python -m pip install pip uv -U
         python -m pip install packaging twine -U
         python -m pip install urllib3 requests[security]
@@ -339,7 +339,7 @@ jobs:
       id: release_meta
       shell: bash
       run: |-
-        export VERSION=$(python -c "import setup; print(setup.VERSION)")
+        export VERSION=$(python -c 'import ast, pathlib; tree = ast.parse(pathlib.Path('"'"'line_profiler/__init__.py'"'"').read_text()); print(next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "__version__" for t in n.targets)))')
         echo "VERSION=$VERSION"
         test -n "$VERSION" || { echo "failed to parse version" ; exit 1; }
         TAG="v$VERSION"

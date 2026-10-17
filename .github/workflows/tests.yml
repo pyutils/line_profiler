@@ -142,7 +142,7 @@ jobs:
         - windows-latest
         - ubuntu-24.04-arm
         cibw_skip:
-        - '*-win32 cp310-win_arm64 cp313-musllinux_i686'
+        - pp* *-musllinux_* cp310-win_arm64
         arch:
         - auto
     steps:
@@ -154,7 +154,7 @@ jobs:
       with:
         arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Build binary wheels
-      uses: pypa/cibuildwheel@v4.2.1
+      uses: pypa/cibuildwheel@v4.3.1
       with:
         output-dir: wheelhouse
         config-file: pyproject.toml
@@ -223,68 +223,77 @@ jobs:
         # for testing instead of using the more concise matrix notation.
         include:
         - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
+          install-extras: tests
           os: ubuntu-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests.txt
         - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
+          install-extras: tests
           os: macOS-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests.txt
         - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
+          install-extras: tests
           os: windows-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests.txt
         - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
+          install-extras: tests
           os: ubuntu-24.04-arm
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests.txt
         - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
+          install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests-optional.txt
         - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
+          install-extras: tests,optional
           os: macOS-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests-optional.txt
         - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
+          install-extras: tests,optional
           os: windows-latest
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests-optional.txt
         - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
+          install-extras: tests,optional
           os: ubuntu-24.04-arm
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests-optional.txt
         - python-version: '3.13'
-          install-extras: tests-strict,runtime-strict,optional-strict
+          install-extras: tests,optional
           os: windows-11-arm
           arch: auto
           allow-prereleases: 'false'
           check-latest: 'false'
-          use-lockfile: 'false'
+          use-lockfile: 'true'
+          lock-requirements: requirements/locks/tests-optional.txt
         - python-version: '3.13'
           install-extras: tests
           os: macOS-latest
@@ -539,6 +548,8 @@ jobs:
       shell: bash
       env:
         INSTALL_EXTRAS: ${{ matrix.install-extras }}
+        USE_UV_LOCK: ${{ matrix.use-lockfile }}
+        LOCK_REQUIREMENTS: ${{ matrix.lock-requirements }}
       run: |-
         if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
             MSVC_CL_EXE="$(command -v cl.exe || true)"
@@ -557,9 +568,9 @@ jobs:
         echo "Installing helpers: update pip"
         python -m pip install pip uv -U
         echo "Installing helpers: setuptools"
-        python -m uv pip install setuptools>=77 setuptools_scm wheel build -U
+        python -m uv pip install --resolution=highest setuptools>=77 setuptools_scm wheel build -U
         echo "Installing helpers: tomli and pkginfo"
-        python -m uv pip install tomli pkginfo packaging
+        python -m uv pip install --resolution=highest tomli pkginfo packaging
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
             from packaging import tags
@@ -594,7 +605,21 @@ jobs:
             INSTALL_TARGET="${WHEEL_FPATH}"
         fi
         echo "INSTALL_TARGET=$INSTALL_TARGET"
-        python -m pip install --prefer-binary "${INSTALL_TARGET}"
+        LOCK_ARGS=()
+        if [[ "${USE_UV_LOCK:-false}" == "true" ]]; then
+            if [[ -z "${LOCK_REQUIREMENTS:-}" ]]; then
+                echo "USE_UV_LOCK=true but LOCK_REQUIREMENTS is empty"
+                exit 1
+            fi
+            if [[ ! -f "$LOCK_REQUIREMENTS" ]]; then
+                echo "Missing checked-in lock requirements: $LOCK_REQUIREMENTS"
+                exit 1
+            fi
+            echo "Using checked-in lock requirements: $LOCK_REQUIREMENTS"
+            cat "$LOCK_REQUIREMENTS"
+            LOCK_ARGS=(--constraint "$LOCK_REQUIREMENTS")
+        fi
+        python -m uv pip install --prerelease=allow "${LOCK_ARGS[@]}" "${INSTALL_TARGET}"
         echo "Install finished."
     - name: Test wheel ${{ matrix.install-extras }}
       shell: bash
