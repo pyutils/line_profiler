@@ -1400,7 +1400,7 @@ cdef inline void inner_trace_callback(
     cdef bint has_time = False
     cdef bint has_last
     cdef int64 code_hash
-    cdef int64 frame_key = 0
+    cdef int64 last_time_key = 0
     cdef bint is_cython = False
     cdef object py_bytes_obj = code.co_code
     cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
@@ -1434,27 +1434,32 @@ cdef inline void inner_trace_callback(
         if not has_time:
             time = hpTimer()
             has_time = True
-            # the last-line records are kept per frame rather than per
-            # code block, so that the records of recursive calls to a
-            # function don't overwrite those of the calls further up the stack
+            # last_time_key identifies whose last-line record to use.
+            # for Python code, we use the executing frame so that the
+            # records of recursive calls to a function don't overwrite
+            # those of the calls further up the stack
+            # for Cython code under sys.monitoring, we use the code
+            # block, since Cython functions don't get frames of their
+            # own there (so the times of recursive calls of Cython
+            # functions are still lost)
+            # A frame address can theoretically equal the hash of an
+            # unrelated Cython code block, but that can't misattribute
+            # time bc (a record left by another code block is discarded
+            # as stale below), at worst the two drop each other's records
             if py_frame != NULL:
-                frame_key = <int64><intptr_t>py_frame
+                last_time_key = <int64><intptr_t>py_frame
             elif is_cython:
-                # cython functions don't have frames of their own with
-                # sys.monitoring, so their records are kept per code
-                # block instead (which means that the times of recursive
-                # calls of Cython functions are still lost)
-                frame_key = <int64>block_hash
+                last_time_key = <int64>block_hash
             else:
-                frame_key = <int64><intptr_t>get_current_frame_key()
+                last_time_key = <int64><intptr_t>get_current_frame_key()
         ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
         # deref() is Cython's version of the -> accessor in C++. if we don't use deref then
         # Cython thinks that when we index last_map,
         # we want pointer indexing (which is not the case)
         has_last = False
-        if deref(last_map).count(frame_key):
-            old = deref(last_map)[frame_key]
+        if deref(last_map).count(last_time_key):
+            old = deref(last_map)[last_time_key]
             # a record left by a frame of another function at the same
             # address is stale
             has_last = old.block_hash == block_hash
@@ -1471,14 +1476,14 @@ cdef inline void inner_trace_callback(
         if is_line_event:
             # Get the time again. This way, we don't record much time
             # wasted in this function.
-            deref(last_map)[frame_key] = LastTime(
+            deref(last_map)[last_time_key] = LastTime(
                 lineno, hpTimer(), block_hash)
-        elif deref(last_map).count(frame_key):
+        elif deref(last_map).count(last_time_key):
             # We are returning from a function, not executing a line.
             # Delete the last_time record. It may have already been
             # deleted if we are profiling a generator that is being
             # pumped past its end.
-            last_erase_if_present(last_map, frame_key)
+            last_erase_if_present(last_map, last_time_key)
 
 
 cdef extern int legacy_trace_callback(

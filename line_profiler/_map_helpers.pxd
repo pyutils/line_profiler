@@ -21,7 +21,9 @@ cdef struct LineTime:
     PY_LONG_LONG total_time
     long nhits
 
-# Types used for mappings from frame/code hash to last/line times.
+# Types used for mappings to last/line times; LastTimeMap is keyed by frame
+# address (Python code) or code-block hash (Cython code under
+# sys.monitoring), LineTimeMap by line hash.
 ctypedef unordered_map[int64, LastTime] LastTimeMap
 ctypedef unordered_map[int64, LineTime] LineTimeMap
 
