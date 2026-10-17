@@ -93,4 +93,21 @@
     }
 #endif
 
+/*
+ * Address identifying the currently executing frame, without
+ * materializing a frame object for it like PyEval_GetFrame() does in
+ * 3.11+. Used by the sys.monitoring callbacks, which (unlike legacy
+ * trace callbacks) aren't passed the frame.
+ */
+inline void *get_current_frame_key(void)
+{
+#if PY_VERSION_HEX >= 0x030d00a1  // 3.13.0a1
+    return (void *)PyThreadState_Get()->current_frame;
+#elif PY_VERSION_HEX >= 0x030b00a6  // 3.11.0a6
+    return (void *)PyThreadState_Get()->cframe->current_frame;
+#else
+    return (void *)PyEval_GetFrame();
+#endif
+}
+
 #endif // LINE_PROFILER_PYTHON_WRAPPER_H

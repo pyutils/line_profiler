@@ -145,3 +145,36 @@ def test_profile_cython_source(cython_example: Tuple[Path, ModuleType]) -> None:
             if all(chunk in line for chunk in ('result', '+', 'last_term')):
                 nhits += int(line.split()[1])
         assert nhits == expected_nhits
+
+
+@pytest.mark.skipif(
+    CANNOT_LINE_TRACE_CYTHON,
+    reason='Cannot line-trace Cython code in version '
+    + '.'.join(str(v) for v in sys.version_info[:3]),
+)
+def test_profile_cython_nested_calls(
+    cython_example: Tuple[Path, ModuleType],
+) -> None:
+    """
+    Check that the lines of a Cython function which call another Cython
+    function are profiled (Cython functions don't have frames of their
+    own, so the records of the two shouldn't be mixed up).
+    """
+    prof = LineProfiler()
+    _, module = cython_example
+    prof.add_function(module.count_up)
+    prof.add_function(module.add_one)
+    with prof:
+        assert module.count_up(10) == 10
+
+    with StringIO() as fobj:
+        prof.print_stats(fobj)
+        result = fobj.getvalue()
+        print(result)
+    assert 'Function: count_up' in result
+    assert 'Function: add_one' in result
+    (call_line,) = (
+        line for line in result.splitlines()
+        if 'total = add_one(total)' in line
+    )
+    assert int(call_line.split()[1]) == 10

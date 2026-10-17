@@ -20,6 +20,9 @@ Changes
   targets if multiple thereof are imported in the same (from-)import
   statement, and (2) crashes when profiling modules containing
   ``from ... import *`` statements (#434)
+* FIX: Corrected line timing for recursive Python function calls by
+  tracking timing state per execution frame (recursive Cython calls
+  under ``sys.monitoring`` are still tracked per code block) (#444)
 
 
 5.0.2
