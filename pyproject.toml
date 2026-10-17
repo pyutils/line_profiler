@@ -47,7 +47,6 @@ dynamic.dependencies.file = [
 dynamic.optional-dependencies.all.file = [
   "requirements/optional-metadata.txt",
   "requirements/ipython.txt",
-  "requirements/build.txt",
 ]
 dynamic.optional-dependencies.build.file = [
   "requirements/build.txt",
@@ -99,6 +98,17 @@ depends = [
   "line_profiler/_map_helpers.pxd",
 ]
 
+[tool.uv]
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "setup.py" },
+  { file = "setup.cfg" },
+  { dir = "src" },
+  { file = "requirements/*.txt" },
+  { file = "README.rst" },
+  { file = "line_profiler/__init__.py" },
+]
+
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-* cp315-*"
 skip = "pp* *-musllinux_* cp310-win_arm64"
@@ -111,18 +121,15 @@ test-extras = [
 linux.archs = [
   "auto",
 ]
-linux.before-all = "yum install epel-release lz4 lz4-devel -y"
 macos.archs = [
   "x86_64",
   "universal2",
   "arm64",
 ]
-macos.before-all = "brew install lz4"
 windows.archs = [
   "AMD64",
   "ARM64",
 ]
-windows.before-all = "choco install lz4 -y"
 
 [tool.ruff]
 target-version = "py310"

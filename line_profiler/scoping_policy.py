@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from enum import auto
 from types import FunctionType, MappingProxyType, ModuleType
-from typing import Callable, Literal, TypedDict, cast, overload, Union
+from typing import Callable, Literal, TypedDict, overload, Union
 from .line_profiler_utils import StringEnum
 
 
@@ -95,11 +94,13 @@ class ScopingPolicy(StringEnum):
         implementation details.
     """
 
-    EXACT = auto()
-    CHILDREN = auto()
-    DESCENDANTS = auto()
-    SIBLINGS = auto()
-    NONE = auto()
+    # Explicit values match StrEnum.auto() while allowing type checkers to
+    # recognize these as enum members rather than enum.auto() instances.
+    EXACT = 'exact'
+    CHILDREN = 'children'
+    DESCENDANTS = 'descendants'
+    SIBLINGS = 'siblings'
+    NONE = 'none'
 
     # Verification
 
@@ -166,19 +167,16 @@ class ScopingPolicy(StringEnum):
                 :py:meth:`LineProfiler.add_module`, or
                 :py:meth:`LineProfiler.add_callable`
         """
-        is_class = isinstance(namespace, type)
         if obj_type == 'module':
-            if is_class:
+            if isinstance(namespace, type):
                 return self._return_const(False)
-            return self._get_module_filter_in_module(
-                cast(ModuleType, namespace)
-            )
-        if is_class:
+            return self._get_module_filter_in_module(namespace)
+        if isinstance(namespace, type):
             return self._get_callable_filter_in_class(
-                cast(type, namespace), is_class=(obj_type == 'class')
+                namespace, is_class=(obj_type == 'class')
             )
         return self._get_callable_filter_in_module(
-            cast(ModuleType, namespace), is_class=(obj_type == 'class')
+            namespace, is_class=(obj_type == 'class')
         )
 
     @classmethod
