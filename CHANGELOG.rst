@@ -20,6 +20,8 @@ Changes
   targets if multiple thereof are imported in the same (from-)import
   statement, and (2) crashes when profiling modules containing
   ``from ... import *`` statements (#434)
+* ENH: add support for Python 3.15
+* ENH: migrate away from setup.py
 
 
 5.0.2

@@ -28,3 +28,4 @@ tests/htmlcov
 wheelhouse
 profile_output*
 *.egg-info/
+*.tar.gz
