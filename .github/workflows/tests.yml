@@ -230,6 +230,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests.txt
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.10'
           install-extras: tests
           os: macOS-latest
@@ -238,6 +239,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests.txt
+          wheel-artifact-os: macOS-latest
         - python-version: '3.10'
           install-extras: tests
           os: windows-latest
@@ -246,6 +248,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests.txt
+          wheel-artifact-os: windows-latest
         - python-version: '3.10'
           install-extras: tests
           os: ubuntu-24.04-arm
@@ -254,6 +257,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests.txt
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -262,6 +266,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests-optional.txt
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: macOS-latest
@@ -270,6 +275,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests-optional.txt
+          wheel-artifact-os: macOS-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: windows-latest
@@ -278,6 +284,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests-optional.txt
+          wheel-artifact-os: windows-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -286,6 +293,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests-optional.txt
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.13'
           install-extras: tests,optional
           os: windows-11-arm
@@ -294,6 +302,7 @@ jobs:
           check-latest: 'false'
           use-lockfile: 'true'
           lock-requirements: requirements/locks/tests-optional.txt
+          wheel-artifact-os: windows-latest
         - python-version: '3.13'
           install-extras: tests
           os: macOS-latest
@@ -301,6 +310,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.13'
           install-extras: tests
           os: windows-latest
@@ -308,6 +318,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.13'
           install-extras: tests
           os: ubuntu-24.04-arm
@@ -315,6 +326,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.13'
           install-extras: tests
           os: windows-11-arm
@@ -322,6 +334,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.10'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -329,6 +342,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.11'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -336,6 +350,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.12'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -343,6 +358,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -350,6 +366,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -357,6 +374,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.15'
           install-extras: tests,optional
           os: ubuntu-latest
@@ -364,6 +382,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-latest
         - python-version: '3.10'
           install-extras: tests,optional
           os: macOS-latest
@@ -371,6 +390,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.11'
           install-extras: tests,optional
           os: macOS-latest
@@ -378,6 +398,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.12'
           install-extras: tests,optional
           os: macOS-latest
@@ -385,6 +406,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: macOS-latest
@@ -392,6 +414,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.14'
           install-extras: tests,optional
           os: macOS-latest
@@ -399,6 +422,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.15'
           install-extras: tests,optional
           os: macOS-latest
@@ -406,6 +430,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: macOS-latest
         - python-version: '3.10'
           install-extras: tests,optional
           os: windows-latest
@@ -413,6 +438,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.11'
           install-extras: tests,optional
           os: windows-latest
@@ -420,6 +446,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.12'
           install-extras: tests,optional
           os: windows-latest
@@ -427,6 +454,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: windows-latest
@@ -434,6 +462,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.14'
           install-extras: tests,optional
           os: windows-latest
@@ -441,6 +470,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.15'
           install-extras: tests,optional
           os: windows-latest
@@ -448,6 +478,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.10'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -455,6 +486,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.11'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -462,6 +494,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.12'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -469,6 +502,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -476,6 +510,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.14'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -483,6 +518,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.15'
           install-extras: tests,optional
           os: ubuntu-24.04-arm
@@ -490,6 +526,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: ubuntu-24.04-arm
         - python-version: '3.11'
           install-extras: tests,optional
           os: windows-11-arm
@@ -497,6 +534,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.12'
           install-extras: tests,optional
           os: windows-11-arm
@@ -504,6 +542,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.13'
           install-extras: tests,optional
           os: windows-11-arm
@@ -511,6 +550,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.14'
           install-extras: tests,optional
           os: windows-11-arm
@@ -518,6 +558,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
         - python-version: '3.15'
           install-extras: tests,optional
           os: windows-11-arm
@@ -525,6 +566,7 @@ jobs:
           allow-prereleases: 'false'
           check-latest: 'false'
           use-lockfile: 'false'
+          wheel-artifact-os: windows-latest
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -542,7 +584,7 @@ jobs:
     - uses: actions/download-artifact@v7.0.0
       name: Download wheel for this platform
       with:
-        name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+        name: wheels-${{ matrix.wheel-artifact-os }}-${{ matrix.arch }}
         path: wheelhouse
     - name: Install wheel ${{ matrix.install-extras }}
       shell: bash
