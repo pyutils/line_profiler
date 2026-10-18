@@ -427,6 +427,31 @@ def test_abandoned_generator_and_coroutine_timing(tracing_core):
     assert get_tagged_line_stats(prof, gen)[0]['gen: unreached'][0] == 0
 
 
+def test_time_between_calls_not_recorded():
+    """
+    Test that the time spent between calls to a profiled function isn't
+    attributed to its lines (i.e. that its return events are always
+    handled).
+    """
+    prof = LineProfiler()
+    delay = .02
+
+    def func():
+        return 1
+
+    prof.add_function(func)
+    # Note: don't use prof as a decorator, which would disable it (and
+    # clear the timing records) after each call
+    with prof:
+        for _ in range(4):
+            func()
+            time.sleep(delay)
+    stats = prof.get_stats()
+    (timings,) = stats.timings.values()
+    assert sum(nhits for _, nhits, _ in timings) == 4
+    assert sum(t for _, _, t in timings) * stats.unit < delay
+
+
 def test_enable_disable():
     lp = LineProfiler()
     assert lp.enable_count == 0
