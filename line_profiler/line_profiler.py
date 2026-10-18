@@ -70,7 +70,7 @@ ColumnLiterals = Literal['line', 'hits', 'time', 'perhit', 'percent']
 
 
 # NOTE: This needs to be in sync with ../kernprof.py and __init__.py
-__version__ = '5.0.2'
+__version__ = '5.1.0'
 
 
 @functools.lru_cache()
