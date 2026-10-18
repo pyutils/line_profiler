@@ -50,7 +50,7 @@ import importlib.util
 import sys
 import types
 from collections.abc import MutableMapping
-from typing import Any, cast, Dict, Mapping
+from typing import Any
 from typing import ContextManager
 from ..line_profiler_utils import restore
 from .ast_tree_profiler import AstTreeProfiler
@@ -125,7 +125,7 @@ def run(
         Profiler = AstTreeProfiler
         module_obj = types.ModuleType('__main__')
 
-    namespace: MutableMapping[str, Any] = vars(module_obj)
+    namespace: dict[str, Any] = vars(module_obj)
     namespace.update(ns)
 
     profiler = Profiler(script_file, prof_mod, profile_imports)
@@ -138,4 +138,4 @@ def run(
         # then restore it via the context manager, so that the executed
         # code is run as `__main__`
         sys.modules['__main__'] = module_obj
-        exec(code_obj, cast(Dict[str, Any], namespace), namespace)  # type: ignore[redundant-cast]
+        exec(code_obj, namespace, namespace)

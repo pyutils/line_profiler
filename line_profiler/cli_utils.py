@@ -12,7 +12,6 @@ import pathlib
 import shutil
 import sys
 from os import PathLike
-from typing import cast
 from .toml_config import ConfigSource
 
 
@@ -332,4 +331,4 @@ def short_string_path(path: str | PathLike[str]) -> str:
     except ValueError:  # Not relative to the curdir
         pass
     paths_list = list(paths)
-    return cast(str, min(paths_list, key=len))
+    return min(paths_list, key=len)

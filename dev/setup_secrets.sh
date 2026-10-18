@@ -108,6 +108,14 @@ https://github.com/pyutils/line_profiler/settings/secrets/actions
 https://app.circleci.com/settings/project/github/pyutils/line_profiler/environment-variables?return-to=https%3A%2F%2Fapp.circleci.com%2Fpipelines%2Fgithub%2Fpyutils%2Fline_profiler
 '
 
+
+_log(){
+    # Print a tagged progress line. Goes to stderr so it can be filtered
+    # from data output, and so it survives subshell capture of stdout.
+    printf '::  %s\n' "$*" >&2
+}
+
+
 setup_package_environs(){
     __doc__="
     Setup environment variables specific for this project.
@@ -182,27 +190,65 @@ resolve_secret_value_from_varname_ptr(){
     printf '%s' "$secret_value"
 }
 
-upload_one_github_secret(){
-    local secret_name="$1"
-    local secret_value="$2"
-    local environment_name="${3:-}"
-    if [[ "$environment_name" == "" ]]; then
-        gh secret set "$secret_name" -b"$secret_value"
-    else
-        gh secret set "$secret_name" --env "$environment_name" -b"$secret_value"
-    fi
-}
-
-github_repo_full_name(){
-    local remote_url
-    remote_url="$(git remote get-url origin)"
+_github_repo_from_remote_url(){
+    local remote_url="$1"
     if [[ "$remote_url" == git@github.com:* ]]; then
         printf '%s' "${remote_url#git@github.com:}" | sed 's/\.git$//'
     elif [[ "$remote_url" == https://github.com/* ]]; then
         printf '%s' "${remote_url#https://github.com/}" | sed 's/\.git$//'
+    elif [[ "$remote_url" == ssh://git@github.com/* ]]; then
+        printf '%s' "${remote_url#ssh://git@github.com/}" | sed 's/\.git$//'
     else
-        echo "Unable to determine GitHub repo from origin: $remote_url" >&2
         return 1
+    fi
+}
+
+github_repo_full_name(){
+    # GH_REPO is the standard gh CLI override and is also injected by
+    # `xcookie secrets` when github_url identifies a GitHub mirror.
+    if [[ "${GH_REPO:-}" != "" ]]; then
+        printf '%s' "${GH_REPO#github.com/}"
+        return 0
+    fi
+
+    local remote_name
+    local remote_url
+    local candidate
+    local resolved=""
+    while IFS= read -r remote_name; do
+        remote_url="$(git remote get-url "$remote_name")"
+        candidate="$(_github_repo_from_remote_url "$remote_url")" || continue
+        if [[ "$resolved" == "" ]]; then
+            resolved="$candidate"
+        elif [[ "$resolved" != "$candidate" ]]; then
+            echo "Multiple GitHub repositories are configured; set GH_REPO=owner/repo explicitly." >&2
+            return 1
+        fi
+    done < <(git remote)
+
+    if [[ "$resolved" != "" ]]; then
+        printf '%s' "$resolved"
+        return 0
+    fi
+
+    echo "Unable to determine GitHub repo. Set GH_REPO=owner/repo or configure a GitHub remote." >&2
+    return 1
+}
+
+upload_one_github_secret(){
+    # Upload a secret to GitHub. `gh secret set` reads the value from stdin
+    # when no --body flag is given, which keeps the secret off argv (out of
+    # `ps` and `/proc/<pid>/cmdline`) and works across gh CLI versions —
+    # `--body-file` only exists on newer releases.
+    local secret_name="$1"
+    local secret_value="$2"
+    local environment_name="${3:-}"
+    local repo_full_name
+    repo_full_name="$(github_repo_full_name)" || return 1
+    if [[ "$environment_name" == "" ]]; then
+        printf '%s' "$secret_value" | gh secret set "$secret_name" --repo "$repo_full_name"
+    else
+        printf '%s' "$secret_value" | gh secret set "$secret_name" --repo "$repo_full_name" --env "$environment_name"
     fi
 }
 
@@ -239,7 +285,6 @@ setup_github_release_environments(){
 
 upload_github_secrets(){
     local mode="${1:-legacy}"
-    load_secrets
     unset GITHUB_TOKEN
     #printf "%s" "$GITHUB_TOKEN" | gh auth login --hostname Github.com --with-token
     if ! gh auth status ; then
@@ -254,13 +299,11 @@ upload_github_secrets(){
         pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
         testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
         setup_github_release_environments
-        toggle_setx_enter
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) || true
         if [[ "$secret_value" != "" ]]; then
             upload_one_github_secret "CI_SECRET" "$secret_value" "$pypi_env"
             upload_one_github_secret "CI_SECRET" "$secret_value" "$testpypi_env"
         fi
-        toggle_setx_exit
     elif [[ "$mode" == "direct_gpg" ]]; then
         # direct_ci GPG transport + non-trusted publishing.
         # GPG material is already uploaded by upload_github_gpg_secrets.
@@ -269,7 +312,6 @@ upload_github_secrets(){
         pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
         testpypi_env="${GITHUB_ENVIRONMENT_TESTPYPI:-testpypi}"
         setup_github_release_environments
-        toggle_setx_enter
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) || true
         if [[ "$secret_value" != "" ]]; then
             upload_one_github_secret "TWINE_USERNAME" "$secret_value" "$pypi_env"
@@ -287,304 +329,446 @@ upload_github_secrets(){
         if [[ "$secret_value" != "" ]]; then
             upload_one_github_secret "TEST_TWINE_PASSWORD" "$secret_value" "$testpypi_env"
         fi
-        toggle_setx_exit
     else
         # Legacy mode: all secrets repo-level, CI_SECRET included.
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_USERNAME TWINE_USERNAME) && upload_one_github_secret "TWINE_USERNAME" "$secret_value"
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_USERNAME TEST_TWINE_USERNAME) && upload_one_github_secret "TEST_TWINE_USERNAME" "$secret_value"
-        toggle_setx_enter
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_CI_SECRET CI_SECRET) && upload_one_github_secret "CI_SECRET" "$secret_value"
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TWINE_PASSWORD TWINE_PASSWORD) && upload_one_github_secret "TWINE_PASSWORD" "$secret_value"
         secret_value=$(resolve_secret_value_from_varname_ptr VARNAME_TEST_TWINE_PASSWORD TEST_TWINE_PASSWORD) && upload_one_github_secret "TEST_TWINE_PASSWORD" "$secret_value"
-        toggle_setx_exit
     fi
 }
 
 
-toggle_setx_enter(){
-    # Can we do something like a try/finally?
-    # https://stackoverflow.com/questions/15656492/writing-try-catch-finally-in-shell
-    echo "Enter sensitive area"
-    if [[ -n "${-//[^x]/}" ]]; then
-        __context_1_toggle_setx=1
+_gitlab_check_auth(){
+    # Smoke-test that PRIVATE_GITLAB_TOKEN authenticates against HOST before
+    # any upload work runs. Surfaces a clear, actionable message when the
+    # token is missing, revoked, expired, or pointed at the wrong instance.
+    # Assumes PRIVATE_GITLAB_TOKEN and HOST are in scope.
+    local TMP_AUTH http_code username
+    TMP_AUTH=$(mktemp -t gitlab-auth-XXXXXXXXXX)
+    http_code=$(curl --silent --output "$TMP_AUTH" --write-out '%{http_code}' \
+        --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/user")
+    if [[ "$http_code" != "200" ]]; then
+        echo "ERROR: GitLab authentication failed against $HOST (HTTP $http_code)" >&2
+        echo "       The PRIVATE_GITLAB_TOKEN env var is invalid, expired, revoked," >&2
+        echo "       lacks 'api' scope, or belongs to a different GitLab instance." >&2
+        echo "       Create a new personal access token with 'api' scope at:" >&2
+        echo "         $HOST/-/user_settings/personal_access_tokens" >&2
+        rm -f "$TMP_AUTH"
+        return 1
+    fi
+    username=$(jq -r '.username // "?"' < "$TMP_AUTH")
+    rm -f "$TMP_AUTH"
+    _log "GitLab auth OK: authenticated as '$username' on $HOST"
+}
+
+
+_secret_fingerprint(){
+    # Compute a stable 12-hex-char SHA-256 prefix of a secret value so we can
+    # compare local vs. remote values in logs without revealing them.
+    # Reads the secret from stdin to avoid putting it on argv (where `ps`
+    # could observe it). Empty input prints "(empty)".
+    local digest
+    digest=$(sha256sum | cut -c1-12)
+    # SHA-256 of the empty string starts with e3b0c44298fc — treat as empty.
+    if [[ "$digest" == "e3b0c44298fc" ]]; then
+        echo "(empty)"
     else
-        __context_1_toggle_setx=0
-    fi
-    if [[ "$__context_1_toggle_setx" == "1" ]]; then
-        echo "Setx was on, disable temporarily"
-        set +x
+        echo "$digest"
     fi
 }
 
-toggle_setx_exit(){
-    echo "Exit sensitive area"
-    # Can we guarantee this will happen?
-    if [[ "$__context_1_toggle_setx" == "1" ]]; then
-        set -x
+
+_gitlab_pick_remote(){
+    # Echo the name of the remote that points at a GitLab instance.
+    # A project may have multiple backends (e.g. `origin` -> github.com and
+    # `gitlab` -> gitlab.kitware.com), so we cannot assume `origin` is the
+    # GitLab remote. Preference order:
+    #   1. a remote literally named `gitlab`
+    #   2. any remote whose URL host contains `gitlab`
+    #   3. `origin` (legacy fallback for single-backend repos)
+    local name url
+    if git remote get-url gitlab >/dev/null 2>&1; then
+        printf '%s\n' gitlab
+        return 0
+    fi
+    while read -r name; do
+        [[ -z "$name" ]] && continue
+        url=$(git remote get-url "$name" 2>/dev/null) || continue
+        if [[ "$url" == *gitlab* ]]; then
+            printf '%s\n' "$name"
+            return 0
+        fi
+    done < <(git remote 2>/dev/null)
+    printf '%s\n' origin
+}
+
+
+_gitlab_remote_info(){
+    # Parse the GitLab remote URL and emit three lines: HOST PROJECT_PATH GROUP_PATH.
+    # Supports SSH (user@host:ns/repo.git) and HTTPS (https://host/ns/repo.git)
+    # and arbitrarily nested namespaces. The GitLab remote is auto-detected
+    # (see _gitlab_pick_remote) rather than assumed to be `origin`.
+    local remote_name remote_url host path
+    remote_name=$(_gitlab_pick_remote)
+    remote_url=$(git remote get-url "$remote_name" 2>/dev/null) || {
+        echo "ERROR: cannot read '$remote_name' remote URL" >&2
+        return 1
+    }
+    if [[ "$remote_url" =~ ^[^@/:]+@([^:]+):(.+)$ ]]; then
+        # SCP-style: user@host:namespace/repo
+        host="${BASH_REMATCH[1]}"
+        path="${BASH_REMATCH[2]}"
+    elif [[ "$remote_url" =~ ^ssh://([^/@]+@)?([^/:]+)(:[0-9]+)?/(.+)$ ]]; then
+        # ssh://[user@]host[:port]/path
+        host="${BASH_REMATCH[2]}"
+        path="${BASH_REMATCH[4]}"
+    elif [[ "$remote_url" =~ ^https?://([^/@]+@)?([^/]+)/(.+)$ ]]; then
+        # http(s)://[user@]host/path
+        host="${BASH_REMATCH[2]}"
+        path="${BASH_REMATCH[3]}"
+    else
+        echo "ERROR: unrecognized GitLab remote URL: $remote_url" >&2
+        return 1
+    fi
+    path="${path%.git}"
+    printf '%s\n%s\n%s\n' "https://$host" "$path" "${path%%/*}"
+}
+
+
+_gitlab_upsert_var(){
+    # Upsert a protected, masked GitLab CI/CD variable.
+    # Usage: _gitlab_upsert_var <api_base_url> <key> <<<"$value"
+    # Reads the secret value from stdin (here-string body) so it never
+    # appears on argv — `ps` cannot see it. <api_base_url> is e.g.
+    # "$HOST/api/v4/projects/$PID/variables". Reads PRIVATE_GITLAB_TOKEN
+    # from the caller's scope.
+    local base_url="$1" key="$2"
+    local value http_code rc
+    value=$(cat)
+    _log "GitLab upsert $key -> $base_url"
+    http_code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$base_url/$key")
+    if [[ "$http_code" == "200" ]]; then
+        curl --fail --silent --show-error --output /dev/null --request PUT \
+            --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+            "$base_url/$key" \
+            --form "value=$value" \
+            --form "protected=true" \
+            --form "masked=true" \
+            --form "environment_scope=*" \
+            --form "variable_type=env_var"
+    else
+        curl --fail --silent --show-error --output /dev/null --request POST \
+            --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+            "$base_url" \
+            --form "key=$key" \
+            --form "value=$value" \
+            --form "protected=true" \
+            --form "masked=true" \
+            --form "environment_scope=*" \
+            --form "variable_type=env_var"
+    fi
+    rc=$?
+    if [[ "$rc" != "0" ]]; then
+        echo "ERROR: failed to upsert GitLab variable '$key'" >&2
+        return 1
     fi
 }
 
 
 upload_gitlab_group_secrets(){
     __doc__="
-    Use the gitlab API to modify group-level secrets
+    Upsert each configured secret as a protected, masked group-level CI/CD
+    variable. Secret values are never echoed: we only print 12-hex-char
+    SHA-256 fingerprints so local/remote drift is observable without
+    disclosing the values themselves.
     "
-    # In Repo Directory
-    load_secrets
-    REMOTE=origin
-    GROUP_NAME=$(git remote get-url $REMOTE | cut -d ":" -f 2 | cut -d "/" -f 1)
-    HOST=https://$(git remote get-url $REMOTE | cut -d "/" -f 1 | cut -d "@" -f 2 | cut -d ":" -f 1)
+    # NOTE: any `source` MUST happen before the RETURN trap is set,
+    # because bash fires RETURN on source completion as well as on
+    # function return — see `man bash` under 'trap'.
+    source dev/secrets_configuration.sh
+
+    local HOST PROJECT_PATH GROUP_NAME
+    { read -r HOST; read -r PROJECT_PATH; read -r GROUP_NAME; } < <(_gitlab_remote_info) || return 1
     echo "
     * GROUP_NAME = $GROUP_NAME
     * HOST = $HOST
     "
-    PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
-    if [[ "$PRIVATE_GITLAB_TOKEN" == "ERROR" ]]; then
-        echo "Failed to load authentication key"
+
+    local PRIVATE_GITLAB_TOKEN="${PRIVATE_GITLAB_TOKEN:-}"
+    if [[ -z "$PRIVATE_GITLAB_TOKEN" ]]; then
+        echo "ERROR: PRIVATE_GITLAB_TOKEN is not set in the environment." >&2
+        echo "       Export a GitLab personal access token with 'api' scope" >&2
+        echo "       before running rotate-secrets, e.g.:" >&2
+        echo "           export PRIVATE_GITLAB_TOKEN=<your-token>" >&2
+        return 1
+    fi
+    _gitlab_check_auth || return 1
+
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d -t gitlab-vars-XXXXXXXXXX)
+    chmod 700 "$TMP_DIR"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$TMP_DIR'" RETURN
+
+    local GROUP_ID
+    curl --fail --silent --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
+    GROUP_ID=$(jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id" < "$TMP_DIR/all_group_info")
+    echo "GROUP_ID = $GROUP_ID"
+
+    # Fetch group-level variables. This response includes plaintext values
+    # of masked variables (GitLab masking only affects job logs), so the
+    # response file lives in a 0700 tmpdir cleaned up by the RETURN trap.
+    curl --fail --silent --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/groups/$GROUP_ID/variables" > "$TMP_DIR/group_vars"
+    local rc=$?
+    if [[ "$rc" != "0" ]]; then
+        echo "ERROR: failed to fetch group-level variables (permission issue?)" >&2
         return 1
     fi
 
-    TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
-    GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
-    echo "GROUP_ID = $GROUP_ID"
-
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
-    < "$TMP_DIR/group_info" jq
-
-    # Get group-level secret variables
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" > "$TMP_DIR/group_vars"
-    < "$TMP_DIR/group_vars" jq '.[] | .key'
-
-    if [[ "$?" != "0" ]]; then
-        echo "Failed to access group level variables. Probably a permission issue"
-    fi
-
-    source dev/secrets_configuration.sh
-    SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
+    local SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
+    local SECRET_VARNAME_PTR SECRET_VARNAME LOCAL_VALUE REMOTE_VALUE LOCAL_FP REMOTE_FP state
     for SECRET_VARNAME_PTR in "${SECRET_VARNAME_ARR[@]}"; do
         SECRET_VARNAME=${!SECRET_VARNAME_PTR}
+        if [[ -z "$SECRET_VARNAME" ]]; then
+            continue
+        fi
         echo ""
         echo " ---- "
-        LOCAL_VALUE=${!SECRET_VARNAME}
-        REMOTE_VALUE=$(< "$TMP_DIR/group_vars" jq -r ".[] | select(.key==\"$SECRET_VARNAME\") | .value")
-
-        # Print current local and remote value of a variable
         echo "SECRET_VARNAME_PTR = $SECRET_VARNAME_PTR"
         echo "SECRET_VARNAME = $SECRET_VARNAME"
-        echo "(local)  $SECRET_VARNAME = $LOCAL_VALUE"
-        echo "(remote) $SECRET_VARNAME = $REMOTE_VALUE"
 
-        #curl --request GET --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables/SECRET_VARNAME" | jq -r .message
-        if [[ "$REMOTE_VALUE" == "" ]]; then
-            # New variable
-            echo "Remove variable does not exist, posting"
-
-            toggle_setx_enter
-            curl --fail --silent --show-error \
-                --request POST --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables" \
-                --form "key=${SECRET_VARNAME}" \
-                --form "value=${LOCAL_VALUE}" \
-                --form "protected=true" \
-                --form "masked=true" \
-                --form "environment_scope=*" \
-                --form "variable_type=env_var"
-            toggle_setx_exit
-        elif [[ "$REMOTE_VALUE" != "$LOCAL_VALUE" ]]; then
-            echo "Remove variable does not agree, putting"
-            # Update variable value
-            toggle_setx_enter
-            curl --fail --silent --show-error \
-                --request PUT --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID/variables/$SECRET_VARNAME" \
-                    --form "value=${LOCAL_VALUE}" \
-                    --form "protected=true" \
-                    --form "masked=true" \
-                    --form "environment_scope=*" \
-                    --form "variable_type=env_var"
-            toggle_setx_exit
+        # Read the local & remote values, fingerprint each, and decide what
+        # action to take. Values themselves are never printed — only the
+        # fingerprints — so logs are safe to share.
+        LOCAL_VALUE=${!SECRET_VARNAME}
+        REMOTE_VALUE=$(jq -r ".[] | select(.key==\"$SECRET_VARNAME\") | .value" < "$TMP_DIR/group_vars")
+        LOCAL_FP=$(printf '%s' "$LOCAL_VALUE" | _secret_fingerprint)
+        REMOTE_FP=$(printf '%s' "$REMOTE_VALUE" | _secret_fingerprint)
+        if [[ -z "$REMOTE_VALUE" ]]; then
+            state=new
+        elif [[ "$REMOTE_VALUE" == "$LOCAL_VALUE" ]]; then
+            state=match
         else
-            echo "Remote value agrees with local"
+            state=update
         fi
+
+        echo "(local)  $SECRET_VARNAME [${#LOCAL_VALUE} chars, fp=$LOCAL_FP]"
+        echo "(remote) $SECRET_VARNAME [${#REMOTE_VALUE} chars, fp=$REMOTE_FP]"
+
+        case "$state" in
+            new)
+                echo "Remote variable does not exist, posting"
+                _gitlab_upsert_var "$HOST/api/v4/groups/$GROUP_ID/variables" "$SECRET_VARNAME" <<<"$LOCAL_VALUE"
+                ;;
+            update)
+                echo "Remote variable disagrees with local, putting"
+                _gitlab_upsert_var "$HOST/api/v4/groups/$GROUP_ID/variables" "$SECRET_VARNAME" <<<"$LOCAL_VALUE"
+                ;;
+            match)
+                echo "Remote value agrees with local"
+                ;;
+        esac
     done
-    rm "$TMP_DIR/group_vars"
 }
 
 upload_gitlab_repo_secrets(){
     __doc__="
-    Use the gitlab API to modify group-level secrets
+    Upsert each configured secret as a protected, masked project-level CI/CD
+    variable. Secret values are never echoed: we only print 12-hex-char
+    SHA-256 fingerprints so local/remote drift is observable without
+    disclosing the values themselves.
     "
-    # In Repo Directory
-    load_secrets
-    REMOTE=origin
-    GROUP_NAME=$(git remote get-url $REMOTE | cut -d ":" -f 2 | cut -d "/" -f 1)
-    PROJECT_NAME=$(git remote get-url $REMOTE | cut -d ":" -f 2 | cut -d "/" -f 2 | cut -d "." -f 1)
-    HOST=https://$(git remote get-url $REMOTE | cut -d "/" -f 1 | cut -d "@" -f 2 | cut -d ":" -f 1)
+    # NOTE: any `source` MUST happen before the RETURN trap is set,
+    # because bash fires RETURN on source completion as well as on
+    # function return — see `man bash` under 'trap'.
+    source dev/secrets_configuration.sh
+
+    local HOST PROJECT_PATH GROUP_NAME
+    { read -r HOST; read -r PROJECT_PATH; read -r GROUP_NAME; } < <(_gitlab_remote_info) || return 1
     echo "
     * GROUP_NAME = $GROUP_NAME
-    * PROJECT_NAME = $PROJECT_NAME
+    * PROJECT_PATH = $PROJECT_PATH
     * HOST = $HOST
     "
-    PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
-    if [[ "$PRIVATE_GITLAB_TOKEN" == "ERROR" ]]; then
-        echo "Failed to load authentication key"
+
+    local PRIVATE_GITLAB_TOKEN="${PRIVATE_GITLAB_TOKEN:-}"
+    if [[ -z "$PRIVATE_GITLAB_TOKEN" ]]; then
+        echo "ERROR: PRIVATE_GITLAB_TOKEN is not set in the environment." >&2
+        echo "       Export a GitLab personal access token with 'api' scope" >&2
+        echo "       before running rotate-secrets, e.g.:" >&2
+        echo "           export PRIVATE_GITLAB_TOKEN=<your-token>" >&2
+        return 1
+    fi
+    _gitlab_check_auth || return 1
+
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d -t gitlab-vars-XXXXXXXXXX)
+    chmod 700 "$TMP_DIR"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$TMP_DIR'" RETURN
+
+    # URL-encoded path lookup is more robust than legacy group→project walk;
+    # works for nested namespaces and requires narrower scope.
+    local PROJECT_PATH_ENC=${PROJECT_PATH//\//%2F}
+    local PROJECT_ID
+    PROJECT_ID=$(curl --fail --silent --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/projects/$PROJECT_PATH_ENC" \
+        | jq -r '.id // empty')
+    if [[ -z "$PROJECT_ID" ]]; then
+        echo "ERROR: could not determine GitLab project ID for $PROJECT_PATH" >&2
+        return 1
+    fi
+    echo "PROJECT_ID = $PROJECT_ID"
+
+    # Fetch project-level variables (response contains plaintext values).
+    curl --fail --silent --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/projects/$PROJECT_ID/variables" > "$TMP_DIR/project_vars"
+    local rc=$?
+    if [[ "$rc" != "0" ]]; then
+        echo "ERROR: failed to fetch project-level variables (permission issue?)" >&2
         return 1
     fi
 
-    TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
-    toggle_setx_enter
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
-    toggle_setx_exit
-    GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
-    echo "GROUP_ID = $GROUP_ID"
-
-    toggle_setx_enter
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
-    toggle_setx_exit
-    GROUP_ID=$(< "$TMP_DIR/all_group_info" jq ". | map(select(.path==\"$GROUP_NAME\")) | .[0].id")
-    < "$TMP_DIR/group_info" jq
-
-    PROJECT_ID=$(< "$TMP_DIR/group_info" jq ".projects | map(select(.path==\"$PROJECT_NAME\")) | .[0].id")
-    echo "PROJECT_ID = $PROJECT_ID"
-
-    # Get group-level secret variables
-    toggle_setx_enter
-    curl --fail --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables" > "$TMP_DIR/project_vars"
-    toggle_setx_exit
-    < "$TMP_DIR/project_vars" jq '.[] | .key'
-    if [[ "$?" != "0" ]]; then
-        echo "Failed to access project level variables. Probably a permission issue"
-    fi
-
     local mode="${1:-legacy}"
-
-    LIVE_MODE=1
-    source dev/secrets_configuration.sh
-    if [[ "$mode" == "direct_gpg" ]]; then
-        # In direct_ci transport mode the GPG key material is uploaded as
-        # project-level secrets by upload_gitlab_gpg_secrets; CI_SECRET is not
-        # needed.  Only Twine and push-token secrets are uploaded here.
+    local SECRET_VARNAME_ARR
+    if [[ "$mode" == "trusted_publishing_direct_gpg" ]]; then
+        # PyPI credentials are replaced by OIDC. GPG material is uploaded
+        # separately, so GitLab only needs the repository push credential used
+        # by the release/tag step.
+        SECRET_VARNAME_ARR=(VARNAME_PUSH_TOKEN)
+    elif [[ "$mode" == "trusted_publishing_encrypted_gpg" ]]; then
+        # Trusted Publishing removes Twine credentials, but the legacy
+        # encrypted-repo signing transport still needs CI_SECRET and the
+        # release/tag step still needs the push credential.
+        SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_PUSH_TOKEN)
+    elif [[ "$mode" == "direct_gpg" ]]; then
+        # GPG material is uploaded separately by upload_gitlab_gpg_secrets;
+        # CI_SECRET isn't needed in this mode.
         SECRET_VARNAME_ARR=(VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
     else
         SECRET_VARNAME_ARR=(VARNAME_CI_SECRET VARNAME_TWINE_PASSWORD VARNAME_TEST_TWINE_PASSWORD VARNAME_TWINE_USERNAME VARNAME_TEST_TWINE_USERNAME VARNAME_PUSH_TOKEN)
     fi
+
+    local SECRET_VARNAME_PTR SECRET_VARNAME LOCAL_VALUE REMOTE_VALUE LOCAL_FP REMOTE_FP state
     for SECRET_VARNAME_PTR in "${SECRET_VARNAME_ARR[@]}"; do
         SECRET_VARNAME=${!SECRET_VARNAME_PTR}
+        if [[ -z "$SECRET_VARNAME" ]]; then
+            continue
+        fi
         echo ""
         echo " ---- "
-        LOCAL_VALUE=${!SECRET_VARNAME}
-        REMOTE_VALUE=$(< "$TMP_DIR/project_vars" jq -r ".[] | select(.key==\"$SECRET_VARNAME\") | .value")
-
-        # Print current local and remote value of a variable
         echo "SECRET_VARNAME_PTR = $SECRET_VARNAME_PTR"
         echo "SECRET_VARNAME = $SECRET_VARNAME"
-        echo "(local)  $SECRET_VARNAME = $LOCAL_VALUE"
-        echo "(remote) $SECRET_VARNAME = $REMOTE_VALUE"
 
-        #curl --request GET --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/projects/$PROJECT_ID/variables/SECRET_VARNAME" | jq -r .message
-        if [[ "$REMOTE_VALUE" == "" ]]; then
-            # New variable
-            echo "Remove variable does not exist, posting"
-            if [[ "$LIVE_MODE" == "1" ]]; then
-                curl --fail --silent --show-error \
-                    --request POST \
-                    --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-                    "$HOST/api/v4/projects/$PROJECT_ID/variables" \
-                    --form "key=${SECRET_VARNAME}" \
-                    --form "value=${LOCAL_VALUE}" \
-                    --form "protected=true" \
-                    --form "masked=true" \
-                    --form "environment_scope=*" \
-                    --form "variable_type=env_var"
-            else
-                echo "dry run, not posting"
-            fi
-        elif [[ "$REMOTE_VALUE" != "$LOCAL_VALUE" ]]; then
-            echo "Remove variable does not agree, putting"
-            # Update variable value
-            if [[ "$LIVE_MODE" == "1" ]]; then
-                curl --fail --silent --show-error \
-                    --request PUT \
-                    --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-                    "$HOST/api/v4/projects/$PROJECT_ID/variables/$SECRET_VARNAME" \
-                    --form "value=${LOCAL_VALUE}" \
-                    --form "protected=true" \
-                    --form "masked=true" \
-                    --form "environment_scope=*" \
-                    --form "variable_type=env_var"
-            else
-                echo "dry run, not putting"
-            fi
+        LOCAL_VALUE=${!SECRET_VARNAME}
+        REMOTE_VALUE=$(jq -r ".[] | select(.key==\"$SECRET_VARNAME\") | .value" < "$TMP_DIR/project_vars")
+        LOCAL_FP=$(printf '%s' "$LOCAL_VALUE" | _secret_fingerprint)
+        REMOTE_FP=$(printf '%s' "$REMOTE_VALUE" | _secret_fingerprint)
+        if [[ -z "$REMOTE_VALUE" ]]; then
+            state=new
+        elif [[ "$REMOTE_VALUE" == "$LOCAL_VALUE" ]]; then
+            state=match
         else
-            echo "Remote value agrees with local"
+            state=update
         fi
+
+        echo "(local)  $SECRET_VARNAME [${#LOCAL_VALUE} chars, fp=$LOCAL_FP]"
+        echo "(remote) $SECRET_VARNAME [${#REMOTE_VALUE} chars, fp=$REMOTE_FP]"
+
+        case "$state" in
+            new)
+                echo "Remote variable does not exist, posting"
+                _gitlab_upsert_var "$HOST/api/v4/projects/$PROJECT_ID/variables" "$SECRET_VARNAME" <<<"$LOCAL_VALUE"
+                ;;
+            update)
+                echo "Remote variable disagrees with local, putting"
+                _gitlab_upsert_var "$HOST/api/v4/projects/$PROJECT_ID/variables" "$SECRET_VARNAME" <<<"$LOCAL_VALUE"
+                ;;
+            match)
+                echo "Remote value agrees with local"
+                ;;
+        esac
     done
-    rm "$TMP_DIR/project_vars"
 }
 
 
 export_encrypted_code_signing_keys(){
-    # You will need to rerun this whenever the signkeys expire and are renewed
+    __doc__="
+    Export the GPG signing subkey, public key, and ownertrust, encrypt each
+    with CI_SECRET via openssl, and stage the resulting .enc files for
+    commit. Rerun whenever the signing subkey is rotated.
 
-    # Load or generate secrets
-    load_secrets
-
+    Security notes:
+    - Plaintext key material is written to a private 0700 mktemp dir and
+      cleaned up via a RETURN trap. The repo working tree (dev/) only ever
+      sees the encrypted .enc files and the public fingerprint anchor.
+    - CI_SECRET is never echoed. Passed to openssl via the GLKWS env var
+      (GLKWS=$CI_SECRET openssl ... -pass env:GLKWS) so the secret is
+      not on openssl's command line.
+    "
     source dev/secrets_configuration.sh
 
+    local CI_SECRET
     CI_SECRET="${!VARNAME_CI_SECRET}"
-    echo "VARNAME_CI_SECRET = $VARNAME_CI_SECRET"
-    echo "CI_SECRET=$CI_SECRET"
-    echo "GPG_IDENTIFIER=$GPG_IDENTIFIER"
-
-    # ADD RELEVANT VARIABLES TO THE CI SECRET VARIABLES
-    # HOW TO ENCRYPT YOUR SECRET GPG KEY
-    # You need to have a known public gpg key for this to make any sense
-
-    # Full primary-key fingerprint (40 hex chars) — more collision-resistant
-    # than the 16-char LONG key ID. Uses machine-parseable colon format so
-    # the extraction is stable across gpg output layout changes.
-    MAIN_GPG_FPR=$(gpg --list-keys --with-colons "$GPG_IDENTIFIER" | awk -F: '/^fpr/ { print $10; exit }')
-    GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" | grep "\[S\]" -A 1 | tail -n 1 | awk '{print $1}')
-    # Careful, if you don't have a subkey, requesting it will export more than you want.
-    # Export the main key instead (its better to have subkeys, but this is a lesser evil)
-    if [[ "$GPG_SIGN_SUBKEY" == "" ]]; then
-        # NOTE: if you get here this probably means your subkeys expired (and
-        # wont even be visible), so we probably should check for that here and
-        # thrown an error instead of using this hack, which likely wont work
-        # anyway.
-        GPG_SIGN_SUBKEY=$(gpg --list-keys --with-subkey-fingerprints "$GPG_IDENTIFIER" | grep "\[C\]" -A 1 | tail -n 1 | awk '{print $1}')
+    if [[ -z "$CI_SECRET" ]]; then
+        echo "ERROR: CI_SECRET (from $VARNAME_CI_SECRET) is empty" >&2
+        return 1
     fi
-    echo "MAIN_GPG_FPR    = $MAIN_GPG_FPR"
-    echo "GPG_SIGN_SUBKEY = $GPG_SIGN_SUBKEY"
+    echo "VARNAME_CI_SECRET = $VARNAME_CI_SECRET"
+    echo "GPG_IDENTIFIER = $GPG_IDENTIFIER"
 
-    # Only export the signing secret subkey
-    # Export plaintext gpg public keys, private sign key, and trust info
+    _gpg_locate_signing_subkey || return 1
+
+    local TMP_DIR
+    TMP_DIR=$(mktemp -d -t gpg-enc-XXXXXXXXXX)
+    chmod 700 "$TMP_DIR"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$TMP_DIR'" RETURN
+
+    # Export plaintext key material into the protected temp dir — never the
+    # working tree — so an interruption between export and encrypt cannot
+    # leave a private subkey lying around in dev/.
+    gpg --armor --export-options export-backup \
+        --export-secret-subkeys "${GPG_SIGN_SUBKEY}!" > "$TMP_DIR/ci_secret_gpg_subkeys.pgp"
+    gpg --armor --export "${GPG_SIGN_SUBKEY}" > "$TMP_DIR/ci_public_gpg_key.pgp"
+    gpg --export-ownertrust > "$TMP_DIR/gpg_owner_trust"
+
     mkdir -p dev
-    gpg --armor --export-options export-backup --export-secret-subkeys "${GPG_SIGN_SUBKEY}!" > dev/ci_secret_gpg_subkeys.pgp
-    gpg --armor --export "${GPG_SIGN_SUBKEY}" > dev/ci_public_gpg_key.pgp
-    gpg --export-ownertrust > dev/gpg_owner_trust
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a \
+        -in "$TMP_DIR/ci_public_gpg_key.pgp"      -out dev/ci_public_gpg_key.pgp.enc
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a \
+        -in "$TMP_DIR/ci_secret_gpg_subkeys.pgp"  -out dev/ci_secret_gpg_subkeys.pgp.enc
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a \
+        -in "$TMP_DIR/gpg_owner_trust"            -out dev/gpg_owner_trust.enc
 
-    # Encrypt gpg keys and trust with CI secret
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_public_gpg_key.pgp > dev/ci_public_gpg_key.pgp.enc
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/ci_secret_gpg_subkeys.pgp > dev/ci_secret_gpg_subkeys.pgp.enc
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -e -a -in dev/gpg_owner_trust > dev/gpg_owner_trust.enc
-    # Store the full fingerprint as the public signer anchor
     printf '%s\n' "$MAIN_GPG_FPR" > dev/public_gpg_key
 
-    # Test decrypt
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc | gpg --list-packets --verbose
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc  | gpg --list-packets --verbose
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc
+    # Round-trip verification: decrypt each artifact back and feed gpg
+    # --list-packets so we know the .enc files are well-formed. Output goes
+    # to /dev/null because we only care about the exit status.
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/ci_public_gpg_key.pgp.enc      | gpg --list-packets >/dev/null
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/ci_secret_gpg_subkeys.pgp.enc  | gpg --list-packets >/dev/null
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/gpg_owner_trust.enc           >/dev/null
+
+
+    echo "Wrote encrypted artifacts:"
+    ls dev/*.enc
+    echo "Public fingerprint anchor:"
     cat dev/public_gpg_key
 
-    unload_secrets
-
-    # Look at what we did, clean up, and add it to git
-    ls dev/*.enc
-    rm dev/*.pgp
-    rm dev/gpg_owner_trust
     git status
-    git add dev/*.enc
-    git add dev/public_gpg_key
+    git add dev/ci_public_gpg_key.pgp.enc dev/ci_secret_gpg_subkeys.pgp.enc \
+        dev/gpg_owner_trust.enc dev/public_gpg_key
 }
 
 
@@ -632,7 +816,6 @@ upload_github_gpg_secrets(){
     This implements ci_gpg_secret_transport = 'direct_ci' for GitHub.
     Call this instead of export_encrypted_code_signing_keys.
     "
-    load_secrets
     source dev/secrets_configuration.sh
 
     local pypi_env="${GITHUB_ENVIRONMENT_PYPI:-pypi}"
@@ -670,14 +853,12 @@ upload_github_gpg_secrets(){
     git add dev/public_gpg_key
     git status
 
-    unload_secrets
 
     # Ensure deployment environments exist before scoping secrets to them
     setup_github_release_environments
 
     if ! gh auth status; then gh auth login; fi
 
-    toggle_setx_enter
     for env_name in "$pypi_env" "$testpypi_env"; do
         upload_one_github_secret "GPG_SECRET_SIGNING_SUBKEY_B64" \
             "$GPG_SECRET_SIGNING_SUBKEY_B64" "$env_name"
@@ -686,7 +867,6 @@ upload_github_gpg_secrets(){
         upload_one_github_secret "GPG_OWNER_TRUST_B64" \
             "$GPG_OWNER_TRUST_B64" "$env_name"
     done
-    toggle_setx_exit
 }
 
 
@@ -701,13 +881,13 @@ upload_gitlab_gpg_secrets(){
     This implements ci_gpg_secret_transport = 'direct_ci' for GitLab.
     Call this instead of export_encrypted_code_signing_keys.
     "
-    load_secrets
     source dev/secrets_configuration.sh
 
     _gpg_locate_signing_subkey || return 1
 
     local TMP_DIR
     TMP_DIR=$(mktemp -d -t gpg-ci-XXXXXXXXXX)
+    chmod 700 "$TMP_DIR"
     # shellcheck disable=SC2064
     trap "rm -rf '$TMP_DIR'" RETURN
 
@@ -732,92 +912,64 @@ upload_gitlab_gpg_secrets(){
     git add dev/public_gpg_key
     git status
 
-    # Locate the GitLab project via git remote
-    local REMOTE=origin
-    local HOST
-    HOST=https://$(git remote get-url $REMOTE \
-        | cut -d "/" -f 1 | cut -d "@" -f 2 | cut -d ":" -f 1)
-    local PRIVATE_GITLAB_TOKEN
-    PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
-    if [[ "$PRIVATE_GITLAB_TOKEN" == "ERROR" ]]; then
-        echo "ERROR: failed to load GitLab authentication token" >&2
+    local HOST PROJECT_PATH _GROUP
+    { read -r HOST; read -r PROJECT_PATH; read -r _GROUP; } < <(_gitlab_remote_info) || return 1
+    local PRIVATE_GITLAB_TOKEN="${PRIVATE_GITLAB_TOKEN:-}"
+    if [[ -z "$PRIVATE_GITLAB_TOKEN" ]]; then
+        echo "ERROR: PRIVATE_GITLAB_TOKEN is not set in the environment." >&2
+        echo "       Export a GitLab personal access token with 'api' scope" >&2
+        echo "       before running rotate-secrets, e.g.:" >&2
+        echo "           export PRIVATE_GITLAB_TOKEN=<your-token>" >&2
         return 1
     fi
+    _gitlab_check_auth || return 1
 
-    local PROJECT_PATH
-    PROJECT_PATH=$(git remote get-url $REMOTE | cut -d ":" -f 2 | sed 's/\.git$//')
+    local PROJECT_PATH_ENC=${PROJECT_PATH//\//%2F}
     local PROJECT_ID
-    PROJECT_ID=$(curl --fail --show-error --silent --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-        "$HOST/api/v4/projects?search=$(basename "$PROJECT_PATH")" \
-        | jq -r ".[] | select(.path_with_namespace==\"$PROJECT_PATH\") | .id")
+    PROJECT_ID=$(curl --fail --silent --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
+        "$HOST/api/v4/projects/$PROJECT_PATH_ENC" \
+        | jq -r '.id // empty')
     if [[ -z "$PROJECT_ID" ]]; then
         echo "ERROR: could not determine GitLab project ID for $PROJECT_PATH" >&2
         return 1
     fi
     echo "PROJECT_ID = $PROJECT_ID"
 
-    _gitlab_upsert_protected_var(){
-        local key="$1" value="$2"
-        local existing
-        existing=$(curl -s --show-error --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-            "$HOST/api/v4/projects/$PROJECT_ID/variables/$key" \
-            | jq -r '.key // empty')
-        if [[ -z "$existing" ]]; then
-            curl --fail --silent --show-error --request POST \
-                --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-                "$HOST/api/v4/projects/$PROJECT_ID/variables" \
-                --form "key=$key" \
-                --form "value=$value" \
-                --form "protected=true" \
-                --form "masked=true" \
-                --form "environment_scope=*" \
-                --form "variable_type=env_var"
-        else
-            curl --fail --silent --show-error --request PUT \
-                --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-                "$HOST/api/v4/projects/$PROJECT_ID/variables/$key" \
-                --form "value=$value" \
-                --form "protected=true" \
-                --form "masked=true" \
-                --form "environment_scope=*" \
-                --form "variable_type=env_var"
-        fi
-    }
 
-    unload_secrets
-
-    toggle_setx_enter
-    _gitlab_upsert_protected_var "GPG_SECRET_SIGNING_SUBKEY_B64" "$GPG_SECRET_SIGNING_SUBKEY_B64"
-    _gitlab_upsert_protected_var "GPG_PUBLIC_KEY_B64"            "$GPG_PUBLIC_KEY_B64"
-    _gitlab_upsert_protected_var "GPG_OWNER_TRUST_B64"           "$GPG_OWNER_TRUST_B64"
-    toggle_setx_exit
+    local vars_url="$HOST/api/v4/projects/$PROJECT_ID/variables"
+    _gitlab_upsert_var "$vars_url" "GPG_SECRET_SIGNING_SUBKEY_B64" <<<"$GPG_SECRET_SIGNING_SUBKEY_B64" || return 1
+    _gitlab_upsert_var "$vars_url" "GPG_PUBLIC_KEY_B64"            <<<"$GPG_PUBLIC_KEY_B64"            || return 1
+    _gitlab_upsert_var "$vars_url" "GPG_OWNER_TRUST_B64"           <<<"$GPG_OWNER_TRUST_B64"           || return 1
 }
 
 
 _test_gnu(){
-    # shellcheck disable=SC2155
-    export GNUPGHOME=$(mktemp -d -t)
-    ls -al "$GNUPGHOME"
-    chmod 700 -R "$GNUPGHOME"
-
+    # Decrypt the encrypted-repo artifacts back into a throwaway GNUPGHOME
+    # to verify the encrypt/decrypt round trip works end-to-end.
     source dev/secrets_configuration.sh
 
+    local GNUPGHOME
+    GNUPGHOME=$(mktemp -d -t gnupg-test-XXXXXXXXXX)
+    chmod 700 "$GNUPGHOME"
+    export GNUPGHOME
+    # shellcheck disable=SC2064
+    trap "rm -rf '$GNUPGHOME'" RETURN
     gpg -k
 
-    load_secrets
+    local CI_SECRET
     CI_SECRET="${!VARNAME_CI_SECRET}"
-    echo "CI_SECRET = $CI_SECRET"
+    if [[ -z "$CI_SECRET" ]]; then
+        echo "ERROR: CI_SECRET (from $VARNAME_CI_SECRET) is empty" >&2
+        return 1
+    fi
 
     cat dev/public_gpg_key
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc
-
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_public_gpg_key.pgp.enc | gpg --import
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/gpg_owner_trust.enc | gpg --import-ownertrust
-    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a -in dev/ci_secret_gpg_subkeys.pgp.enc | gpg --import
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/ci_public_gpg_key.pgp.enc      | gpg --import
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/gpg_owner_trust.enc            | gpg --import-ownertrust
+    GLKWS=$CI_SECRET openssl enc -aes-256-cbc -pbkdf2 -md SHA512 -pass env:GLKWS -d -a \
+        -in dev/ci_secret_gpg_subkeys.pgp.enc  | gpg --import
 
     gpg -k
-    # | gpg --import
-    # | gpg --list-packets --verbose
 }

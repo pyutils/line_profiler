@@ -1,95 +1,36 @@
 #!/usr/bin/env bash
 __doc__='
-Script to publish a new version of this library on PyPI.
+Script to build, sign, tag, and optionally upload Python distributions.
 
-If your script has binary dependencies then we assume that you have built a
-proper binary wheel with auditwheel and it exists in the wheelhouse directory.
-Otherwise, for source tarballs and wheels this script runs the
-setup.py script to create the wheels as well.
+This script is intentionally local-first: it can perform the same release
+steps that CI performs, but without requiring a CI provider.  It supports both
+PEP 517 / pyproject.toml projects and older setup.py projects.
 
-Running this script with the default arguments will perform any builds and gpg
-signing, but nothing will be uploaded to pypi unless the user explicitly sets
-DO_UPLOAD=True or answers yes to the prompts.
+Common dry-run usage:
+    DO_UPLOAD=0 DO_TAG=0 ./publish.sh
 
-Args:
-    TWINE_USERNAME (str) :
-        username for pypi. This must be set if uploading to pypi.
-        Defaults to "".
-
-    TWINE_PASSWORD (str) :
-        password for pypi. This must be set if uploading to pypi.
-        Defaults to "".
-
-    DO_GPG (bool) :
-        If True, sign the packages with a GPG key specified by `GPG_KEYID`.
-        defaults to auto.
-
-    DO_OTS (bool) :
-        If True, make an opentimestamp for the package and signature (if
-        available)
-
-    DO_UPLOAD (bool) :
-        If True, upload the packages to the pypi server specified by
-        `TWINE_REPOSITORY_URL`.
-
-    DO_BUILD (bool) :
-        If True, will execute the setup.py build script, which is
-        expected to use setuptools. In the future we may add support for other
-        build systems. If False, this script will expect the pre-built packages
-        to exist in "wheelhouse/{NAME}-{VERSION}-{SUFFIX}.{EXT}".
-
-        Defaults to "auto".
-
-    DO_TAG (bool) :
-        if True, will "git tag" the current HEAD with
-
-    TWINE_REPOSITORY_URL (url) :
-         The URL of the pypi server to upload to.
-         Defaults to "auto", which if on the release branch, this will default
-         to the live pypi server `https://upload.pypi.org/legacy` otherwise
-         this will default to the test.pypi server:
-         `https://test.pypi.org/legacy`
-
-     GPG_KEYID (str) :
-        The keyid of the gpg key to sign with. (if DO_GPG=True). Defaults to
-        the local git config user.signingkey
-
-    DEPLOY_REMOTE (str) :
-        The git remote to push any tags to. Defaults to "origin"
-
-    GPG_EXECUTABLE (path) :
-        Path to the GPG executable.
-        Defaults to "auto", which chooses "gpg2" if it exists, otherwise "gpg".
-
-    MODE (str):
-        Can be pure, binary, or all. Defaults to pure unless a CMakeLists.txt
-        exists in which case it defaults to binary.
-
-Requirements:
-     twine >= 1.13.0
-     gpg2 >= 2.2.4
-     OpenSSL >= 1.1.1c
-
-Notes:
-    # NEW API TO UPLOAD TO PYPI
-    # https://docs.travis-ci.com/user/deployment/pypi/
-    # https://packaging.python.org/tutorials/distributing-packages/
-    # https://stackoverflow.com/questions/45188811/how-to-gpg-sign-a-file-that-is-built-by-travis-ci
-
-    Based on template in
-
-    # github.com/Erotemic/xcookie/
-    ~/code/xcookie/publish.sh
-
-Usage:
+Common live usage:
     load_secrets
-    # TODO: set a trap to unload secrets?
-    cd <YOUR REPO>
-    # Set your variables or load your secrets
-    export TWINE_USERNAME=<pypi-username>
-    export TWINE_PASSWORD=<pypi-password>
-    TWINE_REPOSITORY_URL="https://test.pypi.org/legacy/"
+    TWINE_REPOSITORY_URL=live DO_UPLOAD=1 DO_TAG=1 ./publish.sh
+
+Useful variables:
+    MODE=pure|binary|all|sdist|native|bdist
+        pure   -> build sdist and pure wheel with python -m build
+        binary -> build sdist and use prebuilt wheelhouse wheels
+        all    -> build sdist and pure wheel, and include wheelhouse wheels
+        sdist  -> only build/use sdist
+        native -> only build/use native wheel from python -m build
+        bdist  -> only use prebuilt wheelhouse wheels
+
+    DO_BUILD=True|False|auto
+    DO_GPG=True|False|auto
+    DO_OTS=True|False|auto
+    DO_UPLOAD=True|False
+    DO_TAG=True|False
+    ENSURE_BUILD_DEPS=True|False
 '
+
+set -e
 
 DEBUG=${DEBUG:=''}
 if [[ "${DEBUG}" != "" ]]; then
@@ -98,8 +39,8 @@ fi
 
 check_variable(){
     KEY=$1
-    HIDE=$2
-    VAL=${!KEY}
+    HIDE=${2:-}
+    VAL=${!KEY:-}
     if [[ "$HIDE" == "" ]]; then
         echo "[DEBUG] CHECK VARIABLE: $KEY=\"$VAL\""
     else
@@ -107,13 +48,12 @@ check_variable(){
     fi
     if [[ "$VAL" == "" ]]; then
         echo "[ERROR] UNSET VARIABLE: $KEY=\"$VAL\""
-        exit 1;
+        exit 1
     fi
 }
 
-
 normalize_boolean(){
-    ARG=$1
+    ARG=${1:-}
     ARG=$(echo "$ARG" | awk '{print tolower($0)}')
     if [ "$ARG" = "true" ] || [ "$ARG" = "1" ] || [ "$ARG" = "yes" ] || [ "$ARG" = "y" ] || [ "$ARG" = "on" ]; then
         echo "True"
@@ -124,70 +64,178 @@ normalize_boolean(){
     fi
 }
 
+project_name(){
+    python - <<'PY'
+from __future__ import annotations
+import pathlib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
 
-####
-# Parameters
-###
+root = pathlib.Path.cwd()
+pyproject = root / 'pyproject.toml'
+if pyproject.exists():
+    data = tomllib.loads(pyproject.read_text())
+    name = data.get('project', {}).get('name')
+    if name:
+        print(name)
+        raise SystemExit
+setup_py = root / 'setup.py'
+if setup_py.exists():
+    ns = {}
+    exec(setup_py.read_text(), ns)
+    name = ns.get('NAME')
+    if name:
+        print(name)
+        raise SystemExit
+print(root.name)
+PY
+}
 
-# Options
+project_dist_prefix(){
+    python - "$1" <<'PY'
+import re
+import sys
+name = sys.argv[1]
+print(re.sub(r'[-_.]+', '_', name).lower())
+PY
+}
+
+project_version(){
+    python - <<'PY'
+from __future__ import annotations
+import ast
+import pathlib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
+
+root = pathlib.Path.cwd()
+pyproject = root / 'pyproject.toml'
+
+def static_parse_version(fpath: pathlib.Path, varname: str = '__version__'):
+    try:
+        tree = ast.parse(fpath.read_text())
+    except Exception:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if getattr(target, 'id', None) == varname:
+                    try:
+                        return ast.literal_eval(node.value)
+                    except Exception:
+                        return None
+    return None
+
+if pyproject.exists():
+    data = tomllib.loads(pyproject.read_text())
+    project = data.get('project', {})
+    if project.get('version'):
+        print(project['version'])
+        raise SystemExit
+
+    tool = data.get('tool', {})
+    setuptools_dynamic = tool.get('setuptools', {}).get('dynamic', {})
+    version_spec = setuptools_dynamic.get('version', {})
+    attr = version_spec.get('attr') if isinstance(version_spec, dict) else None
+    if attr:
+        module_name, _, attr_name = attr.rpartition('.')
+        xcookie_config = tool.get('xcookie', {})
+        rel_parent = pathlib.Path(xcookie_config.get('rel_mod_parent_dpath', '.'))
+        candidate_roots = [rel_parent]
+        find_cfg = tool.get('setuptools', {}).get('packages', {}).get('find', {})
+        if isinstance(find_cfg, dict):
+            for item in find_cfg.get('where', []) or []:
+                candidate_roots.append(pathlib.Path(item))
+        candidate_roots.append(pathlib.Path('.'))
+        rel_module = pathlib.Path(*module_name.split('.'))
+        for base in dict.fromkeys(candidate_roots):
+            for rel in [base / rel_module / '__init__.py', base / (str(rel_module) + '.py')]:
+                version = static_parse_version(root / rel, attr_name)
+                if version:
+                    print(version)
+                    raise SystemExit
+
+setup_py = root / 'setup.py'
+if setup_py.exists():
+    ns = {}
+    exec(setup_py.read_text(), ns)
+    version = ns.get('VERSION')
+    if version:
+        print(version)
+        raise SystemExit
+raise SystemExit('Could not determine project version')
+PY
+}
+
+ls_array(){
+    local arr_name="$1"
+    local glob_pattern="$2"
+    shopt -s nullglob
+    # shellcheck disable=SC2206
+    array=($glob_pattern)
+    shopt -u nullglob
+    # shellcheck disable=SC2086
+    readarray -t $arr_name < <(printf '%s\n' "${array[@]}")
+}
+
 DEPLOY_REMOTE=${DEPLOY_REMOTE:=origin}
-NAME=${NAME:=$(python -c "import setup; print(setup.NAME)")}
-VERSION=$(python -c "import setup; print(setup.VERSION)")
+NAME=${NAME:=$(project_name)}
+VERSION=${VERSION:=$(project_version)}
+DIST_PREFIX=${DIST_PREFIX:=$(project_dist_prefix "$NAME")}
+DIST_DPATH=${DIST_DPATH:=dist}
+WHEELHOUSE_DPATH=${WHEELHOUSE_DPATH:=wheelhouse}
 
 check_variable DEPLOY_REMOTE
 
-ARG_1=$1
-
+ARG_1=${1:-}
 DO_UPLOAD=${DO_UPLOAD:=$ARG_1}
 DO_TAG=${DO_TAG:=$ARG_1}
+DO_UPLOAD=$(normalize_boolean "$DO_UPLOAD")
+DO_TAG=$(normalize_boolean "$DO_TAG")
 
 DO_GPG=${DO_GPG:="auto"}
 if [ "$DO_GPG" == "auto" ]; then
     DO_GPG="True"
 fi
-
 DO_OTS=${DO_OTS:="auto"}
 if [ "$DO_OTS" == "auto" ]; then
-    # Do opentimestamp if it is available
-    # python -m pip install opentimestamps-client
-    if type ots ; then
+    if type ots >/dev/null 2>&1 ; then
         DO_OTS="True"
     else
         DO_OTS="False"
     fi
 fi
-
 DO_BUILD=${DO_BUILD:="auto"}
-# Verify that we want to build
 if [ "$DO_BUILD" == "auto" ]; then
     DO_BUILD="True"
+fi
+ENSURE_BUILD_DEPS=${ENSURE_BUILD_DEPS:="auto"}
+if [ "$ENSURE_BUILD_DEPS" == "auto" ]; then
+    ENSURE_BUILD_DEPS="$DO_BUILD"
 fi
 
 DO_GPG=$(normalize_boolean "$DO_GPG")
 DO_OTS=$(normalize_boolean "$DO_OTS")
 DO_BUILD=$(normalize_boolean "$DO_BUILD")
-DO_UPLOAD=$(normalize_boolean "$DO_UPLOAD")
-DO_TAG=$(normalize_boolean "$DO_TAG")
+ENSURE_BUILD_DEPS=$(normalize_boolean "$ENSURE_BUILD_DEPS")
 
 TWINE_USERNAME=${TWINE_USERNAME:=""}
 TWINE_PASSWORD=${TWINE_PASSWORD:=""}
-
 DEFAULT_TEST_TWINE_REPO_URL="https://test.pypi.org/legacy/"
 DEFAULT_LIVE_TWINE_REPO_URL="https://upload.pypi.org/legacy/"
 
 TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="auto"}
 if [[ "${TWINE_REPOSITORY_URL}" == "auto" ]]; then
-    #if [[ "$(cat .git/HEAD)" != "ref: refs/heads/release" ]]; then
-    #    # If we are not on release, then default to the test pypi upload repo
-    #    TWINE_REPOSITORY_URL=${TWINE_REPOSITORY_URL:="https://test.pypi.org/legacy/"}
-    #else
     if [[ "$DEBUG" == "" ]]; then
         TWINE_REPOSITORY_URL="live"
     else
         TWINE_REPOSITORY_URL="test"
     fi
 fi
-
 if [[ "${TWINE_REPOSITORY_URL}" == "live" ]]; then
     TWINE_REPOSITORY_URL=$DEFAULT_LIVE_TWINE_REPO_URL
 elif [[ "${TWINE_REPOSITORY_URL}" == "test" ]]; then
@@ -196,7 +244,7 @@ fi
 
 GPG_EXECUTABLE=${GPG_EXECUTABLE:="auto"}
 if [[ "$GPG_EXECUTABLE" == "auto" ]]; then
-    if [[ "$(which gpg2)" != "" ]]; then
+    if [[ "$(command -v gpg2 || true)" != "" ]]; then
         GPG_EXECUTABLE="gpg2"
     else
         GPG_EXECUTABLE="gpg"
@@ -205,12 +253,11 @@ fi
 
 GPG_KEYID=${GPG_KEYID:="auto"}
 if [[ "$GPG_KEYID" == "auto" ]]; then
-    GPG_KEYID=$(git config --local user.signingkey)
+    GPG_KEYID=$(git config --local user.signingkey || true)
     if [[ "$GPG_KEYID" == "" ]]; then
-        GPG_KEYID=$(git config --global user.signingkey)
+        GPG_KEYID=$(git config --global user.signingkey || true)
     fi
 fi
-
 
 if [ -f CMakeLists.txt ] ; then
     DEFAULT_MODE="binary"
@@ -218,9 +265,6 @@ else
     DEFAULT_MODE="pure"
 fi
 
-
-# TODO: parameterize
-# The default should change depending on the application
 MODE=${MODE:=$DEFAULT_MODE}
 if [[ "$MODE" == "all" ]]; then
     MODE_LIST=("sdist" "native" "bdist")
@@ -232,12 +276,6 @@ else
     MODE_LIST=("$MODE")
 fi
 MODE_LIST_STR=$(printf '"%s" ' "${MODE_LIST[@]}")
-#echo "MODE_LIST_STR = $MODE_LIST_STR"
-
-
-####
-# Logic
-###
 
 WAS_INTERACTION="False"
 
@@ -245,10 +283,10 @@ echo "
 === PYPI BUILDING SCRIPT ==
 NAME='$NAME'
 VERSION='$VERSION'
+DIST_PREFIX='$DIST_PREFIX'
 TWINE_USERNAME='$TWINE_USERNAME'
-TWINE_REPOSITORY_URL = $TWINE_REPOSITORY_URL
-GPG_KEYID = '$GPG_KEYID'
-
+TWINE_REPOSITORY_URL='$TWINE_REPOSITORY_URL'
+GPG_KEYID='$GPG_KEYID'
 DO_UPLOAD=${DO_UPLOAD}
 DO_TAG=${DO_TAG}
 DO_GPG=${DO_GPG}
@@ -257,317 +295,149 @@ DO_BUILD=${DO_BUILD}
 MODE_LIST_STR=${MODE_LIST_STR}
 "
 
-
-# Verify that we want to tag
-if [[ "$DO_TAG" == "True" ]]; then
-    echo "About to tag VERSION='$VERSION'"
-else
-    if [[ "$DO_TAG" == "False" ]]; then
-        echo "We are NOT about to tag VERSION='$VERSION'"
-    else
-        # shellcheck disable=SC2162
-        read -p "Do you want to git tag and push version='$VERSION'? (input 'yes' to confirm)" ANS
-        echo "ANS = $ANS"
-        WAS_INTERACTION="True"
-        DO_TAG="$ANS"
-        DO_TAG=$(normalize_boolean "$DO_TAG")
-        if [ "$DO_BUILD" == "auto" ]; then
-            DO_BUILD=""
-            DO_GPG=""
-        fi
-    fi
+if [[ "$DO_TAG" == "" ]]; then
+    read -r -p "Do you want to git tag and push version='$VERSION'? (input 'yes' to confirm) " ANS
+    WAS_INTERACTION="True"
+    DO_TAG=$(normalize_boolean "$ANS")
 fi
 
-
-
-if [[ "$DO_BUILD" == "True" ]]; then
-    echo "About to build wheels"
-else
-    if [[ "$DO_BUILD" == "False" ]]; then
-        echo "We are NOT about to build wheels"
-    else
-        # shellcheck disable=SC2162
-        read -p "Do you need to build wheels? (input 'yes' to confirm)" ANS
-        echo "ANS = $ANS"
-        WAS_INTERACTION="True"
-        DO_BUILD="$ANS"
-        DO_BUILD=$(normalize_boolean "$DO_BUILD")
-    fi
+if [[ "$DO_BUILD" == "" ]]; then
+    read -r -p "Do you need to build distributions? (input 'yes' to confirm) " ANS
+    WAS_INTERACTION="True"
+    DO_BUILD=$(normalize_boolean "$ANS")
 fi
 
-
-# Verify that we want to publish
-if [[ "$DO_UPLOAD" == "True" ]]; then
-    echo "About to directly publish VERSION='$VERSION'"
-else
-    if [[ "$DO_UPLOAD" == "False" ]]; then
-        echo "We are NOT about to directly publish VERSION='$VERSION'"
-    else
-        # shellcheck disable=SC2162
-        read -p "Are you ready to directly publish version='$VERSION'? ('yes' will twine upload)" ANS
-        echo "ANS = $ANS"
-        WAS_INTERACTION="True"
-        DO_UPLOAD="$ANS"
-        DO_UPLOAD=$(normalize_boolean "$DO_UPLOAD")
-    fi
+if [[ "$DO_UPLOAD" == "" ]]; then
+    read -r -p "Are you ready to directly publish version='$VERSION'? ('yes' will twine upload) " ANS
+    WAS_INTERACTION="True"
+    DO_UPLOAD=$(normalize_boolean "$ANS")
 fi
-
 
 if [[ "$WAS_INTERACTION" == "True" ]]; then
     echo "
-    === PYPI BUILDING SCRIPT ==
     VERSION='$VERSION'
-    TWINE_USERNAME='$TWINE_USERNAME'
-    TWINE_REPOSITORY_URL = $TWINE_REPOSITORY_URL
-    GPG_KEYID = '$GPG_KEYID'
-
     DO_UPLOAD=${DO_UPLOAD}
     DO_TAG=${DO_TAG}
     DO_GPG=${DO_GPG}
     DO_BUILD=${DO_BUILD}
     MODE_LIST_STR='${MODE_LIST_STR}'
     "
-    # shellcheck disable=SC2162
-    read -p "Look good? Ready to build? Enter any text to continue" ANS
+    read -r -p "Look good? Enter any text to continue " ANS
 fi
 
-
+if [ "$ENSURE_BUILD_DEPS" == "True" ]; then
+    python -m pip install pip build twine -U
+fi
 
 if [ "$DO_BUILD" == "True" ]; then
-
-    echo "
-    === <BUILD WHEEL> ===
-    "
-
-    echo "LIVE BUILDING"
-    # Build wheel and source distribution
-    for _MODE in "${MODE_LIST[@]}"
-    do
-        echo "_MODE = $_MODE"
+    echo "=== <BUILD DISTRIBUTIONS> ==="
+    for _MODE in "${MODE_LIST[@]}"; do
+        echo "_MODE=$_MODE"
         if [[ "$_MODE" == "sdist" ]]; then
-            python setup.py sdist || { echo 'failed to build sdist wheel' ; exit 1; }
+            python -m build --sdist --outdir "$DIST_DPATH" || { echo 'failed to build sdist' ; exit 1; }
         elif [[ "$_MODE" == "native" ]]; then
-            python setup.py bdist_wheel || { echo 'failed to build native wheel' ; exit 1; }
+            python -m build --wheel --outdir "$DIST_DPATH" || { echo 'failed to build wheel' ; exit 1; }
         elif [[ "$_MODE" == "bdist" ]]; then
-            echo "Assume wheel has already been built"
+            echo "Assume binary wheels have already been built in $WHEELHOUSE_DPATH"
         else
-            echo "ERROR: bad mode"
+            echo "ERROR: bad mode: $_MODE"
             exit 1
         fi
     done
-
-    echo "
-    === <END BUILD WHEEL> ===
-    "
-
+    echo "=== <END BUILD DISTRIBUTIONS> ==="
 else
-    echo "DO_BUILD=False, Skipping build"
+    echo "DO_BUILD=False, skipping build"
 fi
 
-
-ls_array(){
-    __doc__='
-    Read the results of a glob pattern into an array
-
-    Args:
-        arr_name
-        glob_pattern
-
-    Example:
-        arr_name="myarray"
-        glob_pattern="*"
-        pass
-    '
-    local arr_name="$1"
-    local glob_pattern="$2"
-    shopt -s nullglob
-    # shellcheck disable=SC2206
-    array=($glob_pattern)
-    shopt -u nullglob # Turn off nullglob to make sure it doesn't interfere with anything later
-    # FIXME; for some reason this does not always work properly
-    # Copy the array into the dynamically named variable
-    # shellcheck disable=SC2086
-    readarray -t $arr_name < <(printf '%s\n' "${array[@]}")
-}
-
-
 WHEEL_FPATHS=()
-for _MODE in "${MODE_LIST[@]}"
-do
+for _MODE in "${MODE_LIST[@]}"; do
     if [[ "$_MODE" == "sdist" ]]; then
-        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.tar.gz"
+        ls_array "_NEW_WHEEL_PATHS" "$DIST_DPATH/${DIST_PREFIX}-${VERSION}*.tar.gz"
     elif [[ "$_MODE" == "native" ]]; then
-        ls_array "_NEW_WHEEL_PATHS" "dist/${NAME}-${VERSION}*.whl"
+        ls_array "_NEW_WHEEL_PATHS" "$DIST_DPATH/${DIST_PREFIX}-${VERSION}*.whl"
     elif [[ "$_MODE" == "bdist" ]]; then
-        ls_array "_NEW_WHEEL_PATHS" "wheelhouse/${NAME}-${VERSION}-*.whl"
+        ls_array "_NEW_WHEEL_PATHS" "$WHEELHOUSE_DPATH/${DIST_PREFIX}-${VERSION}-*.whl"
     else
-        echo "ERROR: bad mode"
+        echo "ERROR: bad mode: $_MODE"
         exit 1
     fi
-    # hacky CONCAT because for some reason ls_array will return
-    # something that looks empty but has one empty element
-    for new_item in "${_NEW_WHEEL_PATHS[@]}"
-    do
+    for new_item in "${_NEW_WHEEL_PATHS[@]}"; do
         if [[ "$new_item" != "" ]]; then
             WHEEL_FPATHS+=("$new_item")
         fi
     done
 done
 
-# Dedup the paths
 readarray -t WHEEL_FPATHS < <(printf '%s\n' "${WHEEL_FPATHS[@]}" | sort -u)
+if [[ "${#WHEEL_FPATHS[@]}" -eq 0 ]]; then
+    echo "ERROR: no distributions found for NAME=$NAME VERSION=$VERSION"
+    exit 1
+fi
 
 WHEEL_PATHS_STR=$(printf '"%s" ' "${WHEEL_FPATHS[@]}")
-echo "WHEEL_PATHS_STR = $WHEEL_PATHS_STR"
+echo "WHEEL_PATHS_STR=$WHEEL_PATHS_STR"
 
-echo "
-MODE=$MODE
-VERSION='$VERSION'
-WHEEL_FPATHS='$WHEEL_PATHS_STR'
-"
-
+python -m twine check "${WHEEL_FPATHS[@]}"
 
 WHEEL_SIGNATURE_FPATHS=()
 if [ "$DO_GPG" == "True" ]; then
-
-    echo "
-    === <GPG SIGN> ===
-    "
-
-    for WHEEL_FPATH in "${WHEEL_FPATHS[@]}"
-    do
-        echo "WHEEL_FPATH = $WHEEL_FPATH"
+    echo "=== <GPG SIGN> ==="
+    for WHEEL_FPATH in "${WHEEL_FPATHS[@]}"; do
         check_variable WHEEL_FPATH
-            # https://stackoverflow.com/questions/45188811/how-to-gpg-sign-a-file-that-is-built-by-travis-ci
-            # secure gpg --export-secret-keys > all.gpg
-
-            # REQUIRES GPG >= 2.2
-            check_variable GPG_EXECUTABLE || { echo 'failed no gpg exe' ; exit 1; }
-            check_variable GPG_KEYID || { echo 'failed no gpg key' ; exit 1; }
-
-            echo "Signing wheels"
-            GPG_SIGN_CMD="$GPG_EXECUTABLE --batch --yes --detach-sign --armor --local-user $GPG_KEYID"
-            echo "GPG_SIGN_CMD = $GPG_SIGN_CMD"
-            $GPG_SIGN_CMD --output "$WHEEL_FPATH".asc "$WHEEL_FPATH"
-
-            echo "Checking wheels"
-            twine check "$WHEEL_FPATH".asc "$WHEEL_FPATH" || { echo 'could not check wheels' ; exit 1; }
-
-            echo "Verifying wheels"
-            $GPG_EXECUTABLE --verify "$WHEEL_FPATH".asc "$WHEEL_FPATH" || { echo 'could not verify wheels' ; exit 1; }
-
-            WHEEL_SIGNATURE_FPATHS+=("$WHEEL_FPATH".asc)
+        check_variable GPG_EXECUTABLE
+        check_variable GPG_KEYID
+        GPG_SIGN_CMD="$GPG_EXECUTABLE --batch --yes --detach-sign --armor --local-user $GPG_KEYID"
+        echo "GPG_SIGN_CMD=$GPG_SIGN_CMD"
+        $GPG_SIGN_CMD --output "$WHEEL_FPATH".asc "$WHEEL_FPATH"
+        python -m twine check "$WHEEL_FPATH"
+        $GPG_EXECUTABLE --verify "$WHEEL_FPATH".asc "$WHEEL_FPATH"
+        WHEEL_SIGNATURE_FPATHS+=("$WHEEL_FPATH".asc)
     done
-    echo "
-    === <END GPG SIGN> ===
-    "
+    echo "=== <END GPG SIGN> ==="
 else
-    echo "DO_GPG=False, Skipping GPG sign"
+    echo "DO_GPG=False, skipping GPG sign"
 fi
-
-
 
 if [ "$DO_OTS" == "True" ]; then
-
-    echo "
-    === <OTS SIGN> ===
-    "
+    echo "=== <OTS SIGN> ==="
     if [ "$DO_GPG" == "True" ]; then
-        # Stamp the wheels and the signatures
         ots stamp "${WHEEL_FPATHS[@]}" "${WHEEL_SIGNATURE_FPATHS[@]}"
     else
-        # Stamp only the wheels
         ots stamp "${WHEEL_FPATHS[@]}"
     fi
-    echo "
-    === <END OTS SIGN> ===
-    "
+    echo "=== <END OTS SIGN> ==="
 else
-    echo "DO_OTS=False, Skipping OTS sign"
+    echo "DO_OTS=False, skipping OTS sign"
 fi
-
 
 if [[ "$DO_TAG" == "True" ]]; then
     TAG_NAME="v${VERSION}"
-    # if we messed up we can delete the tag
-    # git push origin :refs/tags/$TAG_NAME
-    # and then tag with -f
-    #
     git tag "$TAG_NAME" -m "tarball tag $VERSION"
     git push --tags "$DEPLOY_REMOTE"
-    echo "Should also do a: git push $DEPLOY_REMOTE main:release"
-    echo "For github should draft a new release: https://github.com/PyUtils/line_profiler/releases/new"
+    echo "Tagged and pushed $TAG_NAME to $DEPLOY_REMOTE"
 else
     echo "Not tagging"
 fi
 
-
 if [[ "$DO_UPLOAD" == "True" ]]; then
     check_variable TWINE_USERNAME
     check_variable TWINE_PASSWORD "hide"
-
-    for WHEEL_FPATH in "${WHEEL_FPATHS[@]}"
-    do
-        twine upload --username "$TWINE_USERNAME" "--password=$TWINE_PASSWORD" \
-            --repository-url "$TWINE_REPOSITORY_URL" \
-            "$WHEEL_FPATH" --skip-existing --verbose || { echo 'failed to twine upload' ; exit 1; }
-    done
-    echo """
-        !!! FINISH: LIVE RUN !!!
-    """
+    python -m twine upload --username "$TWINE_USERNAME" "--password=$TWINE_PASSWORD" \
+        --repository-url "$TWINE_REPOSITORY_URL" \
+        "${WHEEL_FPATHS[@]}" --skip-existing --verbose || { echo 'failed to twine upload' ; exit 1; }
+    echo "!!! FINISH: LIVE RUN !!!"
 else
-    echo """
-        DRY RUN ... Skipping upload
-
-        DEPLOY_REMOTE = '$DEPLOY_REMOTE'
-        DO_UPLOAD = '$DO_UPLOAD'
-        WHEEL_FPATH = '$WHEEL_FPATH'
-        WHEEL_PATHS_STR = '$WHEEL_PATHS_STR'
-        MODE_LIST_STR = '$MODE_LIST_STR'
-
-        VERSION='$VERSION'
-        NAME='$NAME'
-        TWINE_USERNAME='$TWINE_USERNAME'
-        GPG_KEYID = '$GPG_KEYID'
-
-        To do live run set DO_UPLOAD=1 and ensure deploy and current branch are the same
-
-        !!! FINISH: DRY RUN !!!
-    """
+    echo "
+DRY RUN ... Skipping upload
+DEPLOY_REMOTE='$DEPLOY_REMOTE'
+DO_UPLOAD='$DO_UPLOAD'
+WHEEL_PATHS_STR='$WHEEL_PATHS_STR'
+MODE_LIST_STR='$MODE_LIST_STR'
+VERSION='$VERSION'
+NAME='$NAME'
+TWINE_USERNAME='$TWINE_USERNAME'
+GPG_KEYID='$GPG_KEYID'
+To do live run set DO_UPLOAD=1.
+!!! FINISH: DRY RUN !!!
+"
 fi
-
-__devel__='
-# Checking to see how easy it is to upload packages to gitlab.
-# This logic should go in the CI script, not sure if it belongs here.
-
-
-export HOST=https://gitlab.kitware.com
-export GROUP_NAME=computer-vision
-export PROJECT_NAME=geowatch
-PROJECT_VERSION=$(geowatch --version)
-echo "$PROJECT_VERSION"
-
-load_secrets
-export PRIVATE_GITLAB_TOKEN=$(git_token_for "$HOST")
-TMP_DIR=$(mktemp -d -t ci-XXXXXXXXXX)
-
-curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups" > "$TMP_DIR/all_group_info"
-GROUP_ID=$(cat "$TMP_DIR/all_group_info" | jq ". | map(select(.name==\"$GROUP_NAME\")) | .[0].id")
-echo "GROUP_ID = $GROUP_ID"
-
-curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" "$HOST/api/v4/groups/$GROUP_ID" > "$TMP_DIR/group_info"
-PROJ_ID=$(cat "$TMP_DIR/group_info" | jq ".projects | map(select(.name==\"$PROJECT_NAME\")) | .[0].id")
-echo "PROJ_ID = $PROJ_ID"
-
-ls_array DIST_FPATHS "dist/*"
-
-for FPATH in "${DIST_FPATHS[@]}"
-do
-    FNAME=$(basename $FPATH)
-    echo $FNAME
-    curl --header "PRIVATE-TOKEN: $PRIVATE_GITLAB_TOKEN" \
-         --upload-file $FPATH \
-         "https://gitlab.kitware.com/api/v4/projects/$PROJ_ID/packages/generic/$PROJECT_NAME/$PROJECT_VERSION/$FNAME"
-done
-
-'
