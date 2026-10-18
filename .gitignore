@@ -29,3 +29,4 @@ wheelhouse
 profile_output*
 *.egg-info/
 *.tar.gz
+docs/_build/

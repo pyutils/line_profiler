@@ -211,7 +211,7 @@ from types import MethodType, ModuleType, SimpleNamespace
 
 # NOTE: This version needs to be manually maintained in
 # line_profiler/line_profiler.py and line_profiler/__init__.py as well
-__version__ = '5.0.2'
+__version__ = '5.1.0'
 
 # Guard the import of cProfile such that 3.x people
 # without lsprof can still use this script.

@@ -1,7 +1,7 @@
 Changes
 =======
 
-5.0.3
+5.1.0
 -----
 * FIX: Text output now replaces characters the output stream cannot
   encode with escape sequences instead of dropping the source line (#289)
