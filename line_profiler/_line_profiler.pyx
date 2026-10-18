@@ -588,16 +588,20 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             free_callback(legacy_callback)
             self.legacy_callback = NULL
         else:
-            if self.mon_state.name is not None:
-                # Another tool is using the tool ID; let it receive the
-                # events we disabled for ourselves again
-                restart_disabled_events()
+            # Let other tools using the tool ID (now or later) receive the
+            # events we disabled for ourselves again (freeing the tool ID
+            # doesn't reset them)
+            restart_disabled_events()
             self.mon_state.deregister()
 
     property wrap_trace:
         def __get__(self):
             return bool(self._wrap_trace)
         def __set__(self, wrap_trace):
+            if wrap_trace and not self._wrap_trace:
+                # The wrapped callbacks need the events we may have
+                # disabled while not wrapping
+                restart_disabled_events()
             self._wrap_trace = 1 if wrap_trace else 0
 
     property set_frame_local_trace:
