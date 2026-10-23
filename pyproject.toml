@@ -97,7 +97,8 @@ sources = [
 ]
 language = "c++"
 depends = [
-  "line_profiler/_map_helpers.pxd",
+  "line_profiler/_profile_data.hpp",
+  "line_profiler/_profile_data.pxd",
   "line_profiler/_profiler_base.pxd",
   "line_profiler/_sys_monitoring.pxd",
   "line_profiler/Python_wrapper.h",
@@ -110,7 +111,8 @@ sources = [
 ]
 language = "c++"
 depends = [
-  "line_profiler/_map_helpers.pxd",
+  "line_profiler/_profile_data.hpp",
+  "line_profiler/_profile_data.pxd",
   "line_profiler/_profiler_base.pxd",
   "line_profiler/Python_wrapper.h",
 ]

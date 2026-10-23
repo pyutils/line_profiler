@@ -272,6 +272,13 @@ cleanup:
     return;
 }
 
+void disable_line_events(PyFrameObject *py_frame)
+{
+    /* Stop line events from being generated for the frame (e.g. because
+     * its code isn't being profiled) */
+    py_frame->f_trace_lines = 0;
+}
+
 Py_uintptr_t monitoring_restart_version()
 #if PY_VERSION_HEX >= 0x030c00b1  // 3.12.0b1
 {
