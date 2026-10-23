@@ -79,6 +79,18 @@
     }
 #endif
 
+#if PY_VERSION_HEX < 0x030c00a1  // 3.12.0a1
+    /*
+     * Notes:
+     *     The PEP 523 code-object "scratch space" API was renamed to
+     *     PyUnstable_* in 3.12; the old private names still exist
+     *     (and are the only spelling) before that.
+     */
+#   define PyUnstable_Eval_RequestCodeExtraIndex _PyEval_RequestCodeExtraIndex
+#   define PyUnstable_Code_GetExtra _PyCode_GetExtra
+#   define PyUnstable_Code_SetExtra _PyCode_SetExtra
+#endif
+
 #if PY_VERSION_HEX < 0x030d00a1  // 3.13.0a1
     inline PyObject *PyImport_AddModuleRef(const char *name)
     {

@@ -15,20 +15,20 @@ Ignore:
 """
 from collections.abc import Callable
 from functools import wraps
-from sys import byteorder
 import sys
 cimport cython
 from cython.operator cimport dereference as deref
 from cpython.object cimport PyObject_Hash
 from cpython.bytes cimport PyBytes_AS_STRING, PyBytes_GET_SIZE
+from cpython.exc cimport PyErr_Clear
 from cpython.version cimport PY_VERSION_HEX
 from libc.stdint cimport int64_t, intptr_t
+from libc.stdlib cimport free, malloc
 
 from libcpp.unordered_map cimport unordered_map
+from libcpp.vector cimport vector
 import functools
 import threading
-import opcode
-import os
 import types
 from warnings import warn
 
@@ -36,30 +36,22 @@ from line_profiler._diagnostics import (
     WRAP_TRACE, SET_FRAME_LOCAL_TRACE, USE_LEGACY_TRACE
 )
 
-from ._map_helpers cimport (
-    last_erase_if_present, line_ensure_entry, LastTime, LastTimeMap,
-    LineTime, LineTimeMap
+from ._map_helpers cimport LastTime, LastTimeMap, LineTime, LineTimeMap
+from ._profiler_base cimport (
+    _LineProfilerBase, compute_line_hash, note_events_disabled,
+    restart_disabled_events,
 )
+from ._sys_monitoring cimport _SysMonitoringState
 
-
-NOP_VALUE: int = opcode.opmap['NOP']
-
-# The Op code should be 2 bytes as stated in
-# https://docs.python.org/3/library/dis.html
-# if sys.version_info[0:2] >= (3, 11):
-NOP_BYTES_LEN: int = 2
-NOP_BYTES: bytes = NOP_VALUE.to_bytes(NOP_BYTES_LEN, byteorder=byteorder)
-
-# This should be true for Python >=3.11a1
-HAS_CO_QUALNAME: bool = hasattr(types.CodeType, 'co_qualname')
-
-# Can't line-profile Cython in 3.12 since the old C API was upended
-# without an appropriate replacement (which only came in 3.13);
-# see also:
-# https://cython.readthedocs.io/en/latest/src/tutorial/profiling_tutorial.html
-_CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
-CANNOT_LINE_TRACE_CYTHON = (
-    _CAN_USE_SYS_MONITORING and PY_VERSION_HEX < 0x030d00b1)
+# Most of the non-tracing code lives in these modules, so that the
+# extension modules can be compiled in parallel; re-export what used to
+# be defined here
+from ._profiler_base import (  # noqa: F401
+    NOP_VALUE, NOP_BYTES_LEN, NOP_BYTES, HAS_CO_QUALNAME,
+    _CAN_USE_SYS_MONITORING, CANNOT_LINE_TRACE_CYTHON,
+    label, find_cython_source_file, _code_replace, _copy_local_sysmon_events,
+)
+from ._sys_monitoring import _patch_events  # noqa: F401
 
 if not (USE_LEGACY_TRACE or _CAN_USE_SYS_MONITORING):
     # Shouldn't happen since we're already checking the existence of
@@ -69,9 +61,7 @@ if not (USE_LEGACY_TRACE or _CAN_USE_SYS_MONITORING):
          f"in Python {sys.version}; falling back to the legacy trace system")
     USE_LEGACY_TRACE = True
 
-# long long int is at least 64 bytes assuming c99
-ctypedef unsigned long long int uint64
-ctypedef long long int int64
+from ._profiler_base cimport int64, uint64
 
 cdef extern from "Python_wrapper.h":
     ctypedef struct PyObject
@@ -100,10 +90,18 @@ cdef extern from "Python_wrapper.h":
     cdef int PyTrace_C_RETURN
 
     cdef int PyFrame_GetLineNumber(PyFrameObject *frame)
+    cdef void Py_INCREF(PyObject *o)
     cdef void Py_XDECREF(PyObject *o)
     cdef void *get_current_frame_key()
 
     cdef unsigned long PyThread_get_thread_ident()
+
+    ctypedef void (*freefunc)(void *)
+    cdef Py_ssize_t PyUnstable_Eval_RequestCodeExtraIndex(freefunc free)
+    cdef int PyUnstable_Code_GetExtra(object code, Py_ssize_t index,
+                                      void **extra)
+    cdef int PyUnstable_Code_SetExtra(object code, Py_ssize_t index,
+                                      void *extra)
 
 ctypedef PyCodeObject *PyCodeObjectPtr
 #ctypedef unordered_map[int64, LastTime] LastTimeMap
@@ -141,98 +139,91 @@ cdef extern from "timers.c":
 #    PY_LONG_LONG time
 
 
-cdef inline int64 compute_line_hash(uint64 block_hash, uint64 linenum) noexcept:
+# sys.monitoring event ids, looked up once here rather than on every
+# event in the callbacks
+cdef int _LINE_EVENT = 0
+cdef int _PY_RETURN_EVENT = 0
+cdef int _PY_YIELD_EVENT = 0
+cdef int _RAISE_EVENT = 0
+cdef int _RERAISE_EVENT = 0
+cdef object _DISABLE = None
+if _CAN_USE_SYS_MONITORING:
+    _DISABLE = sys.monitoring.DISABLE
+    _LINE_EVENT = sys.monitoring.events.LINE
+    _PY_RETURN_EVENT = sys.monitoring.events.PY_RETURN
+    _PY_YIELD_EVENT = sys.monitoring.events.PY_YIELD
+    _RAISE_EVENT = sys.monitoring.events.RAISE
+    _RERAISE_EVENT = sys.monitoring.events.RERAISE
+
+
+cdef struct BlockInfo:
+    Py_hash_t block_hash
+    # Whether it's Cython code (which has no bytecode of its own)
+    bint is_cython
+
+
+cdef void free_block_info(void *info) noexcept nogil:
+    free(info)
+
+
+# Index of the per-code-object scratch slot (see PEP 523) in which
+# get_block_info() caches a BlockInfo; negative if none is available
+cdef Py_ssize_t _BLOCK_INFO_EXTRA_INDEX = (
+    PyUnstable_Eval_RequestCodeExtraIndex(free_block_info))
+if _BLOCK_INFO_EXTRA_INDEX < 0:
+    PyErr_Clear()
+
+
+cdef inline void compute_block_info(object code, BlockInfo *info) noexcept:
     """
-    Compute the hash used to store each line timing in an unordered_map.
-    This is fairly simple, and could use some improvement since linenum
-    isn't technically random, however it seems to be good enough and
-    fast enough for any practical purposes.
+    Compute the hash identifying the code block, which is the hash of
+    the bytecode for Python code and of the code object for Cython code.
     """
-    # linenum doesn't need to be int64 but it's really a temporary value
-    # so it doesn't matter
-    return block_hash ^ linenum
+    cdef object py_bytes_obj = code.co_code
+    cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
+    cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
+
+    # Loop over every byte to check if any are not NULL
+    # if there are any non-NULL, that indicates we're profiling Python code
+    for i in range(size):
+        if data[i]:
+            info.block_hash = hash(py_bytes_obj)
+            info.is_cython = False
+            return
+    # fallback for Cython functions
+    info.block_hash = hash(code)
+    info.is_cython = True
 
 
-cdef inline object multibyte_rstrip(bytes bytecode):
+cdef inline BlockInfo *get_block_info(
+        object code, BlockInfo *scratch) noexcept:
     """
-    Returns:
-        result (tuple[bytes, int])
-        - First item is the bare unpadded bytecode
-        - Second item is the number of :py:data:`NOP_BYTES`
-          ``bytecode`` has been padded with
-    """
-    npad: int = 0
-    nop_len: int = -NOP_BYTES_LEN
-    nop_bytes: bytes = NOP_BYTES
-    unpadded: bytes = bytecode
-    while unpadded.endswith(nop_bytes):
-        unpadded = unpadded[:nop_len]
-        npad += 1
-    return (unpadded, npad)
-
-
-cdef inline object get_current_callback(int tool_id, int event_id):
-    """
-    Note:
-        Unfortunately there's no public API for directly retrieving
-        the current callback, no matter on the Python side or the C
-        side.  This may become a performance bottleneck...
-    """
-    mon = sys.monitoring
-    cdef object register = mon.register_callback
-    cdef object result = register(tool_id, event_id, None)
-    if result is not None:
-        register(tool_id, event_id, result)
-    return result
-
-
-def label(code):
-    """
-    Return a ``(filename, first_lineno, _name)`` tuple for a given code
-    object.
-
-    This is the similar labelling as used by the :py:mod:`cProfile`
-    module in Python 2.5.
-
-    Note:
-        In Python >= 3.11 we return qualname for ``_name``.
-        In older versions of Python we just return name.
-    """
-    if isinstance(code, str):
-        return ('~', 0, code)  # built-in functions ('~' sorts at the end)
-    else:
-        if HAS_CO_QUALNAME:
-            return (code.co_filename, code.co_firstlineno, code.co_qualname)
-        else:
-            return (code.co_filename, code.co_firstlineno, code.co_name)
-
-
-def find_cython_source_file(cython_func):
-    """
-    Resolve the absolute path to a Cython function's source file.
+    compute_block_info(), but cached on the code object so that
+    the trace callbacks don't have to fetch and scan its bytecode for
+    every event.
 
     Returns:
-        result (str | None)
-            Cython source file if found, else :py:data:`None`.
+        The cached info, or scratch (filled in) if it can't be
+        cached
     """
-    try:
-        compiled_module = cython_func.__globals__['__file__']
-    except KeyError:  # Shouldn't happen...
-        return None
-    rel_source_file = cython_func.__code__.co_filename
-    if os.path.isabs(rel_source_file):
-        if os.path.isfile(rel_source_file):
-            return rel_source_file
-        return None
-    prefix = os.path.dirname(compiled_module)
-    while True:
-        source_file = os.path.join(prefix, rel_source_file)
-        if os.path.isfile(source_file):
-            return source_file
-        next_prefix = os.path.dirname(prefix)
-        if next_prefix == prefix:  # At the file-system root
-            return None
-        prefix = next_prefix
+    cdef void *extra = NULL
+    cdef BlockInfo *info
+    if _BLOCK_INFO_EXTRA_INDEX >= 0:
+        PyUnstable_Code_GetExtra(code, _BLOCK_INFO_EXTRA_INDEX, &extra)
+        if extra != NULL:
+            return <BlockInfo *>extra
+        info = <BlockInfo *>malloc(sizeof(BlockInfo))
+        if info != NULL:
+            compute_block_info(code, info)
+            if PyUnstable_Code_SetExtra(
+                    code, _BLOCK_INFO_EXTRA_INDEX, <void *>info) == 0:
+                return info
+            PyErr_Clear()
+            scratch[0] = info[0]
+            free(info)
+            return scratch
+    compute_block_info(code, scratch)
+    return scratch
 
 
 def disable_line_events(trace_func: Callable) -> Callable:
@@ -267,71 +258,6 @@ def disable_line_events(trace_func: Callable) -> Callable:
     return wrapper
 
 
-cpdef _code_replace(func, co_code):
-    """
-    Implements :py:mod:`~code.replace` for Python < 3.8
-    """
-    try:
-        code = func.__code__
-    except AttributeError:
-        code = func.__func__.__code__
-    if hasattr(code, 'replace'):
-        # python 3.8+
-        code = _copy_local_sysmon_events(code, code.replace(co_code=co_code))
-    else:
-        # python <3.8
-        co = code
-        code = type(code)(co.co_argcount, co.co_kwonlyargcount,
-                        co.co_nlocals, co.co_stacksize, co.co_flags,
-                        co_code, co.co_consts, co.co_names,
-                        co.co_varnames, co.co_filename, co.co_name,
-                        co.co_firstlineno, co.co_lnotab, co.co_freevars,
-                        co.co_cellvars)
-    return code
-
-
-cpdef _copy_local_sysmon_events(old_code, new_code):
-    """
-    Copy the local events from ``old_code`` over to ``new_code`` where
-    appropriate.
-
-    Returns:
-        code: ``new_code``
-    """
-    try:
-        mon = sys.monitoring
-    except AttributeError:  # Python < 3.12
-        return new_code
-    # Tool ids are integers in the range 0 to 5 inclusive.
-    # https://docs.python.org/3/library/sys.monitoring.html#tool-identifiers
-    NUM_TOOLS = 6  
-    for tool_id in range(NUM_TOOLS):
-        try:
-            events = mon.get_local_events(tool_id, old_code)
-            mon.set_local_events(tool_id, new_code, events)
-        except ValueError:  # Tool ID not in use
-            pass
-    return new_code
-
-
-cpdef int _patch_events(int events, int before, int after) noexcept:
-    """
-    Patch ``events`` based on the differences between ``before`` and
-    ``after``.
-
-    Example:
-        >>> events = 0b110000
-        >>> before = 0b101101
-        >>> after = 0b_001011  # Additions: 0b10, deletions: 0b100100
-        >>> assert _patch_events(events, before, after) == 0b010010
-    """
-    cdef int all_set_bits, plus, minus
-    all_set_bits = before | after
-    plus = all_set_bits - before
-    minus = all_set_bits - after
-    return ((events | minus) - minus) | plus
-
-
 # Note: this is a regular Python class to allow easy pickling.
 class LineStats(object):
     """
@@ -353,176 +279,6 @@ list[tuple[int, int, int]]]):
     def __init__(self, timings, unit):
         self.timings = timings
         self.unit = unit
-
-
-cdef class _SysMonitoringState:
-    """
-    Another helper object for managing the thread-local state.
-
-    Note:
-        Documentations are for reference only, and all APIs are to be
-        considered private and subject to change.
-    """
-    cdef int tool_id
-    cdef object name  # type: str | None
-    # type: dict[int, Callable | None], int = event id
-    cdef dict callbacks
-    # type: dict[int, set[tuple[code, Unpack[tuple]]]],
-    # int = event id, tuple = <locational info>
-    cdef dict disabled
-    cdef int events
-    cdef Py_uintptr_t restart_version
-
-    if _CAN_USE_SYS_MONITORING:
-        line_tracing_event_set = (  # type: ClassVar[FrozenSet[int]]
-            frozenset({sys.monitoring.events.LINE,
-                       sys.monitoring.events.PY_RETURN,
-                       sys.monitoring.events.PY_YIELD,
-                       sys.monitoring.events.RAISE,
-                       sys.monitoring.events.RERAISE}))
-        line_tracing_events = (sys.monitoring.events.LINE
-                               | sys.monitoring.events.PY_RETURN
-                               | sys.monitoring.events.PY_YIELD
-                               | sys.monitoring.events.RAISE
-                               | sys.monitoring.events.RERAISE)
-    else:
-        line_tracing_event_set = frozenset({})
-        line_tracing_events = 0
-
-    def __init__(self, tool_id: int):
-        self.tool_id = tool_id
-        self.name = None
-        self.callbacks = {}
-        self.disabled = {}
-        self.events = 0  # NO_EVENTS
-        self.restart_version = monitoring_restart_version()
-
-    cpdef register(self, object handle_line,
-                   object handle_return, object handle_yield,
-                   object handle_raise, object handle_reraise):
-        # Note: only activating `sys.monitoring` line events for the
-        # profiled code objects in `LineProfiler.add_function()` may
-        # seem like an obvious optimization, but:
-        # - That adds complexity and muddies the logic, because
-        #   `.set_local_events()` can only be called if the tool id is
-        #   in use (e.g. activated via `.use_tool_id()`), and
-        # - That doesn't result in much (< 2%) performance improvement
-        #   in tests
-        mon = sys.monitoring
-
-        # Set prior state
-        # Note: in 3.14.0a1+, calling `sys.monitoring.free_tool_id()`
-        # also calls `.clear_tool_id()`, causing existing callbacks and
-        # code-object-local events to be wiped... so don't call free.
-        # this does have the side effect of not overriding the active
-        # profiling tool name if one is already in use, but it's
-        # probably better this way
-        self.name = mon.get_tool(self.tool_id)
-        if self.name is None:
-            self.events = mon.events.NO_EVENTS
-            mon.use_tool_id(self.tool_id, 'line_profiler')
-        else:
-            self.events = mon.get_events(self.tool_id)
-        mon.set_events(self.tool_id, self.events | self.line_tracing_events)
-
-        # Register tracebacks and remember the existing ones
-        for event_id, callback in [(mon.events.LINE, handle_line),
-                                   (mon.events.PY_RETURN, handle_return),
-                                   (mon.events.PY_YIELD, handle_yield),
-                                   (mon.events.RAISE, handle_raise),
-                                   (mon.events.RERAISE, handle_reraise)]:
-            self.callbacks[event_id] = mon.register_callback(
-                self.tool_id, event_id, callback)
-
-    cpdef deregister(self):
-        mon = sys.monitoring
-        cdef dict wrapped_callbacks = self.callbacks
-
-        # Restore prior state
-        mon.set_events(self.tool_id, self.events)
-        if self.name is None:
-            mon.free_tool_id(self.tool_id)
-        self.name = None
-        self.events = mon.events.NO_EVENTS
-
-        # Reset tracebacks
-        while wrapped_callbacks:
-            mon.register_callback(self.tool_id, *wrapped_callbacks.popitem())
-
-    cdef void call_callback(self, int event_id, object code,
-                            object loc_args, object other_args) noexcept:
-        """
-        Call the appropriate stored callback.  Also take care of the
-        restoration of :py:mod:`sys.monitoring` callbacks, tool-ID lock,
-        and events should they be unset.
-
-        Note:
-            * This is deliberately made a non-traceable C method so that
-              we don't fall info infinite recursion.
-            * ``loc_args`` and ``other_args`` should be tuples.
-        """
-        mon = sys.monitoring
-        cdef PyObject *result = NULL
-        cdef object callback  # type: Callable | None
-        cdef object callback_after  # type: Callable | None
-        cdef object code_location  # type: tuple[code, Unpack[tuple]]
-        cdef object arg_tuple  # type: tuple[code, Unpack[tuple]]
-        cdef object disabled  # type: set[tuple[code, Unpack[tuple]]]
-        cdef int ev_id, events_before
-        cdef Py_uintptr_t version = monitoring_restart_version()
-        cdef dict callbacks_before = {}
-
-        # If we've restarted events, clear the `.disabled` registry
-        if version != self.restart_version:
-            self.restart_version = version
-            self.disabled.clear()
-
-        # Call the wrapped callback where suitable
-        callback = self.callbacks.get(event_id)
-        if callback is None:  # No cached callback
-            return
-        code_location = (code,) + loc_args
-        disabled = self.disabled.setdefault(event_id, set())
-        if code_location in disabled:  # Events 'disabled' for the loc
-            return
-        if not (self.events  # Callback should not receive the event
-                | mon.get_local_events(self.tool_id, code)) & event_id:
-            return
-
-        for ev_id in self.line_tracing_event_set:
-            callbacks_before[ev_id] = get_current_callback(self.tool_id, ev_id)
-
-        arg_tuple = code_location + other_args
-        try:
-            events_before = mon.get_events(self.tool_id)
-            result = PyObject_Call(  # Note: DECREF needed below
-                <PyObject *>callback, <PyObject *>arg_tuple, NULL)
-        else:
-            # Since we can't actually disable the event (or line
-            # profiling will be interrupted), just mark the location so
-            # that we stop calling the cached callback until the next
-            # time `sys.monitoring.restart_events()` is called
-            if result == <PyObject *>(mon.DISABLE):
-                disabled.add(code_location)
-        finally:
-            Py_XDECREF(result)
-            # Update the events
-            self.events = _patch_events(
-                self.events, events_before, mon.get_events(self.tool_id))
-            # If the wrapped callback has changed:
-            register = mon.register_callback
-            for ev_id, callback in callbacks_before.items():
-                # - Restore the `sys.monitoring` callback
-                callback_after = register(self.tool_id, ev_id, callback)
-                # - Remember the updated callback in `self.callbacks`
-                if callback is not callback_after:
-                    self.callbacks[ev_id] = callback_after
-            # Reset the tool ID lock if released
-            if not mon.get_tool(self.tool_id):
-                mon.use_tool_id(self.tool_id, 'line_profiler')
-            # Restore the `sys.monitoring` events if unset
-            mon.set_events(self.tool_id,
-                           self.events | self.line_tracing_events)
 
 
 cdef class _LineProfilerManager:
@@ -567,6 +323,9 @@ sys.monitoring.html#monitoring-event-RERAISE
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
     cdef public set active_instances  # type: set[LineProfiler]
+    # Mirrors .active_instances (holding references of its own) for
+    # the trace callbacks, which can iterate over it more cheaply
+    cdef vector[PyObject *] _active
     cdef int _wrap_trace
     cdef int _set_frame_local_trace
     cdef int recursion_guard
@@ -595,6 +354,25 @@ sys.monitoring.html#monitoring-event-RERAISE
         self.wrap_trace = wrap_trace
         self.set_frame_local_trace = set_frame_local_trace
         self.recursion_guard = 0
+
+    def __dealloc__(self):
+        self._clear_active()
+
+    cdef void _clear_active(self) noexcept:
+        cdef PyObject *prof
+        for prof in self._active:
+            Py_XDECREF(prof)
+        self._active.clear()
+
+    cdef void _sync_active(self) noexcept:
+        """
+        Update self._active to match
+        self.active_instances.
+        """
+        self._clear_active()
+        for prof in self.active_instances:
+            Py_INCREF(<PyObject *>prof)
+            self._active.push_back(<PyObject *>prof)
 
     @cython.profile(False)
     def __call__(self, frame: types.FrameType, event: str, arg):
@@ -675,91 +453,110 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
     # If we allowed these `sys.monitoring` callbacks to be profiled
     # (i.e. to emit line events), we may fall into an infinite recusion;
     # so disable profiling for them pre-emptively
+    # Note: these are non-binding def methods (i.e. builtin methods,
+    # like those of builtin types) because those are cheaper for
+    # sys.monitoring to call than Cython function objects
 
     @cython.profile(False)
-    cpdef handle_line_event(self, object code, int lineno):
+    @cython.binding(False)
+    def handle_line_event(self, object code, int lineno):
         """
         Line-event callback for :py:attr:`!sys.monitoring.events.LINE`,
         passed to :py:func:`sys.monitoring.register_callback`.
         """
-        self._base_callback(
-            1, sys.monitoring.events.LINE, code, lineno, (lineno,), ())
+        if inner_trace_callback(1, &self._active, code, lineno, NULL):
+            if self._wrap_trace:
+                self.mon_state.call_callback(
+                    _LINE_EVENT, code, (lineno,), ())
+            return
+        if self._wrap_trace:
+            self.mon_state.call_callback(_LINE_EVENT, code, (lineno,), ())
+            return
+        # Not being profiled: stop the event from firing here at all
+        # (unless the wrapped callbacks still need it)
+        note_events_disabled()
+        return _DISABLE
 
     @cython.profile(False)
-    cpdef handle_return_event(
+    @cython.binding(False)
+    def handle_return_event(
             self, object code, int instruction_offset, object retval):
         """
         Return-event callback for :py:attr:`!sys.monitoring.events.PY_RETURN`,
         passed to :py:func:`sys.monitoring.register_callback`.
         """
-        self._handle_exit_event(
-            sys.monitoring.events.PY_RETURN, code, instruction_offset, retval)
+        if self._handle_exit_event(
+                _PY_RETURN_EVENT, code, instruction_offset, retval):
+            note_events_disabled()
+            return _DISABLE
 
     @cython.profile(False)
-    cpdef handle_yield_event(
+    @cython.binding(False)
+    def handle_yield_event(
             self, object code, int instruction_offset, object retval):
         """
         Yield-event callback for :py:attr:`!sys.monitoring.events.PY_YIELD`,
         passed to :py:func:`sys.monitoring.register_callback`.
         """
-        self._handle_exit_event(
-            sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
+        if self._handle_exit_event(
+                _PY_YIELD_EVENT, code, instruction_offset, retval):
+            note_events_disabled()
+            return _DISABLE
 
     @cython.profile(False)
-    cpdef handle_raise_event(
+    @cython.binding(False)
+    def handle_raise_event(
             self, object code, int instruction_offset, object exception):
         """
         Raise-event callback for :py:attr:`!sys.monitoring.events.RAISE`,
         passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
-            sys.monitoring.events.RAISE, code, instruction_offset, exception)
+            _RAISE_EVENT, code, instruction_offset, exception)
 
     @cython.profile(False)
-    cpdef handle_reraise_event(
+    @cython.binding(False)
+    def handle_reraise_event(
             self, object code, int instruction_offset, object exception):
         """
         Re-raise-event callback for :py:attr:`!sys.monitoring.events.RERAISE`,
         passed to :py:func:`sys.monitoring.register_callback`.
         """
         self._handle_exit_event(
-            sys.monitoring.events.RERAISE, code, instruction_offset, exception)
+            _RERAISE_EVENT, code, instruction_offset, exception)
 
-    cdef void _handle_exit_event(
+    cdef bint _handle_exit_event(
             self, int event_id, object code, int offset, object obj) noexcept:
         """
         Base for the frame-exit-event (e.g. via returning or yielding)
         callbacks passed to :py:func:`sys.monitoring.register_callback`.
 
+        Returns:
+            Whether the event can be disabled at the location, i.e. the
+            code isn't being profiled and no wrapped callbacks need it
+
         Note:
             This is deliberately made a non-traceable C method so that
             we don't fall info infinite recursion.
         """
-        cdef int lineno = PyCode_Addr2Line(<PyCodeObject*>code, offset)
-        self._base_callback(0, event_id, code, lineno, (offset,), (obj,))
-
-    cdef void _base_callback(
-            self, int is_line_event, int event_id, object code, int lineno,
-            object loc_args, object other_args) noexcept:
-        """
-        Base for the various callbacks passed to
-        :py:func:`sys.monitoring.register_callback`.
-
-        Note:
-            * This is deliberately made a non-traceable C method so that
-              we don't fall info infinite recursion.
-            * ``loc_args`` and ``other_args`` should be tuples.
-        """
-        inner_trace_callback(
-            is_line_event, self.active_instances, code, lineno, NULL)
+        cdef bint profiled = inner_trace_callback(
+            0, &self._active, code,
+            PyCode_Addr2Line(<PyCodeObject*>code, offset), NULL)
         if self._wrap_trace:
-            self.mon_state.call_callback(event_id, code, loc_args, other_args)
+            self.mon_state.call_callback(event_id, code, (offset,), (obj,))
+            return False
+        return not profiled
 
     cpdef _handle_enable_event(self, prof):
         cdef TraceCallback* legacy_callback
         instances = self.active_instances
         already_active = bool(instances)
+        if not USE_LEGACY_TRACE and prof not in instances:
+            # The code profiled by prof may have had its events
+            # disabled while it wasn't being profiled
+            restart_disabled_events()
         instances.add(prof)
+        self._sync_active()
         if already_active:
             return
         if USE_LEGACY_TRACE:
@@ -778,6 +575,7 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
         cdef TraceCallback* legacy_callback
         instances = self.active_instances
         instances.discard(prof)
+        self._sync_active()
         if instances:
             return
         # Only use the legacy trace-callback system if Python < 3.12 or
@@ -790,12 +588,20 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             free_callback(legacy_callback)
             self.legacy_callback = NULL
         else:
+            # Let other tools using the tool ID (now or later) receive the
+            # events we disabled for ourselves again (freeing the tool ID
+            # doesn't reset them)
+            restart_disabled_events()
             self.mon_state.deregister()
 
     property wrap_trace:
         def __get__(self):
             return bool(self._wrap_trace)
         def __set__(self, wrap_trace):
+            if wrap_trace and not self._wrap_trace:
+                # The wrapped callbacks need the events we may have
+                # disabled while not wrapping
+                restart_disabled_events()
             self._wrap_trace = 1 if wrap_trace else 0
 
     property set_frame_local_trace:
@@ -809,7 +615,7 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
                 1 if set_frame_local_trace and USE_LEGACY_TRACE else 0)
 
 
-cdef class LineProfiler:
+cdef class LineProfiler(_LineProfilerBase):
     """
     Time the execution of lines of Python code.
 
@@ -1024,14 +830,6 @@ cdef class LineProfiler:
     .. _"legacy" trace system: https://github.com/python/cpython/blob/\
 3.13/Python/legacy_tracing.c
     """
-    cdef unordered_map[int64, LineTimeMap] _c_code_map
-    # Mapping between thread-id and map of LastTime
-    cdef unordered_map[int64, LastTimeMap] _c_last_time
-    cdef public list functions
-    cdef public dict code_hash_map, dupes_map
-    cdef public double timer_unit
-    cdef public object threaddata
-
     # These are shared between instances and threads
     if _CAN_USE_SYS_MONITORING:
         # Note: just in case we ever need to override this, e.g. for
@@ -1043,8 +841,6 @@ cdef class LineProfiler:
         tool_id = 2
     # type: ClassVar[dict[int, _LineProfilerManager]], int = thread id
     _managers = {}
-    # type: ClassVar[dict[bytes, int]], bytes = bytecode
-    _all_paddings = {}
 
     def __init__(self, *functions,
                  wrap_trace=None, set_frame_local_trace=None):
@@ -1062,144 +858,6 @@ cdef class LineProfiler:
 
         for func in functions:
             self.add_function(func)
-
-    cpdef add_function(self, func):
-        """
-        Record line profiling information for the given Python function.
-
-        Note:
-            This is a low-level method and is intended for |function|_;
-            users should in general use
-            :py:meth:`line_profiler.LineProfiler.add_callable` for
-            adding general callables and callable wrappers (e.g.
-            :py:class:`property`).
-
-        .. |function| replace:: :py:class:`types.FunctionType`
-        .. _function: https://docs.python.org/3/reference/\
-datamodel.html#user-defined-functions
-        """
-        if hasattr(func, "__wrapped__"):
-            warn(
-                "Adding a function with a `.__wrapped__` attribute. "
-                "You may want to profile the wrapped function by adding "
-                f"`{func.__name__}.__wrapped__` instead."
-            )
-        try:
-            code = func.__code__
-            func_id = id(func)
-        except AttributeError:
-            try:
-                code = func.__func__.__code__
-                func_id = id(func.__func__)
-            except AttributeError:
-                warn(
-                    f"Could not extract a code object for the object {func!r}")
-                return
-
-        # Note: if we are to alter the code object, other profilers
-        # which previously added this function would still expect the
-        # old bytecode, and thus will not see anything when the function
-        # is executed;
-        # hence:
-        # - When doing bytecode padding, take into account all instances
-        #   which refers to the same base bytecode to ensure
-        #   disambiguation
-        # - Update all existing instances referring to the old code
-        #   object
-        # Since no code padding is/can be done with Cython mock
-        # "code objects", it is *probably* okay to only do the special
-        # handling on the non-Cython branch.
-        # XXX: tests for the above assertion if necessary
-        co_code: bytes = code.co_code
-        code_hashes = []
-        if any(co_code):  # Normal Python functions
-            # Figure out how much padding we need and strip the bytecode
-            # Notes:
-            # - Profiled function are always padded, so as to
-            #   distinguish between them and unprofiled bytecode twins
-            # - `npad` is strictly increasing, except when the function
-            #   has already been padded -- we assume that is solely
-            #   because a (could be the same) profiler instance has seen
-            #   it
-            base_co_code: bytes
-            npad: int
-            is_padded: int
-            base_co_code, is_padded = multibyte_rstrip(co_code)
-            if not is_padded:
-                try:
-                    npad = self._all_paddings[base_co_code]
-                except KeyError:
-                    npad = 1
-                self._all_paddings[base_co_code] = npad + 1
-                # Code hash already exists, so there must be a duplicate
-                # function (on some instance);
-                # (re-)pad with no-op
-                co_code = base_co_code + NOP_BYTES * npad
-                code = _code_replace(func, co_code)
-                try:
-                    func.__code__ = code
-                except AttributeError as e:
-                    func.__func__.__code__ = code
-            # Maintain `.dupes_map` (legacy)
-            try:
-                self.dupes_map[base_co_code].append(code)
-            except KeyError:
-                self.dupes_map[base_co_code] = [code]
-            # TODO: Since each line can be many bytecodes, this is kinda
-            # inefficient
-            # See if this can be sped up by not needing to iterate over
-            # every byte
-            for offset, _ in enumerate(co_code):
-                code_hashes.append(
-                    compute_line_hash(
-                        hash(co_code),
-                        PyCode_Addr2Line(<PyCodeObject*>code, offset)))
-        else:  # Cython functions have empty/zero bytecodes
-            if CANNOT_LINE_TRACE_CYTHON:
-                return
-
-            from line_profiler.line_profiler import get_code_block
-
-            lineno = code.co_firstlineno
-            if hasattr(func, '__code__'):
-                cython_func = func
-            else:
-                cython_func = func.__func__
-            cython_source = find_cython_source_file(cython_func)
-            if not cython_source:  # Can't find the source
-                return
-            nlines = len(get_code_block(cython_source, lineno))
-            block_hash = hash(code)
-            for lineno in range(lineno, lineno + nlines):
-                code_hash = compute_line_hash(block_hash, lineno)
-                code_hashes.append(code_hash)
-            # We can't replace the code object on Cython functions, but
-            # we can *store* a copy with the correct metadata
-            # Note: we don't use `_copy_local_sysmon_events()` here
-            # because Cython shim code objects don't support local
-            # events
-            code = code.replace(co_filename=cython_source)
-        # Update `._c_code_map` and `.code_hash_map` with the new line
-        # hashes
-        try:
-            line_hashes = self.code_hash_map[code]
-        except KeyError:
-            line_hashes = self.code_hash_map[code] = []
-        for code_hash in code_hashes:
-            line_hash = <int64>code_hash
-            if not self._c_code_map.count(line_hash):
-                line_hashes.append(line_hash)
-                self._c_code_map[line_hash]
-
-        self.functions.append(func)
-
-    property enable_count:
-        def __get__(self):
-            if not hasattr(self.threaddata, 'enable_count'):
-                self.threaddata.enable_count = 0
-            return self.threaddata.enable_count
-        def __set__(self, value):
-            self.threaddata.enable_count = value
 
     # These three are shared between instances, but thread-local
     # (Ideally speaking they could've been class attributes...)
@@ -1249,103 +907,8 @@ datamodel.html#user-defined-functions
                 self.tool_id, wrap_trace, set_frame_local_trace)
             return manager
 
-    def enable_by_count(self):
-        """ Enable the profiler if it hasn't been enabled before.
-        """
-        if self.enable_count == 0:
-            self.enable()
-        self.enable_count += 1
-
-    def disable_by_count(self):
-        """
-        Disable the profiler if the number of disable requests matches
-        (or exceeds) the number of enable requests.
-        """
-        if self.enable_count > 0:
-            self.enable_count -= 1
-            if self.enable_count == 0:
-                self.disable()
-
-    def __enter__(self):
-        self.enable_by_count()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disable_by_count()
-
     def enable(self):
         self._manager._handle_enable_event(self)
-
-    @property
-    def c_code_map(self):
-        """
-        A Python view of the internal C lookup table.
-        """
-        return <dict>self._c_code_map
-
-    @property
-    def c_last_time(self):
-        """
-        Raises:
-            KeyError: If no profiling data is available on the current thread.
-
-        Note:
-            Internally the records are kept per frame (so that recursive
-            calls don't overwrite each other's), but this view is keyed
-            by block hash as before; if a function has more than one
-            active frame, the record of the innermost one is used.
-        """
-        try:
-            records = (<dict>self._c_last_time)[PyThread_get_thread_ident()]
-        except KeyError as e:
-            # We haven't actually profiled anything yet
-            raise (KeyError('No profiling data on the current thread '
-                            '(`threading.get_ident()` = '
-                            f'{threading.get_ident()})')
-                   .with_traceback(e.__traceback__)) from None
-        c_last_time = {}
-        for record in records.values():
-            block_hash = record.pop('block_hash')
-            current = c_last_time.get(block_hash)
-            if current is None or record['time'] > current['time']:
-                c_last_time[block_hash] = record
-        return c_last_time
-
-    @property
-    def code_map(self):
-        """
-        :py:mod:`line_profiler` 4.0 no longer directly maintains
-        :py:attr:`~.code_map`, but this will construct something similar
-        for backwards compatibility.
-        """
-        c_code_map = self.c_code_map
-        code_hash_map = self.code_hash_map
-        py_code_map = {}
-        for code, code_hashes in code_hash_map.items():
-            py_code_map.setdefault(code, {})
-            for code_hash in code_hashes:
-                c_entries = c_code_map[code_hash]
-                py_entries = {}
-                for key, c_entry in c_entries.items():
-                    py_entry = c_entry.copy()
-                    py_entry['code'] = code
-                    py_entries[key] = py_entry
-                py_code_map[code].update(py_entries)
-        return py_code_map
-
-    @property
-    def last_time(self):
-        """
-        :py:mod:`line_profiler` 4.0 no longer directly maintains
-        :py:attr:`~.last_time`, but this will construct something similar
-        for backwards compatibility.
-        """
-        c_last_time = self.c_last_time
-        py_last_time = {}
-        for code in self.code_hash_map:
-            block_hash = hash(code.co_code)
-            if block_hash in c_last_time:
-                py_last_time[code] = c_last_time[block_hash]
-        return py_last_time
 
     cpdef disable(self):
         self._c_last_time[PyThread_get_thread_ident()].clear()
@@ -1386,53 +949,46 @@ datamodel.html#user-defined-functions
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef inline void inner_trace_callback(
-        int is_line_event, set instances, object code, int lineno,
-        PyFrameObject *py_frame):
+cdef inline bint inner_trace_callback(
+        int is_line_event, vector[PyObject *] *instances, object code,
+        int lineno, PyFrameObject *py_frame):
     """
     The basic building block for the trace callbacks.
+
+    Returns:
+        Whether the location is profiled by any of the instances
     """
-    cdef LineProfiler prof_
+    cdef PyObject *prof_
     cdef LineProfiler prof
-    cdef LastTime old
-    cdef int key
+    cdef LastTime* old
     cdef PY_LONG_LONG time = 0
     cdef bint has_time = False
     cdef bint has_last
     cdef int64 code_hash
     cdef int64 last_time_key = 0
-    cdef bint is_cython = False
-    cdef object py_bytes_obj = code.co_code
-    cdef char* data = PyBytes_AS_STRING(py_bytes_obj)
-    cdef Py_ssize_t size = PyBytes_GET_SIZE(py_bytes_obj)
-    cdef unsigned long ident
-    cdef Py_hash_t block_hash
+    cdef unsigned long ident = 0
+    cdef BlockInfo scratch
+    # because we use Python functions like hash, we CANNOT mark this function as nogil
+    cdef BlockInfo *block_info = get_block_info(code, &scratch)
+    cdef Py_hash_t block_hash = block_info.block_hash
     cdef LineTime* entry
     cdef LineTimeMap* line_entries
     cdef LastTimeMap* last_map
-
-    # Loop over every byte to check if any are not NULL
-    # if there are any non-NULL, that indicates we're profiling Python code
-    for i in range(size):
-        if data[i]:
-            # because we use Python functions like hash, we CANNOT mark this function as nogil
-            block_hash = hash(py_bytes_obj)
-            break
-    else:
-        # fallback for Cython functions
-        block_hash = hash(code)
-        is_cython = True
+    cdef unordered_map[int64, LineTimeMap].iterator line_it
+    cdef LastTimeMap.iterator last_it
 
     code_hash = compute_line_hash(block_hash, lineno)
 
-    for prof_ in instances:
-        # for some reason, doing this is much faster than just combining it into the above
-        # like doing "for prof in instances:" is far slower
+    for prof_ in deref(instances):
         prof = <LineProfiler>prof_
-        if not prof._c_code_map.count(code_hash):
+        # Each map is searched once, and the iterator reused, instead of
+        # checking with .count() and then indexing into it again
+        line_it = prof._c_code_map.find(code_hash)
+        if line_it == prof._c_code_map.end():
             continue
         if not has_time:
             time = hpTimer()
+            ident = PyThread_get_thread_ident()
             has_time = True
             # last_time_key identifies whose last-line record to use.
             # for Python code, we use the executing frame so that the
@@ -1448,42 +1004,55 @@ cdef inline void inner_trace_callback(
             # as stale below), at worst the two drop each other's records
             if py_frame != NULL:
                 last_time_key = <int64><intptr_t>py_frame
-            elif is_cython:
+            elif block_info.is_cython:
                 last_time_key = <int64>block_hash
             else:
                 last_time_key = <int64><intptr_t>get_current_frame_key()
-        ident = PyThread_get_thread_ident()
         last_map = &(prof._c_last_time[ident])
         # deref() is Cython's version of the -> accessor in C++. if we don't use deref then
         # Cython thinks that when we index last_map,
         # we want pointer indexing (which is not the case)
-        has_last = False
-        if deref(last_map).count(last_time_key):
-            old = deref(last_map)[last_time_key]
-            # a record left by a frame of another function at the same
-            # address is stale
-            has_last = old.block_hash == block_hash
+        last_it = deref(last_map).find(last_time_key)
+        # a record left by a frame of another function at the same
+        # address is stale
+        has_last = (last_it != deref(last_map).end()
+                    and deref(last_it).second.block_hash == block_hash)
         if has_last:
-            line_entries = &(prof._c_code_map[code_hash])
-            # Ensure that an entry exists in line_entries before accessing it
-            entry = line_ensure_entry(line_entries, old.f_lineno, code_hash)
+            old = &deref(last_it).second
+            line_entries = &deref(line_it).second
+            # Indexing creates a zeroed entry if there isn't one yet, so
+            # this gets or creates it in a single lookup
             # Note: explicitly `deref()`-ing here causes the new values
             # to be assigned to a temp var;
             # meanwhile, directly dot-accessing a pointer causes Cython
             # to correctly write `ptr->attr = (ptr->attr + incr)`
+            entry = &deref(line_entries)[old.f_lineno]
+            entry.code = code_hash
+            entry.lineno = old.f_lineno
             entry.nhits += 1
             entry.total_time += time - old.time
-        if is_line_event:
-            # Get the time again. This way, we don't record much time
-            # wasted in this function.
+            if is_line_event:
+                # Get the time again. This way, we don't record much
+                # time wasted in this function.
+                old.f_lineno = lineno
+                old.time = hpTimer()
+            else:
+                # We are returning from a function, not executing a
+                # line. Delete the last_time record.
+                deref(last_map).erase(last_it)
+        elif is_line_event:
+            # (Replacing the stale record, if any)
             deref(last_map)[last_time_key] = LastTime(
                 lineno, hpTimer(), block_hash)
-        elif deref(last_map).count(last_time_key):
-            # We are returning from a function, not executing a line.
-            # Delete the last_time record. It may have already been
-            # deleted if we are profiling a generator that is being
-            # pumped past its end.
-            last_erase_if_present(last_map, last_time_key)
+        elif last_it != deref(last_map).end():
+            # Returning from a function with a stale record; delete it
+            # all the same
+            deref(last_map).erase(last_it)
+        # Otherwise there is no last_time record to delete; it may have
+        # already been deleted if we are profiling a generator that is
+        # being pumped past its end.
+    # (We only get the time if some instance is profiling the location)
+    return has_time
 
 
 cdef extern int legacy_trace_callback(
@@ -1523,7 +1092,7 @@ pystate.h#L16
     elif what == PyTrace_LINE or what == PyTrace_RETURN:
         code = <PyObject *>PyFrame_GetCode(py_frame)
         inner_trace_callback((what == PyTrace_LINE),
-                             manager_.active_instances,
+                             &manager_._active,
                              <object>code,
                              PyFrame_GetLineNumber(py_frame),
                              py_frame)
