@@ -933,3 +933,46 @@ def test_local_event_preservation(
     )
     nhits = int(line.split()[1])
     assert nhits == n
+
+
+@pytest.mark.parametrize('wrap_trace', [True, False])
+def test_wrapping_unwind_callback(wrap_trace):
+    """The unwind callback and event mask survive a profiling session."""
+    mon = sys.monitoring
+    tool_id = mon.PROFILER_ID
+    owned = mon.get_tool(tool_id) is None
+    if owned:
+        mon.use_tool_id(tool_id, 'test_unwind')
+    previous_events = mon.get_events(tool_id)
+    seen = []
+
+    def fail():
+        raise ValueError('test')
+
+    def callback(code, offset, exception):
+        if code is fail.__code__:
+            seen.append(exception)
+
+    previous_callback = mon.register_callback(
+        tool_id, mon.events.PY_UNWIND, callback)
+    events = previous_events | mon.events.PY_UNWIND
+    mon.set_events(tool_id, events)
+    try:
+        prof = LineProfiler(fail, wrap_trace=wrap_trace)
+        with pytest.raises(ValueError):
+            prof.runcall(fail)
+        assert len(seen) == int(wrap_trace)
+        assert not prof.c_last_time
+        assert mon.get_events(tool_id) == events
+        # register_callback returns the previous callback, allowing us
+        # to check that it was restored without leaving it unregistered.
+        assert mon.register_callback(
+            tool_id, mon.events.PY_UNWIND, callback) is callback
+        with pytest.raises(ValueError):
+            fail()
+        assert len(seen) == int(wrap_trace) + 1
+    finally:
+        mon.set_events(tool_id, previous_events)
+        mon.register_callback(tool_id, mon.events.PY_UNWIND, previous_callback)
+        if owned:
+            mon.free_tool_id(tool_id)
