@@ -370,6 +370,81 @@ def test_exception_frame_timing(tracing_core):
         assert total_time < sleep.slept['inner'] + .5 * idle * sleep.delay
 
 
+@pytest.mark.parametrize('suppress', [False, True])
+@pytest.mark.parametrize('kind', ['direct', 'callee', 'reraise', 'finally'])
+def test_exception_context_exit_timing(tracing_core, suppress, kind):
+    """Exception events must not discard time spent exiting a context.
+
+    The context and raising expression deliberately share a source line:
+    there need not be another line event before __exit__ runs.
+    """
+    prof = LineProfiler()
+    sleep = _Sleeper(.01)
+
+    class MyException(Exception):
+        pass
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            sleep('exit')
+            return suppress
+
+    def fail():
+        raise MyException
+
+    # Keep the with suite on one line to exercise the missing line event.
+    # fmt: off
+    def direct():
+        with Context(): raise MyException  # noqa: E701  # exit
+        sleep('after')  # after
+
+    def callee():
+        with Context(): fail()  # noqa: E701  # exit
+        sleep('after')  # after
+
+    def reraise():
+        try:
+            raise MyException
+        except MyException:
+            with Context(): raise  # noqa: E701  # exit
+        sleep('after')  # after
+
+    def finally_():
+        try:
+            raise MyException
+        finally:
+            with Context(): fail()  # noqa: E701  # exit
+        sleep('after')  # after
+
+    # fmt: on
+    func = {'direct': direct, 'callee': callee,
+            'reraise': reraise, 'finally': finally_}[kind]
+    prof.add_function(func)
+    with prof:
+        if suppress and kind != 'finally':
+            func()
+        else:
+            # Suppressing the exception raised in the finally suite does
+            # not suppress the original exception being propagated.
+            with pytest.raises(MyException):
+                func()
+        assert not prof.c_last_time
+        sleep('idle', 5)
+    stats, total_time = get_tagged_line_stats(prof, func)
+    # CPython may emit another line event when unwinding the call on
+    # this same line (notably on 3.12). Both visits belong to the line.
+    assert stats['exit'][0] in {1, 2}
+    assert stats['exit'][1] >= .9 * sleep.slept['exit']
+    reaches_after = suppress and kind != 'finally'
+    assert stats['after'][0] == int(reaches_after)
+    if reaches_after:
+        assert stats['after'][1] >= .9 * sleep.slept['after']
+    assert total_time < sum(sleep.slept.values()) - .5 * sleep.slept['idle']
+
+
 def test_abandoned_generator_and_coroutine_timing(tracing_core):
     """
     Test that generators which are closed or garbage-collected, and

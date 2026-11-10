@@ -378,13 +378,11 @@ cdef class _SysMonitoringState:
             frozenset({sys.monitoring.events.LINE,
                        sys.monitoring.events.PY_RETURN,
                        sys.monitoring.events.PY_YIELD,
-                       sys.monitoring.events.RAISE,
-                       sys.monitoring.events.RERAISE}))
+                       sys.monitoring.events.PY_UNWIND}))
         line_tracing_events = (sys.monitoring.events.LINE
                                | sys.monitoring.events.PY_RETURN
                                | sys.monitoring.events.PY_YIELD
-                               | sys.monitoring.events.RAISE
-                               | sys.monitoring.events.RERAISE)
+                               | sys.monitoring.events.PY_UNWIND)
     else:
         line_tracing_event_set = frozenset({})
         line_tracing_events = 0
@@ -399,7 +397,7 @@ cdef class _SysMonitoringState:
 
     cpdef register(self, object handle_line,
                    object handle_return, object handle_yield,
-                   object handle_raise, object handle_reraise):
+                   object handle_unwind):
         # Note: only activating `sys.monitoring` line events for the
         # profiled code objects in `LineProfiler.add_function()` may
         # seem like an obvious optimization, but:
@@ -429,8 +427,7 @@ cdef class _SysMonitoringState:
         for event_id, callback in [(mon.events.LINE, handle_line),
                                    (mon.events.PY_RETURN, handle_return),
                                    (mon.events.PY_YIELD, handle_yield),
-                                   (mon.events.RAISE, handle_raise),
-                                   (mon.events.RERAISE, handle_reraise)]:
+                                   (mon.events.PY_UNWIND, handle_unwind)]:
             self.callbacks[event_id] = mon.register_callback(
                 self.tool_id, event_id, callback)
 
@@ -539,10 +536,8 @@ cdef class _LineProfilerManager:
         Callback for |PY_RETURN|_ events
     :py:meth:`~.handle_yield_event`
         Callback for |PY_YIELD|_ events
-    :py:meth:`~.handle_raise_event`
-        Callback for |RAISE|_ events
-    :py:meth:`~.handle_reraise_event`
-        Callback for |RERAISE|_ events
+    :py:meth:`~.handle_unwind_event`
+        Callback for |PY_UNWIND|_ events
 
     Note:
         Documentations are for reference only, and all APIs are to be
@@ -551,18 +546,15 @@ cdef class _LineProfilerManager:
     .. |LINE| replace:: :py:attr:`!sys.monitoring.events.LINE`
     .. |PY_RETURN| replace:: :py:attr:`!sys.monitoring.events.PY_RETURN`
     .. |PY_YIELD| replace:: :py:attr:`!sys.monitoring.events.PY_YIELD`
-    .. |RAISE| replace:: :py:attr:`!sys.monitoring.events.RAISE`
-    .. |RERAISE| replace:: :py:attr:`!sys.monitoring.events.RERAISE`
+    .. |PY_UNWIND| replace:: :py:attr:`!sys.monitoring.events.PY_UNWIND`
     .. _LINE: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-LINE
     .. _PY_RETURN: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-PY_RETURN
     .. _PY_YIELD: https://docs.python.org/3/library/\
 sys.monitoring.html#monitoring-event-PY_YIELD
-    .. _RAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RAISE
-    .. _RERAISE: https://docs.python.org/3/library/\
-sys.monitoring.html#monitoring-event-RERAISE
+    .. _PY_UNWIND: https://docs.python.org/3/library/\
+sys.monitoring.html#monitoring-event-PY_UNWIND
     """
     cdef TraceCallback *legacy_callback
     cdef _SysMonitoringState mon_state
@@ -706,24 +698,18 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             sys.monitoring.events.PY_YIELD, code, instruction_offset, retval)
 
     @cython.profile(False)
-    cpdef handle_raise_event(
+    cpdef handle_unwind_event(
             self, object code, int instruction_offset, object exception):
         """
-        Raise-event callback for :py:attr:`!sys.monitoring.events.RAISE`,
+        Unwind-event callback for :py:attr:`!sys.monitoring.events.PY_UNWIND`,
         passed to :py:func:`sys.monitoring.register_callback`.
-        """
-        self._handle_exit_event(
-            sys.monitoring.events.RAISE, code, instruction_offset, exception)
 
-    @cython.profile(False)
-    cpdef handle_reraise_event(
-            self, object code, int instruction_offset, object exception):
-        """
-        Re-raise-event callback for :py:attr:`!sys.monitoring.events.RERAISE`,
-        passed to :py:func:`sys.monitoring.register_callback`.
+        Raising or re-raising an exception need not exit the frame: a
+        handler or context manager may still execute on the same line.
+        Retain its timing record until the next line or actual unwind.
         """
         self._handle_exit_event(
-            sys.monitoring.events.RERAISE, code, instruction_offset, exception)
+            sys.monitoring.events.PY_UNWIND, code, instruction_offset, exception)
 
     cdef void _handle_exit_event(
             self, int event_id, object code, int offset, object obj) noexcept:
@@ -771,8 +757,7 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
             self.mon_state.register(self.handle_line_event,
                                     self.handle_return_event,
                                     self.handle_yield_event,
-                                    self.handle_raise_event,
-                                    self.handle_reraise_event)
+                                    self.handle_unwind_event)
 
     cpdef _handle_disable_event(self, prof):
         cdef TraceCallback* legacy_callback
