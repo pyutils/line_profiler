@@ -3,6 +3,9 @@ Changes
 
 5.1.0
 -----
+* FIX: Preserve time spent handling exceptions on the raising line by
+  clearing ``sys.monitoring`` frame state on ``PY_UNWIND``, rather than
+  on ``RAISE`` or ``RERAISE`` (#445)
 * FIX: Text output now replaces characters the output stream cannot
   encode with escape sequences instead of dropping the source line (#289)
 * FIX: Make sure that the profiled code is run in the
