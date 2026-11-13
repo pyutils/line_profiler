@@ -86,6 +86,8 @@ packages.find.include = [
   "line_profiler*",
 ]
 
+# The Cython code is split into several extension modules so that they can
+# be compiled in parallel; the trace callbacks are all in _line_profiler
 [[tool.setuptools.ext-modules]]
 name = "line_profiler._line_profiler"
 sources = [
@@ -96,6 +98,33 @@ sources = [
 language = "c++"
 depends = [
   "line_profiler/_map_helpers.pxd",
+  "line_profiler/_profiler_base.pxd",
+  "line_profiler/_sys_monitoring.pxd",
+  "line_profiler/Python_wrapper.h",
+]
+
+[[tool.setuptools.ext-modules]]
+name = "line_profiler._profiler_base"
+sources = [
+  "line_profiler/_profiler_base.pyx",
+]
+language = "c++"
+depends = [
+  "line_profiler/_map_helpers.pxd",
+  "line_profiler/_profiler_base.pxd",
+  "line_profiler/Python_wrapper.h",
+]
+
+[[tool.setuptools.ext-modules]]
+name = "line_profiler._sys_monitoring"
+sources = [
+  "line_profiler/_sys_monitoring.pyx",
+  "line_profiler/c_trace_callbacks.c",
+]
+language = "c++"
+depends = [
+  "line_profiler/_sys_monitoring.pxd",
+  "line_profiler/Python_wrapper.h",
 ]
 
 [tool.uv]

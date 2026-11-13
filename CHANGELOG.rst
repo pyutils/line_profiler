@@ -1,6 +1,23 @@
 Changes
 =======
 
+5.2.0
+-----
+* ENH: Reduced the overhead of the ``sys.monitoring`` callbacks (Python
+  3.12+) by looking up the event IDs once at import instead of on every
+  event, and only building the arguments for wrapped callbacks when
+  there are any
+* ENH: The ``sys.monitoring`` events are now disabled at the code
+  locations which aren't being profiled, so that code which isn't
+  profiled runs at close to full speed while profiling (Python 3.12+)
+* ENH: Reduced the per-event overhead of both the ``sys.monitoring`` and
+  the legacy trace callbacks by caching the hash of each code block on
+  the code object and halving the number of hash-map lookups
+* CHANGE: Split the Cython extension into three modules
+  (``_line_profiler``, ``_profiler_base``, and ``_sys_monitoring``) so
+  that they can be compiled in parallel on non-Windows systems
+
+
 5.1.0
 -----
 * FIX: Text output now replaces characters the output stream cannot

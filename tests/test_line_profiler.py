@@ -427,6 +427,98 @@ def test_abandoned_generator_and_coroutine_timing(tracing_core):
     assert get_tagged_line_stats(prof, gen)[0]['gen: unreached'][0] == 0
 
 
+@pytest.mark.parametrize('exit_via', ['return', 'raise', 'propagate'])
+def test_time_between_calls_not_recorded(tracing_core, exit_via):
+    """
+    Test that the time spent between calls to a profiled function isn't
+    attributed to its lines (i.e. that the events of its frame exiting
+    are always handled), whether it returns, raises, or lets an
+    exception from a callee propagate.
+    """
+    prof = LineProfiler()
+    delay = .02
+
+    def fail():
+        raise ValueError
+
+    def func():
+        if exit_via == 'raise':
+            raise ValueError
+        if exit_via == 'propagate':
+            fail()
+        return 1
+
+    prof.add_function(func)
+    # Note: don't use prof as a decorator, which would disable it (and
+    # clear the timing records) after each call
+    with prof:
+        for _ in range(4):
+            try:
+                func()
+            except ValueError:
+                pass
+            time.sleep(delay)
+    stats = prof.get_stats()
+    (timings,) = stats.timings.values()
+    # Each line run is hit once per call
+    assert {nhits for _, nhits, _ in timings} == {4}
+    assert sum(t for _, _, t in timings) * stats.unit < delay
+
+
+def test_code_extra_slots_exhausted(tracing_core):
+    """
+    Test that profiling still works (with a warning) when all the
+    scratch slots on code objects (see PEP 523), on which the trace
+    callbacks cache information about the code, have been taken by other
+    extensions before line_profiler is imported.
+    """
+    # The subprocess uses the same interpreter, so check here whether it
+    # can take the slots via the C API
+    ctypes = pytest.importorskip('ctypes')
+    if ctypes.pythonapi is None:
+        pytest.skip('ctypes.pythonapi unavailable')
+    script = textwrap.dedent('''
+    import ctypes
+    import warnings
+
+    api = ctypes.pythonapi
+    try:  # Python 3.12+
+        request_index = api.PyUnstable_Eval_RequestCodeExtraIndex
+    except AttributeError:
+        request_index = api._PyEval_RequestCodeExtraIndex
+    request_index.argtypes = [ctypes.c_void_p]
+    request_index.restype = ctypes.c_ssize_t
+    while request_index(None) >= 0:
+        pass
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter('always')
+        from line_profiler import LineProfiler
+    assert any('scratch slots' in str(w.message) for w in record), record
+
+    def func(n):
+        total = 0
+        for i in range(n):
+            total += i
+        return total
+
+    prof = LineProfiler(func)
+    with prof:
+        assert func(10) == 45
+    (timings,) = prof.get_stats().timings.values()
+    assert {lineno: nhits for lineno, nhits, _ in timings} == {
+        func.__code__.co_firstlineno + 1: 1,
+        func.__code__.co_firstlineno + 2: 11,
+        func.__code__.co_firstlineno + 3: 10,
+        func.__code__.co_firstlineno + 4: 1,
+    }, timings
+    ''')
+    env = {**os.environ, 'LINE_PROFILER_CORE': tracing_core}
+    proc = subprocess.run([sys.executable, '-c', script], env=env,
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_enable_disable():
     lp = LineProfiler()
     assert lp.enable_count == 0

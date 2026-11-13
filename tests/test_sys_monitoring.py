@@ -933,3 +933,175 @@ def test_local_event_preservation(
     )
     nhits = int(line.split()[1])
     assert nhits == n
+
+def _make_nested_funcs() -> Tuple[Callable[[int], int], Callable[[int], int]]:
+    namespace: Dict[str, Any] = {}
+    exec(
+        'def inner(n):\n'
+        '    total = 0\n'
+        '    for i in range(n):\n'
+        '        total += i\n'
+        '    return total\n'
+        '\n'
+        'def outer(n):\n'
+        '    return inner(n)\n',
+        namespace,
+    )
+    return namespace['inner'], namespace['outer']
+
+
+def _get_total_nhits(prof: LineProfiler, func: Callable) -> int:
+    timings = prof.get_stats().timings
+    entries = timings.get(_line_profiler.label(func.__code__), [])
+    return sum(nhits for _, nhits, _ in entries)
+
+
+def test_disabled_events_restarted_on_enable() -> None:
+    """
+    Check that the events which were disabled (via
+    sys.monitoring.DISABLE) for code which wasn't being
+    profiled are re-enabled when a profiler profiling it is enabled.
+    """
+    inner, outer = _make_nested_funcs()
+    prof_inner = LineProfiler(wrap_trace=False)
+    prof_outer = LineProfiler(wrap_trace=False)
+    # Note: this pads the bytecode, so inner() keeps its code object
+    # from here on
+    prof_inner.add_function(inner)
+    prof_outer.add_function(outer)
+    with prof_outer:
+        # inner() isn't profiled by prof_outer, so its events are
+        # disabled
+        assert outer(10) == 45
+        assert not _get_total_nhits(prof_inner, inner)
+        with prof_inner:
+            assert inner(10) == 45
+    assert _get_total_nhits(prof_inner, inner)
+    assert _get_total_nhits(prof_outer, outer)
+
+
+def test_disabled_events_restarted_on_add_function() -> None:
+    """
+    Check that the events which were disabled for code which wasn't
+    being profiled are re-enabled when it is added to an active
+    profiler.
+    """
+    inner, outer = _make_nested_funcs()
+    # Pad the bytecode of inner() so that adding it later doesn't
+    # replace its code object
+    LineProfiler().add_function(inner)
+    prof = LineProfiler(wrap_trace=False)
+    prof.add_function(outer)
+    with prof:
+        assert outer(10) == 45
+        prof.add_function(inner)
+        assert inner(10) == 45
+    assert _get_total_nhits(prof, inner)
+
+
+def test_disabled_events_restored_for_other_tools() -> None:
+    """
+    Check that another tool using the same tool ID gets the events we
+    disabled while profiling once profiling is done.
+    """
+    inner, outer = _make_nested_funcs()
+    returns: Counter = Counter()
+
+    def on_return(code: CodeType, offset: int, retval: Any) -> None:
+        returns[code] += 1
+
+    events = MON.get_events()
+    old_callback = MON.register_callback(MON.PY_RETURN, on_return)
+    # Note: have all the events used by LineProfiler already active, so
+    # that the set of active events doesn't change when it is done (since
+    # that alone may re-instrument the code)
+    MON.set_events(
+        events
+        | MON.LINE
+        | MON.PY_RETURN
+        | MON.PY_YIELD
+        | MON.RAISE
+        | MON.RERAISE
+    )
+    try:
+        prof = LineProfiler(wrap_trace=False)
+        prof.add_function(outer)
+        with prof:
+            # The return events of inner() are disabled here
+            assert outer(10) == 45
+        nreturns = returns[inner.__code__]
+        assert inner(10) == 45
+        assert returns[inner.__code__] == nreturns + 1
+    finally:
+        MON.set_events(events)
+        MON.register_callback(MON.PY_RETURN, old_callback)
+
+
+def test_disabled_events_restored_after_tool_id_reuse() -> None:
+    """
+    Check that another tool which acquires the tool ID after we've
+    released it gets the events we disabled while profiling (since
+    freeing the tool ID doesn't reset them).
+    """
+    inner, outer = _make_nested_funcs()
+    lines: Counter = Counter()
+
+    def on_line(code: CodeType, lineno: int) -> None:
+        lines[code] += 1
+
+    # Have LineProfiler acquire the tool ID itself
+    tool_name = MON.get_tool()
+    MON.free_tool_id()
+    try:
+        prof = LineProfiler(wrap_trace=False)
+        prof.add_function(outer)
+        with prof:
+            # The line events of inner() are disabled here
+            assert outer(10) == 45
+        assert MON.get_tool() is None
+        MON.use_tool_id('other_tool')
+        old_callback = MON.register_callback(MON.LINE, on_line)
+        try:
+            MON.set_events(MON.LINE)
+            assert inner(10) == 45
+        finally:
+            MON.set_events(MON.NO_EVENTS)
+            MON.register_callback(MON.LINE, old_callback)
+        assert lines[inner.__code__]
+    finally:
+        if MON.get_tool() is not None:
+            MON.free_tool_id()
+        if tool_name is not None:
+            MON.use_tool_id(tool_name)
+
+
+def test_disabled_events_restarted_on_wrap_trace() -> None:
+    """
+    Check that turning on ``wrap_trace`` while profiling re-enables the
+    events which were disabled while not wrapping, so that the wrapped
+    callbacks receive them.
+    """
+    inner, outer = _make_nested_funcs()
+    lines: Counter = Counter()
+
+    def on_line(code: CodeType, lineno: int) -> None:
+        lines[code] += 1
+
+    events = MON.get_events()
+    old_callback = MON.register_callback(MON.LINE, on_line)
+    MON.set_events(events | MON.LINE)
+    prof = LineProfiler(wrap_trace=False)
+    prof.add_function(outer)
+    try:
+        with prof:
+            # Not wrapping, so the callback doesn't receive the events,
+            # which are disabled in inner()
+            assert inner(10) == 45
+            assert not lines[inner.__code__]
+            prof.wrap_trace = True
+            assert inner(10) == 45
+        assert lines[inner.__code__]
+    finally:
+        prof.wrap_trace = False
+        MON.set_events(events)
+        MON.register_callback(MON.LINE, old_callback)
