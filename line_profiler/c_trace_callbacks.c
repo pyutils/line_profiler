@@ -272,6 +272,24 @@ cleanup:
     return;
 }
 
+void disable_line_events(PyFrameObject *py_frame)
+{
+    /* Stop line events from being generated for the frame (e.g. because
+     * its code isn't being profiled) */
+    py_frame->f_trace_lines = 0;
+}
+
+void enable_line_events(PyFrameObject *py_frame, PyObject *manager)
+{
+    /* Undo `disable_line_events()`, i.e. let the frame generate line
+     * events again (e.g. because its code is now being profiled), unless
+     * it has a frame-local trace function other than `manager` (which
+     * may have turned them off itself) */
+    PyObject *f_trace = py_frame->f_trace;
+    if (f_trace == NULL || f_trace == Py_None || f_trace == manager)
+        py_frame->f_trace_lines = 1;
+}
+
 Py_uintptr_t monitoring_restart_version()
 #if PY_VERSION_HEX >= 0x030c00b1  // 3.12.0b1
 {

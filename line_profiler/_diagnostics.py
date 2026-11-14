@@ -91,6 +91,9 @@ STATIC_ANALYSIS = _boolean_environ('LINE_PROFILER_STATIC_ANALYSIS')
 
 # `line_profiler._line_profiler` switches
 WRAP_TRACE = _boolean_environ('LINE_PROFILER_WRAP_TRACE')
+# Whether to time with the CPU's timestamp counter where it's reliable
+# (see line_profiler/timers.c)
+USE_TSC = _boolean_environ('LINE_PROFILER_TSC', default=True)
 SET_FRAME_LOCAL_TRACE = _boolean_environ('LINE_PROFILER_SET_FRAME_LOCAL_TRACE')
 _MUST_USE_LEGACY_TRACE = not isinstance(
     getattr(sys, 'monitoring', None), ModuleType

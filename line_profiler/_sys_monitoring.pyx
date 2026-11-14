@@ -4,11 +4,11 @@
 # distutils: language=c++
 # distutils: include_dirs = python25.pxd
 r"""
-Bookkeeping for wrapping around other tools' sys.monitoring
-callbacks, used by line_profiler._line_profiler.
+Bookkeeping for wrapping around other tools' :py:mod:`sys.monitoring`
+callbacks, used by :py:mod:`line_profiler._line_profiler`.
 
 Note:
-    This is split from line_profiler._line_profiler so that the
+    This is split from :py:mod:`line_profiler._line_profiler` so that the
     extension modules can be compiled in parallel; none of this is on
     the hot path unless other tools' callbacks are being wrapped.
 """
@@ -29,19 +29,42 @@ cdef extern from "c_trace_callbacks.h":
 _CAN_USE_SYS_MONITORING = PY_VERSION_HEX >= 0x030c00b1
 
 
-cdef inline object get_current_callback(int tool_id, int event_id):
-    """
-    Note:
-        Unfortunately there's no public API for directly retrieving
-        the current callback, no matter on the Python side or the C
-        side.  This may become a performance bottleneck...
-    """
-    mon = sys.monitoring
-    cdef object register = mon.register_callback
-    cdef object result = register(tool_id, event_id, None)
-    if result is not None:
-        register(tool_id, event_id, result)
-    return result
+# The `sys.monitoring` API and constants, looked up once here rather than
+# on every call of `_SysMonitoringState.call_callback()`
+cdef object _register_callback = None
+cdef object _get_events = None
+cdef object _set_events = None
+cdef object _get_local_events = None
+cdef object _get_tool = None
+cdef object _use_tool_id = None
+cdef object _free_tool_id = None
+cdef object _DISABLE = None
+# The events used for line profiling, in the order of the arguments of
+# `_SysMonitoringState.register()`
+cdef int _NUM_LINE_TRACING_EVENTS = 5
+cdef int _LINE_TRACING_EVENT_IDS[5]
+# The same as Python ints, so that they don't have to be created anew
+# for every call into `sys.monitoring`
+cdef tuple _LINE_TRACING_EVENT_ID_OBJS = ()
+cdef int _LINE_TRACING_EVENTS = 0
+if _CAN_USE_SYS_MONITORING:
+    _register_callback = sys.monitoring.register_callback
+    _get_events = sys.monitoring.get_events
+    _set_events = sys.monitoring.set_events
+    _get_local_events = sys.monitoring.get_local_events
+    _get_tool = sys.monitoring.get_tool
+    _use_tool_id = sys.monitoring.use_tool_id
+    _free_tool_id = sys.monitoring.free_tool_id
+    _DISABLE = sys.monitoring.DISABLE
+    for _i, _event_id in enumerate([sys.monitoring.events.LINE,
+                                    sys.monitoring.events.PY_RETURN,
+                                    sys.monitoring.events.PY_YIELD,
+                                    sys.monitoring.events.RAISE,
+                                    sys.monitoring.events.RERAISE]):
+        _LINE_TRACING_EVENT_IDS[_i] = _event_id
+        _LINE_TRACING_EVENTS |= _event_id
+        _LINE_TRACING_EVENT_ID_OBJS += (_event_id,)
+    del _i, _event_id
 
 
 cpdef int _patch_events(int events, int before, int after) noexcept:
@@ -88,9 +111,11 @@ cdef class _SysMonitoringState:
 
     def __init__(self, tool_id: int):
         self.tool_id = tool_id
+        self.tool_id_obj = tool_id
         self.name = None
-        self.callbacks = {}
-        self.disabled = {}
+        self.own_callbacks = [None] * _NUM_LINE_TRACING_EVENTS
+        self.callbacks = [None] * _NUM_LINE_TRACING_EVENTS
+        self.disabled = [None] * _NUM_LINE_TRACING_EVENTS
         self.events = 0  # NO_EVENTS
         self.restart_version = monitoring_restart_version()
 
@@ -105,7 +130,7 @@ cdef class _SysMonitoringState:
         #   in use (e.g. activated via `.use_tool_id()`), and
         # - That doesn't result in much (< 2%) performance improvement
         #   in tests
-        mon = sys.monitoring
+        cdef int i
 
         # Set prior state
         # Note: in 3.14.0a1+, calling `sys.monitoring.free_tool_id()`
@@ -114,84 +139,91 @@ cdef class _SysMonitoringState:
         # this does have the side effect of not overriding the active
         # profiling tool name if one is already in use, but it's
         # probably better this way
-        self.name = mon.get_tool(self.tool_id)
+        self.name = _get_tool(self.tool_id)
         if self.name is None:
-            self.events = mon.events.NO_EVENTS
-            mon.use_tool_id(self.tool_id, 'line_profiler')
+            self.events = 0  # NO_EVENTS
+            _use_tool_id(self.tool_id, 'line_profiler')
         else:
-            self.events = mon.get_events(self.tool_id)
-        mon.set_events(self.tool_id, self.events | self.line_tracing_events)
+            self.events = _get_events(self.tool_id)
+        _set_events(self.tool_id, self.events | _LINE_TRACING_EVENTS)
 
         # Register tracebacks and remember the existing ones
-        for event_id, callback in [(mon.events.LINE, handle_line),
-                                   (mon.events.PY_RETURN, handle_return),
-                                   (mon.events.PY_YIELD, handle_yield),
-                                   (mon.events.RAISE, handle_raise),
-                                   (mon.events.RERAISE, handle_reraise)]:
-            self.callbacks[event_id] = mon.register_callback(
-                self.tool_id, event_id, callback)
+        self.own_callbacks = [handle_line, handle_return, handle_yield,
+                              handle_raise, handle_reraise]
+        for i in range(_NUM_LINE_TRACING_EVENTS):
+            self.callbacks[i] = _register_callback(
+                self.tool_id, _LINE_TRACING_EVENT_IDS[i],
+                self.own_callbacks[i])
 
     cpdef deregister(self):
-        mon = sys.monitoring
-        cdef dict wrapped_callbacks = self.callbacks
+        cdef int i
 
         # Restore prior state
-        mon.set_events(self.tool_id, self.events)
+        _set_events(self.tool_id, self.events)
         if self.name is None:
-            mon.free_tool_id(self.tool_id)
+            _free_tool_id(self.tool_id)
         self.name = None
-        self.events = mon.events.NO_EVENTS
+        self.events = 0  # NO_EVENTS
 
         # Reset tracebacks
-        while wrapped_callbacks:
-            mon.register_callback(self.tool_id, *wrapped_callbacks.popitem())
+        for i in range(_NUM_LINE_TRACING_EVENTS):
+            _register_callback(self.tool_id, _LINE_TRACING_EVENT_IDS[i],
+                               self.callbacks[i])
+            self.callbacks[i] = None
+            self.own_callbacks[i] = None
 
-    cdef void call_callback(self, int event_id, object code,
-                            object loc_args, object other_args) noexcept:
+    cdef void call_callback(self, int event_id, object code, int loc,
+                            object arg, bint has_arg) noexcept:
         """
-        Call the appropriate stored callback.  Also take care of the
-        restoration of :py:mod:`sys.monitoring` callbacks, tool-ID lock,
-        and events should they be unset.
+        Call the appropriate stored callback with ``(code, loc)`` (or
+        ``(code, loc, arg)`` if ``has_arg`` is true).  Also take care of
+        the restoration of :py:mod:`sys.monitoring` callbacks, tool-ID
+        lock, and events should they be unset.
 
         Note:
-            * This is deliberately made a non-traceable C method so that
-              we don't fall info infinite recursion.
-            * ``loc_args`` and ``other_args`` should be tuples.
+            This is deliberately made a non-traceable C method so that
+            we don't fall info infinite recursion.
         """
-        mon = sys.monitoring
         cdef PyObject *result = NULL
         cdef object callback  # type: Callable | None
         cdef object callback_after  # type: Callable | None
-        cdef object code_location  # type: tuple[code, Unpack[tuple]]
+        cdef object code_location  # type: tuple[code, int]
         cdef object arg_tuple  # type: tuple[code, Unpack[tuple]]
-        cdef object disabled  # type: set[tuple[code, Unpack[tuple]]]
-        cdef int ev_id, events_before
+        cdef set disabled  # type: set[tuple[code, int]] | None
+        cdef int i, index = -1, events_before = 0, events_after
+        cdef bint reacquired = False
         cdef Py_uintptr_t version = monitoring_restart_version()
-        cdef dict callbacks_before = {}
+
+        for i in range(_NUM_LINE_TRACING_EVENTS):
+            if _LINE_TRACING_EVENT_IDS[i] == event_id:
+                index = i
+                break
+        if index < 0:
+            return
 
         # If we've restarted events, clear the `.disabled` registry
         if version != self.restart_version:
             self.restart_version = version
-            self.disabled.clear()
+            for i in range(_NUM_LINE_TRACING_EVENTS):
+                self.disabled[i] = None
 
         # Call the wrapped callback where suitable
-        callback = self.callbacks.get(event_id)
+        callback = self.callbacks[index]
         if callback is None:  # No cached callback
             return
-        code_location = (code,) + loc_args
-        disabled = self.disabled.setdefault(event_id, set())
-        if code_location in disabled:  # Events 'disabled' for the loc
-            return
-        if not (self.events  # Callback should not receive the event
-                | mon.get_local_events(self.tool_id, code)) & event_id:
-            return
+        code_location = (code, loc)
+        disabled = self.disabled[index]
+        if disabled is not None and code_location in disabled:
+            return  # Events 'disabled' for the loc
+        # Callback should not receive the event (only check the local
+        # events if the global ones don't include it)
+        if not (self.events & event_id):
+            if not (_get_local_events(self.tool_id_obj, code) & event_id):
+                return
 
-        for ev_id in self.line_tracing_event_set:
-            callbacks_before[ev_id] = get_current_callback(self.tool_id, ev_id)
-
-        arg_tuple = code_location + other_args
+        arg_tuple = (code, loc, arg) if has_arg else code_location
         try:
-            events_before = mon.get_events(self.tool_id)
+            events_before = _get_events(self.tool_id_obj)
             result = PyObject_Call(  # Note: DECREF needed below
                 <PyObject *>callback, <PyObject *>arg_tuple, NULL)
         else:
@@ -199,24 +231,31 @@ cdef class _SysMonitoringState:
             # profiling will be interrupted), just mark the location so
             # that we stop calling the cached callback until the next
             # time `sys.monitoring.restart_events()` is called
-            if result == <PyObject *>(mon.DISABLE):
+            if result == <PyObject *>_DISABLE:
+                if disabled is None:
+                    disabled = self.disabled[index] = set()
                 disabled.add(code_location)
         finally:
             Py_XDECREF(result)
             # Update the events
+            events_after = _get_events(self.tool_id_obj)
             self.events = _patch_events(
-                self.events, events_before, mon.get_events(self.tool_id))
-            # If the wrapped callback has changed:
-            register = mon.register_callback
-            for ev_id, callback in callbacks_before.items():
-                # - Restore the `sys.monitoring` callback
-                callback_after = register(self.tool_id, ev_id, callback)
-                # - Remember the updated callback in `self.callbacks`
-                if callback is not callback_after:
-                    self.callbacks[ev_id] = callback_after
+                self.events, events_before, events_after)
+            # If the wrapped callback has replaced any of our callbacks:
+            # - Restore ours, and
+            # - Remember the replacement as the callback to wrap
+            for i in range(_NUM_LINE_TRACING_EVENTS):
+                callback_after = _register_callback(
+                    self.tool_id_obj, _LINE_TRACING_EVENT_ID_OBJS[i],
+                    self.own_callbacks[i])
+                if callback_after is not self.own_callbacks[i]:
+                    self.callbacks[i] = callback_after
             # Reset the tool ID lock if released
-            if not mon.get_tool(self.tool_id):
-                mon.use_tool_id(self.tool_id, 'line_profiler')
+            if not _get_tool(self.tool_id_obj):
+                _use_tool_id(self.tool_id_obj, 'line_profiler')
+                reacquired = True
             # Restore the `sys.monitoring` events if unset
-            mon.set_events(self.tool_id,
-                           self.events | self.line_tracing_events)
+            if reacquired or events_after != (
+                    self.events | _LINE_TRACING_EVENTS):
+                _set_events(self.tool_id_obj,
+                            self.events | _LINE_TRACING_EVENTS)

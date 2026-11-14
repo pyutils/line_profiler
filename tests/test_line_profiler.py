@@ -1758,3 +1758,276 @@ def test_load_stats_files(legacy, n):
         stats_read = LineStats.from_files(*files)
     assert isinstance(stats_read, LineStats)
     assert stats_read == stats_combined
+
+
+# -------------------------------------------------------------------- #
+#     The native profiling data (line storage, registry, timer)        #
+# -------------------------------------------------------------------- #
+
+
+def _total_hits(prof, func):
+    timings = prof.get_stats().timings
+    return sum(nhits for _, nhits, _ in
+               timings.get(_line_profiler.label(func.__code__), []))
+
+
+def _exec_tagged(source, first_lineno, filename):
+    """
+    Compile ``source`` as if it started at line ``first_lineno`` of
+    ``filename``, and return its namespace and the line numbers of its
+    lines tagged with ``# <tag>``.
+    """
+    namespace = {}
+    code = compile('\n' * (first_lineno - 1) + source, filename, 'exec')
+    exec(code, namespace)
+    tags = {line.rsplit('# ', 1)[1].strip(): first_lineno + i
+            for i, line in enumerate(source.splitlines()) if '# ' in line}
+    return namespace, tags
+
+
+def test_line_storage_far_down_in_file(tracing_core):
+    """
+    Test that the profiling data of functions far down in a source file
+    takes space proportional to their number of lines (not to their line
+    numbers, since `PyCode_Addr2Line()` gives -1 for the bytecode without
+    a line, e.g. padding, exception handling and generators), and that it
+    takes space proportional to the number of lines even when the lines
+    are far apart.
+    """
+    first = 1_000_000
+    source = (
+        'def plain(n):\n'
+        '    return n + 1  # plain\n'
+        '\n'
+        'def guarded(n):\n'
+        '    try:\n'
+        '        return 1 // n  # divide\n'
+        '    except ZeroDivisionError:\n'
+        '        return 0  # zero\n'
+        '\n'
+        'def gen(n):\n'
+        '    for i in range(n):\n'
+        '        yield i  # yield\n'
+        '\n'
+        'def gappy(n):\n'
+        '    x = n  # start\n'
+        '    s = """\n'
+        + '\n' * 20_000 +
+        '"""\n'
+        '    return x + len(s)  # end\n')
+    namespace, tags = _exec_tagged(source, first, '<far down>')
+    funcs = [namespace[name] for name in ('plain', 'guarded', 'gen', 'gappy')]
+    prof = LineProfiler(*funcs)
+    plain, guarded, gen, gappy = funcs
+    with prof:
+        assert plain(1) == 2
+        assert guarded(0) == 0
+        assert guarded(1) == 1
+        assert list(gen(3)) == [0, 1, 2]
+        assert gappy(1) == 20_002
+    slots, ndense = prof._line_slots
+    assert slots < 100, slots
+    # The functions with contiguous lines use a table, the other a
+    # sorted vector
+    assert ndense == 3
+    hits = {lineno: nhits for timings in prof.get_stats().timings.values()
+            for lineno, nhits, _ in timings}
+    assert {tag: hits.get(lineno, 0) for tag, lineno in tags.items()} == {
+        'plain': 1, 'divide': 2, 'zero': 1, 'yield': 3, 'start': 1, 'end': 1}
+
+
+def test_add_function_during_execution(tracing_core):
+    """
+    Test that the lines run by the frames of a function after it is
+    added to an active profiler are recorded, even if the frames were
+    started before (with the legacy trace system, the line events of the
+    frames of unprofiled code are turned off).
+    """
+    def unrelated():
+        pass
+
+    prof = LineProfiler(unrelated)
+
+    def recurse(n):
+        if n:  # check
+            recurse(n - 1)  # call
+        else:
+            prof.add_function(recurse)  # add
+        return n  # return
+
+    # Pad the bytecode now, so that adding it later doesn't replace the
+    # code object of the running frames
+    LineProfiler().add_function(recurse)
+    code = recurse.__code__
+    with prof:
+        recurse(3)
+    assert recurse.__code__ is code
+    line_stats, _ = get_tagged_line_stats(prof, recurse)
+    # All four frames run the last line after recurse() is added
+    assert line_stats['return'][0] == 4
+
+
+def test_add_suspended_generator(tracing_core):
+    """
+    Test that the lines run by a suspended generator after its function
+    is added to an active profiler are recorded.
+    """
+    def unrelated():
+        pass
+
+    def gen():
+        yield 1  # first
+        yield 2  # second
+
+    prof = LineProfiler(unrelated)
+    LineProfiler().add_function(gen)  # (Pad the bytecode now; see above)
+    with prof:
+        g = gen()
+        assert next(g) == 1
+        prof.add_function(gen)
+        assert next(g) == 2
+    line_stats, _ = get_tagged_line_stats(prof, gen)
+    assert line_stats['second'][0] == 1
+
+
+def test_enable_profiler_during_execution(tracing_core):
+    """
+    Test that the lines run by a frame after a profiler profiling its
+    function is enabled are recorded, when the frame was started while
+    another profiler was active.
+    """
+    def unrelated():
+        pass
+
+    prof_a = LineProfiler(unrelated)
+    prof_b = LineProfiler()
+
+    def outer():
+        prof_b.enable_by_count()  # enable
+        x = 1  # after
+        prof_b.disable_by_count()  # disable
+        return x
+
+    prof_b.add_function(outer)
+    with prof_a:
+        assert outer() == 1
+    line_stats, _ = get_tagged_line_stats(prof_b, outer)
+    assert line_stats['after'][0] == 1
+
+
+def test_profilers_sharing_code(tracing_core):
+    """
+    Test that profilers profiling the same function record its calls
+    independently, while they are enabled and disabled independently,
+    and after one of them is deallocated.
+    """
+    def func():
+        return 1
+
+    prof_a = LineProfiler(func)
+    prof_b = LineProfiler(func)
+    prof_a.enable_by_count()
+    func()
+    prof_b.enable_by_count()
+    func()
+    prof_a.disable_by_count()
+    func()
+    prof_b.disable_by_count()
+    func()
+    assert _total_hits(prof_a, func) == 2
+    assert _total_hits(prof_b, func) == 2
+    del prof_a
+    gc.collect()
+    with prof_b:
+        func()
+    assert _total_hits(prof_b, func) == 3
+
+
+def test_registry_memory_reclaimed(tracing_core):
+    """
+    Test that the native data of the code blocks profiled is freed when
+    the profilers profiling them are deallocated, and that the code
+    objects which pointed to the freed data can be profiled again.
+    """
+    gc.collect()
+    baseline = _line_profiler._num_registered_blocks()
+    funcs = []
+    for i in range(200):
+        namespace, _ = _exec_tagged(
+            f'def f{i}(n):\n    return n + {i}\n', 1, f'<dynamic {i}>')
+        func = namespace[f'f{i}']
+        prof = LineProfiler(func)
+        with prof:
+            assert func(1) == i + 1
+        assert _total_hits(prof, func) == 1
+        funcs.append(func)
+        del prof
+    gc.collect()
+    assert _line_profiler._num_registered_blocks() == baseline
+    # The code objects still cache (now invalidated) pointers to the
+    # freed blocks
+    func = funcs[0]
+    func(1)
+    prof = LineProfiler(func)
+    with prof:
+        func(1)
+    assert _total_hits(prof, func) == 1
+    assert _line_profiler._num_registered_blocks() == baseline + 1
+
+
+@pytest.mark.parametrize('use_tsc', ['0', '1'])
+def test_timer_accuracy(use_tsc):
+    """
+    Test that the timings are accurate (compared with
+    `time.perf_counter()`) whether the timer is allowed to use the CPU's
+    timestamp counter or not, including when the thread moves between
+    CPU cores (where supported).
+
+    Note:
+        Allowing the timestamp counter doesn't mean it is used (see
+        `hpTimerInit()` in `timers.c`), and the test is skipped if it
+        isn't (since it would just test the other timer again).
+    """
+    script = textwrap.dedent('''
+    import os
+    import sys
+    import time
+    from line_profiler import LineProfiler, _line_profiler
+
+    print(_line_profiler.USING_TSC, flush=True)
+
+    def sleeper(cpus, delay):
+        for cpu in cpus:
+            if cpu is not None:
+                os.sched_setaffinity(0, {cpu})
+            time.sleep(delay)
+
+    cpus = [None]
+    if hasattr(os, 'sched_getaffinity'):
+        allowed = sorted(os.sched_getaffinity(0))
+        if len(allowed) > 1:
+            cpus = allowed[:2] * 3
+    delay = .02
+    prof = LineProfiler(sleeper)
+    with prof:
+        start = time.perf_counter()
+        sleeper(cpus, delay)
+        wall = time.perf_counter() - start
+    stats = prof.get_stats()
+    (timings,) = stats.timings.values()
+    times = [t * stats.unit for _, _, t in timings]
+    assert all(t >= 0 for t in times), times
+    total = sum(times)
+    assert .9 * delay * len(cpus) <= total <= 1.1 * wall + .005, (
+        total, wall)
+    ''')
+    env = {**os.environ, 'LINE_PROFILER_TSC': use_tsc}
+    proc = subprocess.run([sys.executable, '-c', script], env=env,
+                          capture_output=True, text=True)
+    using_tsc = proc.stdout.split('\n', 1)[0].strip()
+    if use_tsc == '1' and using_tsc == 'False':
+        pytest.skip('the timestamp counter is not used on this machine '
+                    '(it needs a Linux x86-64 build, a constant-rate TSC, '
+                    "and 'tsc' as the kernel's clock source)")
+    assert proc.returncode == 0, proc.stderr
+    assert using_tsc == ('False' if use_tsc == '0' else 'True')

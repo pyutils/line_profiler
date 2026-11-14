@@ -5,11 +5,12 @@
 # distutils: include_dirs = python25.pxd
 r"""
 The profiling data and the (non-tracing) bookkeeping of
-line_profiler._line_profiler.LineProfiler.
+:py:class:`line_profiler._line_profiler.LineProfiler`.
 """
 from sys import byteorder
 import sys
 from cpython.version cimport PY_VERSION_HEX
+from ._profile_data cimport LastLine, LineData, ProfileEntry
 import threading
 import opcode
 import os
@@ -59,14 +60,14 @@ cdef void note_events_disabled() noexcept:
     _events_disabled = True
 
 
-cdef void restart_disabled_events():
+cdef void restart_disabled_events() noexcept:
     """
     Re-enable the sys.monitoring events disabled at code locations,
     if any.  This is needed when the set of profiled code changes, since
     code which we disabled the events for may now need to be profiled.
 
     Note:
-        sys.monitoring.restart_events() re-enables disabled
+        :py:func:`sys.monitoring.restart_events` re-enables disabled
         events for all tools, but tools are supposed to cope with that
         (they just disable the events again).
     """
@@ -74,6 +75,16 @@ cdef void restart_disabled_events():
     if _events_disabled:
         _events_disabled = False
         sys.monitoring.restart_events()
+
+
+cdef inline long long to_units(long long ticks, double ticks_to_units):
+    """
+    Convert a raw timing to timer units (see
+    :py:attr:`_LineProfilerBase._ticks_to_units`).
+    """
+    if ticks_to_units == 1.0:
+        return ticks
+    return <long long>(ticks * ticks_to_units + .5)
 
 
 cdef inline object multibyte_rstrip(bytes bytecode):
@@ -192,12 +203,12 @@ cpdef _copy_local_sysmon_events(old_code, new_code):
 
 cdef class _LineProfilerBase:
     """
-    Base class of line_profiler._line_profiler.LineProfiler
+    Base class of :py:class:`line_profiler._line_profiler.LineProfiler`
     holding the profiling data, and the methods for setting up and
     inspecting it.
 
     Note:
-        This is split from line_profiler._line_profiler so
+        This is split from :py:mod:`line_profiler._line_profiler` so
         that the extension modules can be compiled in parallel; the
         trace callbacks there access the C-level data directly.
     """
@@ -254,7 +265,7 @@ datamodel.html#user-defined-functions
         # handling on the non-Cython branch.
         # XXX: tests for the above assertion if necessary
         co_code: bytes = code.co_code
-        code_hashes = []
+        cdef Py_hash_t block_hash
         if any(co_code):  # Normal Python functions
             # Figure out how much padding we need and strip the bytecode
             # Notes:
@@ -292,11 +303,9 @@ datamodel.html#user-defined-functions
             # inefficient
             # See if this can be sped up by not needing to iterate over
             # every byte
-            for offset, _ in enumerate(co_code):
-                code_hashes.append(
-                    compute_line_hash(
-                        hash(co_code),
-                        PyCode_Addr2Line(<PyCodeObject*>code, offset)))
+            block_hash = hash(co_code)
+            linenos = [PyCode_Addr2Line(<PyCodeObject*>code, offset)
+                       for offset in range(len(co_code))]
         else:  # Cython functions have empty/zero bytecodes
             if CANNOT_LINE_TRACE_CYTHON:
                 return
@@ -313,31 +322,43 @@ datamodel.html#user-defined-functions
                 return
             nlines = len(get_code_block(cython_source, lineno))
             block_hash = hash(code)
-            for lineno in range(lineno, lineno + nlines):
-                code_hash = compute_line_hash(block_hash, lineno)
-                code_hashes.append(code_hash)
+            linenos = range(lineno, lineno + nlines)
             # We can't replace the code object on Cython functions, but
             # we can *store* a copy with the correct metadata
             # Note: we don't use `_copy_local_sysmon_events()` here
             # because Cython shim code objects don't support local
             # events
             code = code.replace(co_filename=cython_source)
-        # Update `._c_code_map` and `.code_hash_map` with the new line
-        # hashes
+        # Register the lines for profiling, and update .code_hash_map
+        # with the hashes of the new ones
         try:
             line_hashes = self.code_hash_map[code]
         except KeyError:
             line_hashes = self.code_hash_map[code] = []
-        for code_hash in code_hashes:
-            line_hash = <int64>code_hash
-            if not self._c_code_map.count(line_hash):
-                line_hashes.append(line_hash)
-                self._c_code_map[line_hash]
+        for lineno in self._register_lines(block_hash, linenos):
+            # Note: PyCode_Addr2Line() gives -1 for the offsets without
+            # a line, which is registered (and hashed) like before, but
+            # stored apart from the other lines (see ProfileEntry)
+            line_hashes.append(compute_line_hash(block_hash, <int>lineno))
 
         self.functions.append(func)
         # The events of the code may have been disabled while it wasn't
         # being profiled
         restart_disabled_events()
+
+    cdef list _register_lines(self, Py_hash_t block_hash, object linenos):
+        """
+        Set up the profiling data for the lines of a code block.
+
+        Returns:
+            The line numbers which weren't already registered (in
+            order, without duplicates)
+
+        Note:
+            Implemented in :py:class:`line_profiler._line_profiler.LineProfiler`,
+            which keeps the registry of the code blocks.
+        """
+        raise NotImplementedError
 
     property enable_count:
         def __get__(self):
@@ -370,16 +391,65 @@ datamodel.html#user-defined-functions
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disable_by_count()
 
+    def __cinit__(self, *args, **kwargs):
+        self._disabled_threads = set()
+        self._ticks_to_units = 1.0
+
     @property
     def c_code_map(self):
         """
-        A Python view of the internal C lookup table.
+        A Python view of the internal profiling data: a mapping from the
+        hash of each profiled line (see :py:attr:`~.code_hash_map`) to
+        the timing entries of the line, if it has been run.
         """
-        return <dict>self._c_code_map
+        cdef ProfileEntry *entry
+        cdef LineData *line
+        cdef size_t i, j
+        c_code_map = {}
+        for i in range(self._entries.size()):
+            entry = self._entries[i]
+            # (The lines without a line number never have any timings)
+            for j in range(entry.lineless.size()):
+                c_code_map.setdefault(
+                    compute_line_hash(entry.block_hash, entry.lineless[j]), {})
+            for j in range(entry.lines.size()):
+                line = &entry.lines[j]
+                lineno = line.lineno
+                code_hash = compute_line_hash(entry.block_hash, lineno)
+                entries = c_code_map.setdefault(code_hash, {})
+                if line.nhits:
+                    entries[lineno] = {
+                        'code': code_hash,
+                        'lineno': lineno,
+                        'total_time': to_units(line.total_time, self._ticks_to_units),
+                        'nhits': line.nhits}
+        return c_code_map
+
+    @property
+    def _line_slots(self):
+        """
+        The number of per-line slots (timings and line-number index
+        entries) allocated for the instance's code blocks, and the number
+        of those blocks whose index is a table (for checking the memory
+        use in tests).
+
+        Returns:
+            tuple[int, int]
+        """
+        cdef size_t i, total = 0, ndense = 0
+        for i in range(self._entries.size()):
+            total += (self._entries[i].lines.size()
+                      + self._entries[i].index.num_entries())
+            ndense += self._entries[i].index.is_dense()
+        return total, ndense
 
     @property
     def c_last_time(self):
         """
+        A Python view of the internal record of the line last executed
+        in each code block on the current thread: a mapping from the
+        block hash to ``{'f_lineno': ..., 'time': ...}``.
+
         Raises:
             KeyError: If no profiling data is available on the current thread.
 
@@ -389,20 +459,27 @@ datamodel.html#user-defined-functions
             by block hash as before; if a function has more than one
             active frame, the record of the innermost one is used.
         """
-        try:
-            records = (<dict>self._c_last_time)[PyThread_get_thread_ident()]
-        except KeyError as e:
-            # We haven't actually profiled anything yet
-            raise (KeyError('No profiling data on the current thread '
-                            '(`threading.get_ident()` = '
-                            f'{threading.get_ident()})')
-                   .with_traceback(e.__traceback__)) from None
+        cdef ProfileEntry *entry
+        cdef const LastLine *last
+        cdef size_t i
+        cdef unsigned long ident = PyThread_get_thread_ident()
+        has_data = ident in self._disabled_threads
         c_last_time = {}
-        for record in records.values():
-            block_hash = record.pop('block_hash')
-            current = c_last_time.get(block_hash)
-            if current is None or record['time'] > current['time']:
-                c_last_time[block_hash] = record
+        for i in range(self._entries.size()):
+            entry = self._entries[i]
+            if not entry.has_thread(ident):
+                continue
+            has_data = True
+            last = entry.latest_last_line(ident)
+            if last != NULL:
+                c_last_time[entry.block_hash] = {
+                    'f_lineno': entry.lines[last.line_index].lineno,
+                    'time': to_units(last.time, self._ticks_to_units)}
+        if not has_data:
+            # We haven't actually profiled anything yet
+            raise KeyError('No profiling data on the current thread '
+                           '(`threading.get_ident()` = '
+                           f'{threading.get_ident()})')
         return c_last_time
 
     @property

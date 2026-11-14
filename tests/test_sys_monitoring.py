@@ -934,7 +934,19 @@ def test_local_event_preservation(
     nhits = int(line.split()[1])
     assert nhits == n
 
+
+# -------------------------------------------------------------------- #
+#         Events disabled at code locations not being profiled         #
+# -------------------------------------------------------------------- #
+
+
 def _make_nested_funcs() -> Tuple[Callable[[int], int], Callable[[int], int]]:
+    """
+    Returns:
+        inner, outer (tuple[Callable[[int], int], Callable[[int], int]]):
+            Fresh functions (each with their own code objects), with
+            ``outer()`` calling ``inner()``
+    """
     namespace: Dict[str, Any] = {}
     exec(
         'def inner(n):\n'
@@ -959,7 +971,7 @@ def _get_total_nhits(prof: LineProfiler, func: Callable) -> int:
 def test_disabled_events_restarted_on_enable() -> None:
     """
     Check that the events which were disabled (via
-    sys.monitoring.DISABLE) for code which wasn't being
+    :py:data:`sys.monitoring.DISABLE`) for code which wasn't being
     profiled are re-enabled when a profiler profiling it is enabled.
     """
     inner, outer = _make_nested_funcs()
