@@ -39,6 +39,7 @@ int call_callback(
 );
 void set_local_trace(PyObject *manager, PyFrameObject *py_frame);
 void disable_line_events(PyFrameObject *py_frame);
+void enable_line_events(PyFrameObject *py_frame, PyObject *manager);
 Py_uintptr_t monitoring_restart_version();
 
 #ifdef __cplusplus

@@ -337,7 +337,8 @@ datamodel.html#user-defined-functions
             line_hashes = self.code_hash_map[code] = []
         for lineno in self._register_lines(block_hash, linenos):
             # Note: PyCode_Addr2Line() gives -1 for the offsets without
-            # a line, which is converted like before
+            # a line, which is registered (and hashed) like before, but
+            # stored apart from the other lines (see ProfileEntry)
             line_hashes.append(compute_line_hash(block_hash, <int>lineno))
 
         self.functions.append(func)
@@ -407,11 +408,13 @@ datamodel.html#user-defined-functions
         c_code_map = {}
         for i in range(self._entries.size()):
             entry = self._entries[i]
+            # (The lines without a line number never have any timings)
+            for j in range(entry.lineless.size()):
+                c_code_map.setdefault(
+                    compute_line_hash(entry.block_hash, entry.lineless[j]), {})
             for j in range(entry.lines.size()):
                 line = &entry.lines[j]
-                if not line.registered:
-                    continue
-                lineno = entry.first_line + <int>j
+                lineno = line.lineno
                 code_hash = compute_line_hash(entry.block_hash, lineno)
                 entries = c_code_map.setdefault(code_hash, {})
                 if line.nhits:
@@ -421,6 +424,24 @@ datamodel.html#user-defined-functions
                         'total_time': to_units(line.total_time, self._ticks_to_units),
                         'nhits': line.nhits}
         return c_code_map
+
+    @property
+    def _line_slots(self):
+        """
+        The number of per-line slots (timings and line-number index
+        entries) allocated for the instance's code blocks, and the number
+        of those blocks whose index is a table (for checking the memory
+        use in tests).
+
+        Returns:
+            tuple[int, int]
+        """
+        cdef size_t i, total = 0, ndense = 0
+        for i in range(self._entries.size()):
+            total += (self._entries[i].lines.size()
+                      + self._entries[i].index.num_entries())
+            ndense += self._entries[i].index.is_dense()
+        return total, ndense
 
     @property
     def c_last_time(self):
@@ -452,7 +473,7 @@ datamodel.html#user-defined-functions
             last = entry.latest_last_line(ident)
             if last != NULL:
                 c_last_time[entry.block_hash] = {
-                    'f_lineno': entry.first_line + last.line_index,
+                    'f_lineno': entry.lines[last.line_index].lineno,
                     'time': to_units(last.time, self._ticks_to_units)}
         if not has_data:
             # We haven't actually profiled anything yet

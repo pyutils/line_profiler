@@ -13,7 +13,7 @@ cdef extern from "_profile_data.hpp" namespace "line_profiler":
     cdef cppclass LineData:
         long nhits
         PY_LONG_LONG total_time
-        cbool registered
+        int lineno
 
     cdef cppclass LastLine:
         unsigned long thread_ident
@@ -21,11 +21,16 @@ cdef extern from "_profile_data.hpp" namespace "line_profiler":
         int line_index
         PY_LONG_LONG time
 
+    cdef cppclass LineIndex:
+        size_t num_entries()
+        cbool is_dense()
+
     cdef cppclass ProfileEntry:
         PyObject *profiler
         Py_hash_t block_hash
-        int first_line
         vector[LineData] lines
+        vector[int] lineless
+        LineIndex index
         vector[LastLine] last_lines
 
         ProfileEntry(PyObject *profiler, Py_hash_t block_hash)

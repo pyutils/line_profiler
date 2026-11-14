@@ -124,6 +124,8 @@ cdef extern from "c_trace_callbacks.h":  # Legacy tracing
     cdef void set_local_trace(PyObject *manager, PyFrameObject *py_frame)
     cdef void c_disable_line_events "disable_line_events"(
         PyFrameObject *py_frame)
+    cdef void c_enable_line_events "enable_line_events"(
+        PyFrameObject *py_frame, PyObject *manager)
     cdef Py_uintptr_t monitoring_restart_version()
 
 cdef extern from "timers.c":
@@ -175,11 +177,23 @@ cdef inline Py_hash_t compute_block_hash(object code) noexcept:
 
 # Registry of the code blocks being profiled (by any instance), keyed by
 # block hash: code objects with the same bytecode share the data of the
-# block.  The blocks are never freed, so that the pointers cached on the
-# code objects stay valid.
+# block.  A block is freed when the last profiler profiling it is
+# deallocated, so that the memory used is bounded by what the live
+# profilers profile.
 cdef unordered_map[Py_hash_t, Block *] _blocks
-# Incremented when blocks are added, invalidating the cached lookups
+# Incremented when blocks are added or removed, invalidating the lookups
+# cached on the code objects (see get_block()), so that they never use a
+# freed block
 cdef unsigned long _blocks_generation = 1
+
+
+def _num_registered_blocks():
+    """
+    Returns:
+        The number of code blocks in the registry (for checking the
+        memory use in tests).
+    """
+    return _blocks.size()
 
 # Index of the per-code-object scratch slot (see PEP 523) in which a
 # CodeCache is stored; negative if none is available
@@ -250,6 +264,36 @@ cdef inline Block *get_block(object code) noexcept:
                 and (<CodeCache *>cache).generation == _blocks_generation):
             return (<CodeCache *>cache).block
     return lookup_block(code, <CodeCache *>cache)
+
+
+# Whether legacy_trace_callback() has turned off the line events of any
+# frame (see restore_line_events())
+cdef bint _frame_lines_disabled = False
+
+
+cdef restore_line_events():
+    """
+    With the legacy trace system, turn the line events back on for the
+    frames currently running (on all threads) whose code is now profiled,
+    but whose line events :c:func:`legacy_trace_callback` turned off
+    because it wasn't when they started (e.g. because a function was added
+    to a profiler, or a profiler was enabled, in the meantime).
+
+    Note:
+        Suspended generators and coroutines are dealt with when they are
+        resumed (see :c:func:`legacy_trace_callback`).
+    """
+    if not (USE_LEGACY_TRACE and _frame_lines_disabled):
+        return
+    for frame in sys._current_frames().values():
+        while frame is not None:
+            if (not frame.f_trace_lines
+                    and get_block(frame.f_code) != NULL):
+                f_trace = frame.f_trace
+                if (f_trace is None
+                        or isinstance(f_trace, _LineProfilerManager)):
+                    frame.f_trace_lines = True
+            frame = frame.f_back
 
 
 def disable_line_events(trace_func: Callable) -> Callable:
@@ -571,9 +615,11 @@ line_profiler/blob/main/line_profiler/_line_profiler.pyx
         cdef bint already_active = not self._active.empty()
         if not self._add_active(prof):
             return
-        if not USE_LEGACY_TRACE:
-            # The code profiled by prof may have had its events
-            # disabled while it wasn't being profiled
+        # The code profiled by prof may have had its events disabled while
+        # it wasn't being profiled
+        if USE_LEGACY_TRACE:
+            restore_line_events()
+        else:
             restart_disabled_events()
         if already_active:
             return
@@ -973,9 +1019,11 @@ cdef class LineProfiler(_LineProfilerBase):
         self._ticks_to_units = hpTimerTicksToUnits()
 
     def __dealloc__(self):
+        global _blocks_generation
         cdef ProfileEntry *entry
         cdef Block *block
         cdef size_t i, j
+        cdef bint removed_blocks = False
         for i in range(self._entries.size()):
             entry = self._entries[i]
             block = find_block(entry.block_hash)
@@ -984,8 +1032,20 @@ cdef class LineProfiler(_LineProfilerBase):
                     if block.entries[j] == entry:
                         block.entries.erase(block.entries.begin() + j)
                         break
+                if block.entries.empty():
+                    # No profiler profiles the block anymore
+                    _blocks.erase(block.block_hash)
+                    del block
+                    removed_blocks = True
             del entry
         self._entries.clear()
+        if removed_blocks:
+            # Invalidate the pointers to the freed blocks cached on the
+            # code objects
+            # Note: the trace callbacks don't hold on to blocks across
+            # anything which can run Python code (and thus deallocate
+            # profilers), so there's no dangling pointer in use
+            _blocks_generation += 1
 
     cdef list _register_lines(self, Py_hash_t block_hash, object linenos):
         cdef Block *block = get_or_add_block(block_hash)
@@ -1006,6 +1066,10 @@ cdef class LineProfiler(_LineProfilerBase):
         for lineno in linenos:
             if entry.register_line(lineno):
                 new_linenos.append(lineno)
+        # The frames running the code may have had their line events
+        # turned off while it wasn't being profiled (with sys.monitoring,
+        # add_function() restarts the events instead)
+        restore_line_events()
         return new_linenos
 
     cpdef disable(self):
@@ -1164,6 +1228,7 @@ cdef extern int legacy_trace_callback(
        https://github.com/python/cpython/blob/de2a4036/Include/cpython/\
 pystate.h#L16
     """
+    global _frame_lines_disabled
     cdef _LineProfilerManager manager_ = <_LineProfilerManager>manager
     cdef int result
     cdef int recursion_guard = manager_.recursion_guard
@@ -1191,10 +1256,16 @@ pystate.h#L16
             set_local_trace(<PyObject *>manager_, py_frame)
         # If the code isn't being profiled, don't generate line events for
         # the frame at all (unless the wrapped callbacks may need them)
+        # Note: this is also the event for resuming a generator or
+        # coroutine, whose code may have become profiled since its line
+        # events were turned off
         if not manager_._wrap_trace:
             code = <PyObject *>PyFrame_GetCode(py_frame)
-            if not is_profiled(get_block(<object>code), &manager_._active):
+            if is_profiled(get_block(<object>code), &manager_._active):
+                c_enable_line_events(py_frame, <PyObject *>manager_)
+            else:
                 c_disable_line_events(py_frame)
+                _frame_lines_disabled = True
             Py_XDECREF(code)
     elif what == PyTrace_LINE or what == PyTrace_RETURN:
         code = <PyObject *>PyFrame_GetCode(py_frame)
