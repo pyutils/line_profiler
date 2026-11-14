@@ -1982,12 +1982,19 @@ def test_timer_accuracy(use_tsc):
     `time.perf_counter()`) whether the timer is allowed to use the CPU's
     timestamp counter or not, including when the thread moves between
     CPU cores (where supported).
+
+    Note:
+        Allowing the timestamp counter doesn't mean it is used (see
+        `hpTimerInit()` in `timers.c`), and the test is skipped if it
+        isn't (since it would just test the other timer again).
     """
     script = textwrap.dedent('''
     import os
     import sys
     import time
     from line_profiler import LineProfiler, _line_profiler
+
+    print(_line_profiler.USING_TSC, flush=True)
 
     def sleeper(cpus, delay):
         for cpu in cpus:
@@ -2013,11 +2020,14 @@ def test_timer_accuracy(use_tsc):
     total = sum(times)
     assert .9 * delay * len(cpus) <= total <= 1.1 * wall + .005, (
         total, wall)
-    print(_line_profiler.USING_TSC)
     ''')
     env = {**os.environ, 'LINE_PROFILER_TSC': use_tsc}
     proc = subprocess.run([sys.executable, '-c', script], env=env,
                           capture_output=True, text=True)
+    using_tsc = proc.stdout.split('\n', 1)[0].strip()
+    if use_tsc == '1' and using_tsc == 'False':
+        pytest.skip('the timestamp counter is not used on this machine '
+                    '(it needs a Linux x86-64 build, a constant-rate TSC, '
+                    "and 'tsc' as the kernel's clock source)")
     assert proc.returncode == 0, proc.stderr
-    if use_tsc == '0':
-        assert proc.stdout.strip() == 'False'
+    assert using_tsc == ('False' if use_tsc == '0' else 'True')
